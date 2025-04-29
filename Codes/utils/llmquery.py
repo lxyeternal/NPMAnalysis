@@ -27,7 +27,7 @@ class LLMAgent:
         
         # Load configuration
         self.config = self._load_config()
-        self.query_type = self.config.get('query_type', 'azure')
+        self.query_type = "openai"
         
         # Initialize clients based on query type
         self._init_clients()
@@ -70,8 +70,8 @@ class LLMAgent:
                 azure_endpoint=self.config["azure_api_base"]
             )
         elif self.query_type == 'openai':
-            self.openai_model = self.config.get('openai_api_model', 'gpt-4o')
-            openai.api_key = self.config['openai_api_key']
+            self.openai_model = self.config.get('openai_api_model', 'gpt-4.1-nano')
+            self.openai_client = openai.OpenAI(api_key=self.config['openai_api_key'])
         elif self.query_type == 'ollama':
             self.ollama_model = self.config.get('ollama_model', 'llama3')
             self.host = os.getenv('OLLAMA_HOST', 'host.docker.internal')
@@ -166,7 +166,7 @@ class LLMAgent:
         while attempt < self.max_attempts:
             try:
                 completion = self.client.chat.completions.create(
-                    model="gpt-4o",  # or use self.config.get("azure_model", "gpt-4o")
+                    model="gpt-4.1",  # or use self.config.get("azure_model", "gpt-4o")
                     messages=messages,
                     temperature=temperature,
                     response_format=response_format,
@@ -194,18 +194,20 @@ class LLMAgent:
         
         while attempt < self.max_attempts:
             try:
-                # Use the legacy API if using older OpenAI version
-                response = openai.ChatCompletion.create(
+                response = self.openai_client.chat.completions.create(
                     model=self.openai_model,
                     messages=messages,
                     temperature=temperature,
+                    response_format=response_format,
                     max_tokens=max_tokens,
                     top_p=top_p,
                     frequency_penalty=frequency_penalty,
                     presence_penalty=presence_penalty,
-                    stop=None
+                    stop=None,
+                    seed=seed,
+                    stream=False
                 )
-                return response.choices[0].message['content']
+                return response.choices[0].message.content
             except Exception as e:
                 logging.warning(f"Attempt {attempt + 1}: An error occurred: {e}")
                 attempt += 1
@@ -218,14 +220,14 @@ class LLMAgent:
         """Execute query using Ollama local API"""
         wait_time = 10
         attempt = 0
-        url = f"http://{self.host}:11434/api/chat"
+        url = f"http://127.0.0.1:11435/api/chat"
         
         headers = {
             "Content-Type": "application/json"
         }
         
         payload = {
-            "model": self.ollama_model,
+            "model": "llama3.3:latest",
             "stream": False,
             "format": "json" if response_format else None,
             "messages": messages,
@@ -274,7 +276,7 @@ class LLMAgent:
         
         return ""
 
-# # 示例使用方法
+# 示例使用方法
 # if __name__ == "__main__":
     
 #     # 创建代理实例
