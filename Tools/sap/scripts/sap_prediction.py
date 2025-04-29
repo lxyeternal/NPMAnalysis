@@ -37,17 +37,17 @@ def predict_and_store_results(model, X, package_names):
 def main():
     # 模型路径
     models = {
-        'DT': '/home/wenbo/NPMAnalysis/Tools/sap/scripts/JS_monolanguage_DT.pkl',
-        'RF': '/home/wenbo/NPMAnalysis/Tools/sap/scripts/JS_monolanguage_RF.pkl',
-        'XGB': '/home/wenbo/NPMAnalysis/Tools/sap/scripts/JS_monolanguage_XGB.pkl'
+        'DT': '/home2/wenbo/Documents/NPMAnalysis/Tools/sap/scripts/JS_monolanguage_DT.pkl',
+        'RF': '/home2/wenbo/Documents/NPMAnalysis/Tools/sap/scripts/JS_monolanguage_RF.pkl',
+        'XGB': '/home2/wenbo/Documents/NPMAnalysis/Tools/sap/scripts/JS_monolanguage_XGB.pkl'
     }
 
     # 数据文件路径
     data_files = [
         ('malware',
-         '/home/wenbo/NPMAnalysis/Tools/sap/scripts/feature_extraction/malware_npm_feature_extracted.csv'),
+         '/home2/wenbo/Documents/NPMAnalysis/Tools/sap/scripts/feature_extraction/malware_npm_feature_extracted.csv'),
         ('benign',
-         '/home/wenbo/NPMAnalysis/Tools/sap/scripts/feature_extraction/benign_npm_feature_extracted.csv')
+         '/home2/wenbo/Documents/NPMAnalysis/Tools/sap/scripts/feature_extraction/benign_npm_feature_extracted.csv')
     ]
 
     # 加载模型
@@ -69,7 +69,7 @@ def main():
         # 合并结果到最终 DataFrame
         final_results = pd.concat([final_results, result_df], ignore_index=True)
     # 保存最终结果为 CSV 文件
-    final_results.to_csv('/home/wenbo/NPMAnalysis/Tools/sap/scripts/sap_detection_results.csv', index=False)
+    final_results.to_csv('/home2/wenbo/Documents/NPMAnalysis/Tools/sap/scripts/sap_detection_results.csv', index=False)
 
 
 if __name__ == '__main__':
