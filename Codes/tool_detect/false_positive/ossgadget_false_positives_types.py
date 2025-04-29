@@ -34,10 +34,10 @@ def find_txt_files(directory):
 
 def main():
     # 设置输出文件路径
-    output_file = "/home/wenbo/NPMAnalysis/Codes/tool_detect/false_positive/ossgadget_false_positives_types.txt"
+    output_file = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/false_positive/ossgadget_false_positives_types.txt"
     
     # 设置benign样本文件夹路径
-    benign_folder = "/home/wenbo/NPMAnalysis/Codes/tool_detect/tool_output/ossgadget/benign"
+    benign_folder = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/ossgadget/benign"
     
     # 用于存储每种检测类型的文件列表
     type_to_files = defaultdict(list)
