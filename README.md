@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # NPMAnalysis
 =======
 # NPM Malware Detection Tools Benchmark
@@ -57,4 +56,3 @@ We welcome contributions to improve this benchmark study. Please feel free to:
 
 ## Contact
 [Contact information to be added] 
->>>>>>> master
