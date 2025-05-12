@@ -69,6 +69,7 @@ class LLMAgent:
                 api_version=self.config["azure_api_version"],
                 azure_endpoint=self.config["azure_api_base"]
             )
+            self.azure_model = self.config.get('azure_api_model', 'gpt-4.1-nano')
         elif self.query_type == 'openai':
             self.openai_model = self.config.get('openai_api_model', 'gpt-4.1-nano')
             self.openai_client = openai.OpenAI(api_key=self.config['openai_api_key'])
@@ -166,7 +167,7 @@ class LLMAgent:
         while attempt < self.max_attempts:
             try:
                 completion = self.client.chat.completions.create(
-                    model="gpt-4.1",  # or use self.config.get("azure_model", "gpt-4o")
+                    model=self.azure_model,  # or use self.config.get("azure_model", "gpt-4o")
                     messages=messages,
                     temperature=temperature,
                     response_format=response_format,
