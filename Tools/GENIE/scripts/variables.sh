@@ -1,17 +1,13 @@
 # Automatically export the following variables...
 set -a
 
-# 修改路径定义，将snapshot放在GENIE目录下
-LOCATION_FS='/home/wenbo/NPMAnalysis/Tools/GENIE/'
-SNAPSHOT_FS=$LOCATION_FS'snapshot/'
+LOCATION_FS='/'
+SNAPSHOT_FS='/home2/wenbo/Documents/NPMAnalysis/Tools/GENIE/snapshot/'
 
 # ---------- #
 
 # List of all NPM packages' names
 ALL_NPM_NAMES='NPM_package_names'
-
-# 查询目录路径
-GENIE_QUERIES='/home/wenbo/NPMAnalysis/Tools/GENIE/queries'
 
 # ---------- #
 

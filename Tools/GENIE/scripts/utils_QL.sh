@@ -12,20 +12,14 @@ UTILS_Create_DB()
     option_VERBOSE=${5:-errors}
     option_THREADS=${6:-1}
 
-    # 使用绝对路径的codeql命令
-    CODEQL_PATH="/home/wenbo/NPMAnalysis/Tools/GENIE/codeql/codeql"
-
     # Limit the RAM to 8GB
-    $CODEQL_PATH database create --source-root=$CB_Path      \
+    codeql database create --source-root=$CB_Path      \
                            --language=$option_BUILDER  \
                            --verbosity=$option_VERBOSE \
                            --threads=$option_THREADS   \
                            --ram=8000                  \
                            -J=-Xmx8G                   \
                            $DB_Path &>> $LOG_Path
-                           
-    # 完成数据库初始化
-    $CODEQL_PATH database finalize $DB_Path &>> $LOG_Path
 }
 
 
@@ -40,10 +34,7 @@ UTILS_Clean_DB()
     option_VERBOSE=${3:-errors}
     option_CLEANUP=${4:-brutal}
 
-    # 使用绝对路径的codeql命令
-    CODEQL_PATH="/home/wenbo/NPMAnalysis/Tools/GENIE/codeql/codeql"
-
-    $CODEQL_PATH database cleanup --verbosity=$option_VERBOSE \
+    codeql database cleanup --verbosity=$option_VERBOSE \
                             --mode=$option_CLEANUP      \
                             $DB_Path &>> $LOG_Path
 
@@ -76,14 +67,8 @@ UTILS_Query_DB()
     option_THREADS=${7:-0}
     option_TIMEOUT=${8:-300}
 
-    # 使用绝对路径的codeql命令
-    CODEQL_PATH="/home/wenbo/NPMAnalysis/Tools/GENIE/codeql/codeql"
-    
-    # 确保数据库已完成初始化
-    $CODEQL_PATH database finalize $DB_Path &>> $LOG_Path
-
     # Limit the RAM to 16GB
-    $CODEQL_PATH database analyze --rerun                     \
+    codeql database analyze --rerun                     \
                             --output=$OUT_Path          \
                             --format=$option_FORMATS    \
                             --verbosity=$option_VERBOSE \

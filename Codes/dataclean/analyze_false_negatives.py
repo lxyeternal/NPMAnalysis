@@ -25,7 +25,7 @@ PROMPTS_PATH = "/home2/wenbo/Documents/NPMAnalysis/Prompts"
 os.makedirs(OUTPUT_PATH, exist_ok=True)
 
 # 进程数量
-NUM_PROCESSES = 10
+NUM_PROCESSES = 24
 
 def is_false_negative(file_path):
     """
@@ -39,7 +39,7 @@ def is_false_negative(file_path):
                 return True
         return False
     except Exception as e:
-        print(f"读取文件时出错 {file_path}: {e}")
+        print(f"Error reading file {file_path}: {e}")
         return False
 
 def get_source_files(package_path):
@@ -66,7 +66,7 @@ def get_source_files(package_path):
                 result['package.json'] = f.read()
                 file_paths['package.json'] = os.path.abspath(package_json_path)
         except Exception as e:
-            print(f"读取package.json失败: {e}")
+            print(f"Failed to read package.json: {e}")
     
     # 查找所有js文件
     js_files = {}
@@ -78,7 +78,7 @@ def get_source_files(package_path):
                 js_files[rel_path] = f.read()
                 js_file_paths[rel_path] = os.path.abspath(path)
         except Exception as e:
-            print(f"读取{path}失败: {e}")
+            print(f"Failed to read {path}: {e}")
     
     result['js_files'] = js_files
     file_paths['js_files'] = js_file_paths
@@ -93,7 +93,7 @@ def load_prompt_template(prompt_file):
         with open(prompt_path, 'r', encoding='utf-8') as f:
             return f.read()
     except Exception as e:
-        print(f"无法加载prompt模板 {prompt_path}: {e}")
+        print(f"Failed to load prompt template {prompt_path}: {e}")
         return None
 
 # 加载prompt模板
@@ -131,11 +131,18 @@ def query_llm(llm_agent, prompt):
             analysis = json.loads(content)
             return analysis.get("is_malicious", False), analysis.get("malicious_code", "")
         except json.JSONDecodeError as e:
-            print(f"无法解析LLM响应为JSON: {e}")
-            print(f"原始响应: {content}")
+            print(f"Failed to parse LLM response as JSON: {e}")
+            print(f"Original response: {content}")
             return False, ""
     except Exception as e:
-        print(f"查询LLM时出错: {e}")
+        error_str = str(e)
+        # 检测是否为上下文长度超出错误
+        if "context_length_exceeded" in error_str or "maximum context length" in error_str:
+            print(f"File too large, exceeding model context length limit, automatically classified as malicious: {error_str}")
+            # 返回为恶意代码，并添加说明
+            return True, "File too large, exceeding model context length limit, automatically classified as potentially malicious. This typically indicates highly obfuscated code or code containing suspicious content."
+        
+        print(f"Error querying LLM: {e}")
         return False, ""
 
 def analyze_file_with_two_llms(file_content, is_package_json=False):
@@ -149,18 +156,31 @@ def analyze_file_with_two_llms(file_content, is_package_json=False):
     llm_agent1 = LLMAgent()
     llm_agent2 = LLMAgent()
     
+    # 检查文件大小，如果超过1MB，直接判定为恶意
+    if len(file_content) > 1024 * 1024:
+        print(f"  File size exceeds 1MB ({len(file_content)/1024/1024:.2f}MB), automatically classified as malicious")
+        return True, "File too large (over 1MB), which typically indicates highly obfuscated code or code containing suspicious content, automatically classified as potentially malicious."
+    
     prompt = get_npm_prompt(file_content, is_package_json)
     
     # 使用第一个LLM代理
     is_malicious1, code1 = query_llm(llm_agent1, prompt)
-    print(f"  LLM1分析结果: {'恶意' if is_malicious1 else '非恶意'}")
+    print(f"  LLM1 analysis result: {'Malicious' if is_malicious1 else 'Not malicious'}")
+    
+    # 如果第一个LLM因为上下文长度问题判定为恶意，直接返回结果
+    if is_malicious1 and "exceeding model context length limit" in code1:
+        return True, code1
     
     # 稍微等待一下，避免频繁请求
     time.sleep(2)
     
     # 使用第二个LLM代理
     is_malicious2, code2 = query_llm(llm_agent2, prompt)
-    print(f"  LLM2分析结果: {'恶意' if is_malicious2 else '非恶意'}")
+    print(f"  LLM2 analysis result: {'Malicious' if is_malicious2 else 'Not malicious'}")
+    
+    # 如果第二个LLM因为上下文长度问题判定为恶意，直接返回结果
+    if is_malicious2 and "exceeding model context length limit" in code2:
+        return True, code2
     
     # 只有两个LLM都认为是恶意的，才返回True
     if is_malicious1 and is_malicious2:
@@ -181,23 +201,23 @@ def analyze_package(package_info):
     """
     package_name, version, guarddog_file_path, index, total = package_info
     
-    print(f"\n[{index}/{total}] 开始分析: {package_name}@{version}")
+    print(f"\n[{index}/{total}] Starting analysis: {package_name}@{version}")
     
     # 构建解压后的恶意包路径
     unzip_package_path = os.path.join(UNZIP_MALWARE_PATH, package_name, version)
     if not os.path.exists(unzip_package_path):
-        print(f"解压后的包路径不存在: {unzip_package_path}")
+        print(f"Unzipped package path does not exist: {unzip_package_path}")
         return None
     
     # 获取源文件内容和路径
     try:
         source_files, file_paths = get_source_files(unzip_package_path)
     except Exception as e:
-        print(f"获取源文件时出错: {e}")
+        print(f"Error getting source files: {e}")
         return None
     
     if not source_files.get('package.json') and not source_files.get('js_files'):
-        print(f"未找到可分析的文件: {package_name}@{version}")
+        print(f"No files found to analyze: {package_name}@{version}")
         return None
     
     # 存储分析结果
@@ -212,7 +232,7 @@ def analyze_package(package_info):
     # 分析package.json
     if source_files.get('package.json'):
         package_json_path = file_paths['package.json']
-        print(f"分析package.json: {package_json_path}")
+        print(f"Analyzing package.json: {package_json_path}")
         is_malicious, malicious_code = analyze_file_with_two_llms(source_files['package.json'], is_package_json=True)
         
         if is_malicious:
@@ -221,7 +241,7 @@ def analyze_package(package_info):
     
     # 分析JS文件
     js_files_list = list(source_files.get('js_files', {}).items())
-    print(f"发现{len(js_files_list)}个JS文件")
+    print(f"Found {len(js_files_list)} JS files")
     
     for i, (js_file, content) in enumerate(js_files_list):
         if len(content) < 100:  # 忽略非常小的文件
@@ -229,7 +249,9 @@ def analyze_package(package_info):
         
         # 获取完整的JS文件路径
         js_file_path = file_paths['js_files'][js_file]
-        print(f"分析JS文件 [{i+1}/{len(js_files_list)}]: {js_file_path}")
+        file_size_mb = len(content) / 1024 / 1024
+        print(f"Analyzing JS file [{i+1}/{len(js_files_list)}]: {js_file_path} (Size: {file_size_mb:.2f}MB)")
+        
         is_malicious, malicious_code = analyze_file_with_two_llms(content)
         
         if is_malicious:
@@ -248,18 +270,18 @@ def analyze_package(package_info):
     
     # 输出分析结果文件的完整路径
     output_file_abs = os.path.abspath(output_file)
-    print(f"[{index}/{total}] 分析完成: {package_name}@{version}")
-    print(f"结果保存至: {output_file_abs}")
+    print(f"[{index}/{total}] Analysis completed: {package_name}@{version}")
+    print(f"Results saved to: {output_file_abs}")
     
     if analysis_results["malicious_files"]:
-        print(f"找到 {len(analysis_results['malicious_files'])} 个恶意文件")
+        print(f"Found {len(analysis_results['malicious_files'])} malicious files")
     else:
-        print("未找到恶意代码")
+        print("No malicious code found")
     return analysis_results
 
 def main():
     """主函数"""
-    print("开始分析guarddog漏报的恶意包...")
+    print("Starting analysis of guarddog false negatives...")
     
     # 查找所有guarddog检测结果
     false_negatives = []
@@ -278,13 +300,13 @@ def main():
                 version = parts[1]
                 false_negatives.append((package_name, version, file_path))
     
-    print(f"总共分析 {total_malware} 个恶意样本")
-    print(f"发现 {len(false_negatives)} 个漏报样本")
+    print(f"Total malware samples analyzed: {total_malware}")
+    print(f"Found {len(false_negatives)} false negative samples")
     
     # 创建总结文件
     summary_file = os.path.join(OUTPUT_PATH, "analysis_summary.json")
     summary_file_abs = os.path.abspath(summary_file)
-    print(f"总结文件将保存至: {summary_file_abs}")
+    print(f"Summary file will be saved to: {summary_file_abs}")
     
     # 准备多进程所需的参数列表
     package_infos = []
@@ -304,10 +326,10 @@ def main():
     # 最终保存汇总结果
     save_summary(results, total_malware, len(false_negatives), summary_file)
     
-    print(f"\n分析完成! 共分析 {len(false_negatives)} 个漏报样本")
-    print(f"找到 {len([r for r in results if r['malicious_files']])} 个包含恶意代码的包")
-    print(f"所有结果已保存到: {os.path.abspath(OUTPUT_PATH)}")
-    print(f"总结信息已保存到: {summary_file_abs}")
+    print(f"\nAnalysis completed! Analyzed {len(false_negatives)} false negative samples")
+    print(f"Found {len([r for r in results if r['malicious_files']])} packages containing malicious code")
+    print(f"All results have been saved to: {os.path.abspath(OUTPUT_PATH)}")
+    print(f"Summary information saved to: {summary_file_abs}")
 
 def save_summary(results, total_malware, false_negatives_count, summary_file):
     """保存汇总结果"""

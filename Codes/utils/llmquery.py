@@ -27,7 +27,7 @@ class LLMAgent:
         
         # Load configuration
         self.config = self._load_config()
-        self.query_type = "openai"
+        self.query_type = "azure"
         
         # Initialize clients based on query type
         self._init_clients()
