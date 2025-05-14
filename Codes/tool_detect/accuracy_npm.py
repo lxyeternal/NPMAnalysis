@@ -52,6 +52,23 @@ def analyze_packj(file_path, folder_type):
         print(f"读取 {file_path} 出错: {e}")
         return "error"
 
+def analyze_genie(file_path, folder_type):
+    """
+    分析genie的检测结果
+    如果csv文件为空，就证明检测为良性的
+    如果csv文件不为空，就证明检测为恶意的
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+            if not content.strip():
+                return "benign"
+            else:
+                return "malware"
+    except Exception as e:
+        print(f"读取 {file_path} 出错: {e}")
+        return "error"
+
 def calculate_metrics(true_positives, true_negatives, false_positives, false_negatives):
     """计算精确度、召回率、F1分数等评价指标"""
     total = true_positives + true_negatives + false_positives + false_negatives
@@ -74,7 +91,7 @@ def find_package_files(base_path, package_type):
     
     for root, dirs, files in os.walk(package_path):
         for file in files:
-            if file.endswith('.txt'):
+            if file.endswith('.txt') or file.endswith('.csv'):
                 result.append(os.path.join(root, file))
     
     return result
@@ -136,7 +153,8 @@ def main():
     # 定义工具和对应的分析函数
     basic_tools = {
         "ossgadget": analyze_ossgadget,
-        "guarddog": analyze_guarddog
+        "guarddog": analyze_guarddog,
+        "genie": analyze_genie
     }
     
     # packj工具有两种检测方式

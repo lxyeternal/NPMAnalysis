@@ -238,6 +238,24 @@ def analyze_package(package_info):
         if is_malicious:
             analysis_results["malicious_files"].append(package_json_path)
             analysis_results["malicious_code"][package_json_path] = malicious_code
+            # 发现恶意文件后立即停止分析
+            print(f"Malicious code found in package.json, stopping analysis for this package.")
+            
+            # 创建输出目录
+            output_package_dir = os.path.join(OUTPUT_PATH, package_name)
+            output_version_dir = os.path.join(output_package_dir, version)
+            os.makedirs(output_version_dir, exist_ok=True)
+            
+            # 写入分析结果
+            output_file = os.path.join(output_version_dir, f"{package_name}-{version}-analysis.json")
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(analysis_results, f, ensure_ascii=False, indent=2)
+            
+            print(f"[{index}/{total}] Analysis completed early: {package_name}@{version}")
+            print(f"Results saved to: {os.path.abspath(output_file)}")
+            print(f"Found malicious code in package.json")
+            
+            return analysis_results
     
     # 分析JS文件
     js_files_list = list(source_files.get('js_files', {}).items())
@@ -257,6 +275,10 @@ def analyze_package(package_info):
         if is_malicious:
             analysis_results["malicious_files"].append(js_file_path)
             analysis_results["malicious_code"][js_file_path] = malicious_code
+            
+            # 发现恶意文件后立即停止分析
+            print(f"Malicious code found in {js_file}, stopping analysis for this package.")
+            break
     
     # 创建输出目录
     output_package_dir = os.path.join(OUTPUT_PATH, package_name)
