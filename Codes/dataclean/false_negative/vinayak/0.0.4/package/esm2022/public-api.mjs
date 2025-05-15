@@ -1,0 +1,8 @@
+/*
+ * Public API Surface of test
+ */
+export * from './lib/test.service';
+export * from './lib/test.component';
+export * from './lib/test.module';
+export * from './lib/api-config.service';
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoicHVibGljLWFwaS5qcyIsInNvdXJjZVJvb3QiOiIiLCJzb3VyY2VzIjpbIi4uLy4uLy4uL3Byb2plY3RzL3Rlc3Qvc3JjL3B1YmxpYy1hcGkudHMiXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IkFBQUE7O0dBRUc7QUFFSCxjQUFjLG9CQUFvQixDQUFDO0FBQ25DLGNBQWMsc0JBQXNCLENBQUM7QUFDckMsY0FBYyxtQkFBbUIsQ0FBQztBQUNsQyxjQUFjLDBCQUEwQixDQUFDIiwic291cmNlc0NvbnRlbnQiOlsiLypcbiAqIFB1YmxpYyBBUEkgU3VyZmFjZSBvZiB0ZXN0XG4gKi9cblxuZXhwb3J0ICogZnJvbSAnLi9saWIvdGVzdC5zZXJ2aWNlJztcbmV4cG9ydCAqIGZyb20gJy4vbGliL3Rlc3QuY29tcG9uZW50JztcbmV4cG9ydCAqIGZyb20gJy4vbGliL3Rlc3QubW9kdWxlJztcbmV4cG9ydCAqIGZyb20gJy4vbGliL2FwaS1jb25maWcuc2VydmljZSc7XG4iXX0=
