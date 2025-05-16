@@ -10,7 +10,7 @@ import signal
 
 # 直接在代码中设置参数
 NUM_PROCESSES = 24  # 并行处理的进程数
-TOOL_TIMEOUT = 120   # 每个工具的超时时间（秒）
+TOOL_TIMEOUT = 300   # 每个工具的超时时间（秒）
 
 # 添加超时处理函数
 def run_with_timeout(cmd, timeout=TOOL_TIMEOUT):
@@ -53,12 +53,20 @@ class NPMToolDetector:
             }
         }
         
+        # 定义超时日志文件路径
+        self.timeout_log_dir = os.path.join(self.output_base, "timeout_logs")
+        os.makedirs(self.timeout_log_dir, exist_ok=True)
+        self.guarddog_timeout_log = os.path.join(self.timeout_log_dir, "guarddog_timeout.txt")
+        self.ossgadget_timeout_log = os.path.join(self.timeout_log_dir, "ossgadget_timeout.txt")
+        
         # 确保所有输出目录存在
         self._ensure_output_dirs()
         
         # 记录已处理的包
         self.processed_count = 0
         self.skipped_count = 0
+        self.guarddog_timeout_count = 0
+        self.ossgadget_timeout_count = 0
         
     def _ensure_output_dirs(self):
         """确保所有输出目录存在"""
@@ -81,6 +89,20 @@ class NPMToolDetector:
         # 创建结果文件路径
         return os.path.join(version_dir, "result.txt")
     
+    def _log_timeout(self, tool, category, package_name, version, input_path):
+        """记录超时信息到日志文件"""
+        log_file = self.guarddog_timeout_log if tool == "guarddog" else self.ossgadget_timeout_log
+        log_entry = f"{category},{package_name},{version},{input_path}\n"
+        
+        # 使用文件锁确保多进程写入安全
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(log_entry)
+        
+        if tool == "guarddog":
+            self.guarddog_timeout_count += 1
+        else:
+            self.ossgadget_timeout_count += 1
+    
     def run_guarddog(self, zip_file_path, package_name, version, category):
         """运行Guarddog工具并保存结果"""
         output_file = self._create_output_path("guarddog", category, package_name, version)
@@ -96,7 +118,13 @@ class NPMToolDetector:
         
         if return_code == -1:  # 超时
             print(f"Guarddog检测超时: {package_name}@{version}, 跳过")
-            return None
+            self._log_timeout("guarddog", category, package_name, version, zip_file_path)
+            
+            # 创建超时标记文件
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write("TIMEOUT")
+                
+            return "TIMEOUT"
         else:
             output = stdout if stdout.strip() else "benign"
             with open(output_file, 'w', encoding='utf-8') as f:
@@ -119,7 +147,13 @@ class NPMToolDetector:
         
         if return_code == -1:  # 超时
             print(f"OSSGadget检测超时: {package_name}@{version}, 跳过")
-            return None
+            self._log_timeout("ossgadget", category, package_name, version, unzip_dir_path)
+            
+            # 创建超时标记文件
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write("TIMEOUT")
+                
+            return "TIMEOUT"
         else:
             output = stdout if stdout.strip() else "benign"
             with open(output_file, 'w', encoding='utf-8') as f:
@@ -184,6 +218,10 @@ class NPMToolDetector:
     
     def process_all_packages(self, num_processes=NUM_PROCESSES):
         """使用多进程处理所有包"""
+        # 清空超时日志文件
+        open(self.guarddog_timeout_log, 'w').close()
+        open(self.ossgadget_timeout_log, 'w').close()
+        
         # 获取所有包名
         benign_packages = os.listdir(self.zip_benign_path)
         malicious_packages = os.listdir(self.zip_malicious_path)
@@ -206,7 +244,13 @@ class NPMToolDetector:
             for task in tasks:
                 self.process_package(*task)
         
+        # 汇总超时统计
+        guarddog_timeout_count = sum(1 for _ in open(self.guarddog_timeout_log))
+        ossgadget_timeout_count = sum(1 for _ in open(self.ossgadget_timeout_log))
+        
         print(f"所有包处理完成！新处理: {self.processed_count} 个，跳过已处理: {self.skipped_count} 个")
+        print(f"Guarddog超时: {guarddog_timeout_count} 个，OSSGadget超时: {ossgadget_timeout_count} 个")
+        print(f"超时详情已记录到: {self.timeout_log_dir}")
 
 if __name__ == "__main__":
     # 清理可能的僵尸进程

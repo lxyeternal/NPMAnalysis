@@ -1,0 +1,2 @@
+export declare type Icon = 'authenticityGuaranteed' | 'clickToCall' | 'ebayPlus' | 'escrow' | 'freeWarranty' | 'moneyBackGuaranteeChf' | 'moneyBackGuaranteeEu' | 'moneyBackGuaranteeUk' | 'moneyBackGuaranteeUs' | 'moneyBackGuaranteeZl' | 'topRatedSeller' | 'vault';
+//# sourceMappingURL=types.d.ts.map
