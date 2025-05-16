@@ -38,23 +38,30 @@ def extract_detection_types(file_path):
         print(f"Error reading {file_path}: {e}")
         return "error", []
 
-def get_package_name_from_path(file_path, base_folder):
+def extract_package_info(file_path):
     """
     从文件路径中提取包名和版本信息
-    例如：从 /path/malware/@core-pas+cyb-core/9.9.9999/@core-pas+cyb-core-9.9.9999.txt
-    提取 @core-pas+cyb-core@9.9.9999
+    预期格式: .../malware/包名/版本/文件.txt
+    使用os.path逐层查找
     """
-    rel_path = os.path.relpath(file_path, base_folder)
-    parts = rel_path.split(os.sep)
+    # 获取文件所在目录
+    dir_path = os.path.dirname(file_path)
     
-    # 如果路径至少有3部分（包名/版本/文件）
-    if len(parts) >= 3:
-        package_name = parts[0]
-        version = parts[1]
-        return f"{package_name}@{version}"
-    else:
-        # 退回到只使用文件名（不太可能发生）
-        return os.path.basename(file_path)
+    # 获取文件所在目录的父目录（版本目录）
+    version_dir = os.path.dirname(dir_path)
+    if not os.path.exists(version_dir):
+        return os.path.basename(file_path).replace(".txt", ""), "unknown"
+    
+    version = os.path.basename(version_dir)
+    
+    # 获取包名目录（版本目录的父目录）
+    package_dir = os.path.dirname(version_dir)
+    if not os.path.exists(package_dir):
+        return os.path.basename(file_path).replace(".txt", ""), version
+    
+    package_name = os.path.basename(package_dir)
+    
+    return package_name, version
 
 def main():
     """主函数，分析guarddog恶意软件检测结果"""
@@ -75,6 +82,9 @@ def main():
     # 按类型分类的文件列表
     files_by_type = defaultdict(list)
     
+    # 按包名和版本统计
+    package_version_stats = defaultdict(lambda: defaultdict(lambda: {"detected": 0, "missed": 0, "behaviors": set()}))
+    
     total_malware = 0
     detected_count = 0
     missed_count = 0
@@ -85,7 +95,16 @@ def main():
         total_malware += 1
         status, types = extract_detection_types(file_path)
         
-        package_info = get_package_name_from_path(file_path, malware_folder)
+        package_name, version = extract_package_info(file_path)
+        package_info = f"{package_name}@{version}"
+        
+        # 更新包名和版本统计
+        if status == "detected":
+            package_version_stats[package_name][version]["detected"] += 1
+            for detection_type in types:
+                package_version_stats[package_name][version]["behaviors"].add(detection_type)
+        elif status == "missed":
+            package_version_stats[package_name][version]["missed"] += 1
         
         if status == "error":
             error_count += 1
@@ -128,31 +147,47 @@ def main():
         for detection_type, count in sorted(type_counts.items(), key=lambda x: x[1], reverse=True):
             f.write(f"{detection_type}: {count} 个文件 ({count/detected_count*100:.2f}% 的检测样本)\n")
         
+        # 按包名和版本统计
+        f.write("\n\n按包名和版本统计：\n")
+        f.write("=" * 30 + "\n")
+        for package_name, versions in sorted(package_version_stats.items()):
+            total_pkg_files = sum(v["detected"] + v["missed"] for v in versions.values())
+            detected_pkg_files = sum(v["detected"] for v in versions.values())
+            f.write(f"\n## 包名: {package_name} (总共 {total_pkg_files} 个样本, 检测率: {detected_pkg_files/total_pkg_files*100:.2f}%)\n")
+            
+            for version, stats in sorted(versions.items()):
+                total_ver = stats["detected"] + stats["missed"]
+                if total_ver > 0:
+                    detection_rate = stats["detected"] / total_ver * 100
+                    f.write(f"  - 版本 {version}: 总共 {total_ver} 个样本, 检测 {stats['detected']} 个, 漏报 {stats['missed']} 个, 检测率: {detection_rate:.2f}%\n")
+                    if stats["behaviors"]:
+                        f.write(f"    检测到的行为: {', '.join(sorted(stats['behaviors']))}\n")
+        
         # 分类型列出文件
         f.write("\n\n详细行为分类列表：\n")
         f.write("=" * 30 + "\n")
         for detection_type, files in sorted(files_by_type.items(), key=lambda x: len(x[1]), reverse=True):
             f.write(f"\n## {detection_type} ({len(files)} 个文件):\n")
             for i, (file_path, package_info) in enumerate(sorted(files, key=lambda x: x[1]), 1):
-                f.write(f"{i}. {package_info}\n")
+                f.write(f"{i}. {package_info} - {file_path}\n")
         
         # 单一行为文件列表
         f.write("\n\n只匹配一种行为的文件列表：\n")
         f.write("=" * 30 + "\n")
         behavior_group = defaultdict(list)
         for file_path, behavior, package_info in single_behavior_files:
-            behavior_group[behavior].append(package_info)
+            behavior_group[behavior].append((package_info, file_path))
             
         for behavior, packages in sorted(behavior_group.items(), key=lambda x: len(x[1]), reverse=True):
             f.write(f"\n## {behavior} ({len(packages)} 个文件):\n")
-            for i, package_info in enumerate(sorted(packages), 1):
-                f.write(f"{i}. {package_info}\n")
+            for i, (package_info, file_path) in enumerate(sorted(packages), 1):
+                f.write(f"{i}. {package_info} - {file_path}\n")
         
         # 漏报文件列表
         f.write("\n\n漏报文件列表 (未检测到恶意行为)：\n")
         f.write("=" * 30 + "\n")
         for i, (file_path, package_info) in enumerate(sorted(missed_detections, key=lambda x: x[1]), 1):
-            f.write(f"{i}. {package_info}\n")
+            f.write(f"{i}. {package_info} - {file_path}\n")
 
     print(f"分析完成! 共分析 {total_malware} 个恶意样本")
     print(f"成功检测: {detected_count} 个样本 ({detected_count/total_malware*100:.2f}%)")

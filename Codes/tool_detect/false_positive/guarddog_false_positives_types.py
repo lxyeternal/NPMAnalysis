@@ -40,13 +40,43 @@ def find_txt_files(directory):
                 txt_files.append(os.path.join(root, file))
     return txt_files
 
+def extract_package_info(file_path):
+    """
+    从文件路径中提取包名和版本信息
+    预期格式: .../benign/包名/版本/文件.txt
+    使用os.path逐层查找
+    """
+    # 获取文件所在目录
+    dir_path = os.path.dirname(file_path)
+    
+    # 获取文件所在目录的父目录（版本目录）
+    version_dir = os.path.dirname(dir_path)
+    if not os.path.exists(version_dir):
+        return os.path.basename(file_path).replace(".txt", ""), "unknown"
+    
+    version = os.path.basename(version_dir)
+    
+    # 获取包名目录（版本目录的父目录）
+    package_dir = os.path.dirname(version_dir)
+    if not os.path.exists(package_dir):
+        return os.path.basename(file_path).replace(".txt", ""), version
+    
+    package_name = os.path.basename(package_dir)
+    
+    # 检查父目录是否为benign目录
+    benign_dir = os.path.dirname(package_dir)
+    if os.path.basename(benign_dir) != "benign":
+        return os.path.basename(file_path).replace(".txt", ""), "unknown"
+    
+    return package_name, version
+
 def main():
     """主函数，分析guarddog假阳性文件的检测类型"""
     # 输出文件路径
-    output_file = "/home/wenbo/NPMAnalysis/Codes/tool_detect/false_positive/guarddog_false_positives_types.txt"
+    output_file = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/false_positive/guarddog_false_positives_types.txt"
     
     # guarddog良性样本文件夹路径
-    benign_folder = "/home/wenbo/NPMAnalysis/Codes/tool_detect/tool_output/guarddog/benign"
+    benign_folder = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/guarddog/benign"
     
     # 用于存储假阳性文件及其检测类型
     false_positives = []
@@ -56,6 +86,9 @@ def main():
     
     # 按类型分类的文件列表
     files_by_type = defaultdict(list)
+    
+    # 按包名和版本统计假阳性
+    package_version_counts = defaultdict(lambda: defaultdict(list))
     
     # 递归查找所有txt文件
     txt_files = find_txt_files(benign_folder)
@@ -69,12 +102,16 @@ def main():
         types = extract_detection_types(file_path)
         
         if types:  # 如果提取到了检测类型，则说明是假阳性
-            false_positives.append((file_path, types))
+            package_name, version = extract_package_info(file_path)
+            false_positives.append((file_path, types, package_name, version))
             
             # 更新类型计数
             for detection_type in types:
                 type_counts[detection_type] += 1
                 files_by_type[detection_type].append(file_path)
+            
+            # 更新包名和版本统计
+            package_version_counts[package_name][version].append((file_path, types))
         
         if (i + 1) % 100 == 0:
             print(f"已处理 {i + 1}/{total_benign} 个文件...")
@@ -93,21 +130,30 @@ def main():
         for detection_type, count in sorted(type_counts.items(), key=lambda x: x[1], reverse=True):
             f.write(f"{detection_type}: {count} 个文件 ({count/len(false_positives)*100:.2f}%)\n")
         
+        # 按包名和版本统计
+        f.write("\n\n按包名和版本统计：\n")
+        f.write("=" * 30 + "\n")
+        for package_name, versions in sorted(package_version_counts.items()):
+            f.write(f"\n## 包名: {package_name} (共 {sum(len(v) for v in versions.values())} 个假阳性)\n")
+            for version, files_info in sorted(versions.items()):
+                f.write(f"  - 版本 {version}: {len(files_info)} 个假阳性\n")
+                for file_path, types in files_info:
+                    f.write(f"    * {file_path} - 检测类型: {', '.join(types)}\n")
+        
         # 分类型列出文件
         f.write("\n\n详细分类列表：\n")
         f.write("=" * 30 + "\n")
         for detection_type, files in sorted(files_by_type.items(), key=lambda x: len(x[1]), reverse=True):
             f.write(f"\n## {detection_type} ({len(files)} 个文件):\n")
             for i, file_path in enumerate(sorted(files), 1):
-                package_name = os.path.basename(file_path)
-                f.write(f"{i}. {package_name} - {file_path}\n")
+                package_name, version = extract_package_info(file_path)
+                f.write(f"{i}. {package_name} ({version}) - {file_path}\n")
         
         # 完整列表
         f.write("\n\n所有假阳性文件及其检测类型：\n")
         f.write("=" * 30 + "\n")
-        for i, (file_path, types) in enumerate(sorted(false_positives, key=lambda x: x[0]), 1):
-            package_name = os.path.basename(file_path)
-            f.write(f"{i}. {package_name}\n")
+        for i, (file_path, types, package_name, version) in enumerate(sorted(false_positives, key=lambda x: x[0]), 1):
+            f.write(f"{i}. {package_name} ({version})\n")
             f.write(f"   路径: {file_path}\n")
             f.write(f"   检测类型: {', '.join(types)}\n\n")
     
