@@ -27,7 +27,7 @@ class LLMAgent:
         
         # Load configuration
         self.config = self._load_config()
-        self.query_type = "azure"
+        self.query_type = "openai"
         
         # Initialize clients based on query type
         self._init_clients()
@@ -64,12 +64,12 @@ class LLMAgent:
         
         # Initialize the appropriate client based on query type
         if self.query_type == 'azure':
-            self.client = AzureOpenAI(
+            self.azure_client = AzureOpenAI(
                 api_key=self.config["azure_api_key"],
                 api_version=self.config["azure_api_version"],
                 azure_endpoint=self.config["azure_api_base"]
             )
-            self.azure_model = self.config.get('azure_api_model', 'gpt-4.1-nano')
+            self.azure_model = self.config.get('azure_api_model', 'gpt-4.1')
         elif self.query_type == 'openai':
             self.openai_model = self.config.get('openai_api_model', 'gpt-4.1-nano')
             self.openai_client = openai.OpenAI(api_key=self.config['openai_api_key'])
@@ -141,8 +141,8 @@ class LLMAgent:
             Response text from the LLM
         """
         # Set defaults for response format if needed
-        response_format = response_format or ({"type": "json_object"} if self.query_type == 'azure' else None)
-        
+        response_format = response_format or ({"type": "json_object"} if self.query_type == 'openai' or self.query_type == 'azure' else None)
+
         # Call the appropriate backend
         if self.query_type == "azure":
             return self._azure_query(messages, max_tokens, temperature, top_p, 
@@ -166,7 +166,7 @@ class LLMAgent:
         
         while attempt < self.max_attempts:
             try:
-                completion = self.client.chat.completions.create(
+                completion = self.azure_client.chat.completions.create(
                     model=self.azure_model,  # or use self.config.get("azure_model", "gpt-4o")
                     messages=messages,
                     temperature=temperature,
@@ -276,19 +276,3 @@ class LLMAgent:
                 wait_time += 5
         
         return ""
-
-# 示例使用方法
-# if __name__ == "__main__":
-    
-#     # 创建代理实例
-#     agent = LLMAgent()
-    
-#     # 准备消息
-#     messages = [
-#         {"role": "system", "content": "你是一个有用的助手。"},
-#         {"role": "user", "content": "请简要介绍一下Python语言。输出成json"}
-#     ]
-    
-#     # 执行查询
-#     response = agent.perform_query(messages)
-#     print(response)
