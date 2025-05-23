@@ -34,7 +34,7 @@ except LookupError:
 
 class BehaviorSummaryClusterer:
     def __init__(self):
-        self.base_dir = "/home2/wenbo/Documents/NPMAnalysis"
+        self.base_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis"
         self.malware_snippets_dir = os.path.join(self.base_dir, "Codes/code_snipptes/malware_snippets")
         self.package_label_dir = os.path.join(self.base_dir, "Codes/dataclean/package_label")
         self.output_dir = os.path.join(self.base_dir, "Codes/behavior_annoation/results")
@@ -79,7 +79,8 @@ class BehaviorSummaryClusterer:
                             })
             except Exception as e:
                 logger.error(f"处理文件 {file_path} 时出错: {str(e)}")
-    
+        logger.info(f"Collected {len(self.summaries)} behavior summaries in total")
+
     def collect_from_package_label(self):
         """收集package_label目录下的behavior summaries"""
         logger.info("正在收集package_label目录下的behavior summaries...")
@@ -110,7 +111,7 @@ class BehaviorSummaryClusterer:
                             })
             except Exception as e:
                 logger.error(f"处理文件 {file_path} 时出错: {str(e)}")
-    
+        logger.info(f"Collected {len(self.summaries)} behavior summaries in total")
     def preprocess_text(self, text):
         """预处理文本，去除标点符号、数字等"""
         # 转换为小写
@@ -648,49 +649,53 @@ class BehaviorSummaryClusterer:
         self.reduce_dimensions()
         
         # 寻找最优K值
-        optimal_k = self.find_optimal_k(max_k=20)
+        self.find_optimal_k(max_k=20)
         
-        # 执行K-means聚类
-        self.perform_kmeans_clustering(optimal_k)
-        
-        # 可视化K-means聚类结果
-        self.visualize_clusters(method="kmeans")
-        self.visualize_heatmap(method="kmeans")
-        
-        # 分析K-means聚类内容
-        kmeans_analysis = self.analyze_clusters(method="kmeans")
-        
-        # 执行谱聚类
-        if self.perform_spectral_clustering(optimal_k):
-            # 可视化谱聚类结果
-            self.visualize_clusters(method="spectral")
-            self.visualize_heatmap(method="spectral")
+        # 对k=5到k=19的每个值进行聚类分析
+        for k in range(5, 20):
+            logger.info(f"\n{'='*50}")
+            logger.info(f"开始分析 k={k} 的聚类结果")
+            logger.info(f"{'='*50}")
             
-            # 分析谱聚类内容
-            spectral_analysis = self.analyze_clusters(method="spectral")
+            # 创建k值子目录
+            k_output_dir = os.path.join(self.output_dir, f"k_{k}")
+            os.makedirs(k_output_dir, exist_ok=True)
+            
+            # 暂时保存原始输出目录
+            original_output_dir = self.output_dir
+            # 修改输出目录到k值子目录
+            self.output_dir = k_output_dir
+            
+            # 执行K-means聚类
+            self.perform_kmeans_clustering(k)
+            self.visualize_clusters(method="kmeans")
+            self.visualize_heatmap(method="kmeans")
+            self.analyze_clusters(method="kmeans")
+            
+            # 执行谱聚类
+            if self.perform_spectral_clustering(k):
+                self.visualize_clusters(method="spectral")
+                self.visualize_heatmap(method="spectral")
+                self.analyze_clusters(method="spectral")
+            
+            # 执行层次聚类
+            self.perform_agglomerative_clustering(k)
+            self.visualize_clusters(method="agglomerative")
+            self.visualize_heatmap(method="agglomerative") 
+            self.analyze_clusters(method="agglomerative")
+            
+            # 恢复原始输出目录
+            self.output_dir = original_output_dir
         
-        # 执行层次聚类
-        self.perform_agglomerative_clustering(optimal_k)
-        
-        # 可视化层次聚类结果
-        self.visualize_clusters(method="agglomerative")
-        self.visualize_heatmap(method="agglomerative")
-        
-        # 分析层次聚类内容
-        agglomerative_analysis = self.analyze_clusters(method="agglomerative")
-        
-        # 执行DBSCAN聚类
+        # DBSCAN聚类不需要指定k值，单独执行一次即可
         if self.perform_dbscan_clustering():
-            # 可视化DBSCAN聚类结果
             self.visualize_clusters(method="dbscan")
             self.visualize_heatmap(method="dbscan")
-            
-            # 分析DBSCAN聚类内容
-            dbscan_analysis = self.analyze_clusters(method="dbscan")
+            self.analyze_clusters(method="dbscan")
         
         # 保存完整的元数据
         df = pd.DataFrame(self.metadata)
-        df.to_csv(os.path.join(self.output_dir, "behavior_summaries_with_clusters.csv"), index=False)
+        df.to_csv(os.path.join(original_output_dir, "behavior_summaries_with_clusters.csv"), index=False)
         
         logger.info("Analysis complete, results saved to the results directory")
 
@@ -699,4 +704,4 @@ if __name__ == "__main__":
     
     # 可以选择使用Word2Vec或Doc2Vec进行向量化
     # 直接在原始向量空间进行聚类，而不是降维后的空间
-    clusterer.run_analysis(vectorization_method="doc2vec", use_original_space=True) 
+    clusterer.run_analysis(vectorization_method="doc2vec", use_original_space=True)
