@@ -7,10 +7,11 @@ import glob
 from collections import defaultdict
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.cluster import KMeans, SpectralClustering, AgglomerativeClustering, DBSCAN
+import seaborn as sns
+from sklearn.cluster import SpectralClustering
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
-from sklearn.metrics import silhouette_score
+from sklearn.metrics import silhouette_score, davies_bouldin_score
 import matplotlib.cm as cm
 import pandas as pd
 from tqdm import tqdm
@@ -20,7 +21,6 @@ from nltk.tokenize import word_tokenize
 from gensim.models import Word2Vec, Doc2Vec
 from gensim.models.doc2vec import TaggedDocument
 import re
-import seaborn as sns
 
 # 设置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -34,7 +34,7 @@ except LookupError:
 
 class BehaviorSummaryClusterer:
     def __init__(self):
-        self.base_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis"
+        self.base_dir = "/home2/wenbo/Documents/NPMAnalysis"
         self.malware_snippets_dir = os.path.join(self.base_dir, "Codes/code_snipptes/malware_snippets")
         self.package_label_dir = os.path.join(self.base_dir, "Codes/dataclean/package_label")
         self.output_dir = os.path.join(self.base_dir, "Codes/behavior_annoation/results")
@@ -49,11 +49,11 @@ class BehaviorSummaryClusterer:
         
     def collect_from_malware_snippets(self):
         """收集malware_snippets目录下的behavior summaries"""
-        logger.info("正在收集malware_snippets目录下的behavior summaries...")
+        logger.info("Collecting behavior summaries from malware_snippets directory...")
         
         result_files = glob.glob(f"{self.malware_snippets_dir}/**/*.json", recursive=True)
         
-        for file_path in tqdm(result_files, desc="处理malware_snippets文件"):
+        for file_path in tqdm(result_files, desc="Processing malware_snippets files"):
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
@@ -78,16 +78,15 @@ class BehaviorSummaryClusterer:
                                 "summary": snippet["behavior_summary"]
                             })
             except Exception as e:
-                logger.error(f"处理文件 {file_path} 时出错: {str(e)}")
-        logger.info(f"Collected {len(self.summaries)} behavior summaries in total")
-
+                logger.error(f"Error processing file {file_path}: {str(e)}")
+    
     def collect_from_package_label(self):
         """收集package_label目录下的behavior summaries"""
-        logger.info("正在收集package_label目录下的behavior summaries...")
+        logger.info("Collecting behavior summaries from package_label directory...")
         
         analysis_files = glob.glob(f"{self.package_label_dir}/**/*analysis.json", recursive=True)
         
-        for file_path in tqdm(analysis_files, desc="处理package_label文件"):
+        for file_path in tqdm(analysis_files, desc="Processing package_label files"):
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
@@ -110,8 +109,8 @@ class BehaviorSummaryClusterer:
                                 "summary": summary
                             })
             except Exception as e:
-                logger.error(f"处理文件 {file_path} 时出错: {str(e)}")
-        logger.info(f"Collected {len(self.summaries)} behavior summaries in total")
+                logger.error(f"Error processing file {file_path}: {str(e)}")
+    
     def preprocess_text(self, text):
         """预处理文本，去除标点符号、数字等"""
         # 转换为小写
@@ -135,7 +134,37 @@ class BehaviorSummaryClusterer:
     
     def vectorize_word2vec(self):
         """使用Word2Vec向量化文本"""
-        logger.info("使用Word2Vec向量化文本...")
+        model_path = os.path.join(self.output_dir, 'word2vec_model.bin')
+        
+        # 检查是否存在已训练的模型
+        if os.path.exists(model_path):
+            logger.info(f"Loading existing Word2Vec model from {model_path}")
+            try:
+                model = Word2Vec.load(model_path)
+                
+                # 预处理文本
+                tokenized_texts = [self.preprocess_text(summary) for summary in self.summaries]
+                
+                # 计算每个summary的向量表示（取词向量的平均值）
+                vectors = []
+                for tokens in tokenized_texts:
+                    if tokens:
+                        word_vectors = [model.wv[token] for token in tokens if token in model.wv]
+                        if word_vectors:
+                            vectors.append(np.mean(word_vectors, axis=0))
+                        else:
+                            vectors.append(np.zeros(model.vector_size))
+                    else:
+                        vectors.append(np.zeros(model.vector_size))
+                
+                self.X = np.array(vectors)
+                logger.info(f"Vectors generated from existing Word2Vec model, dimensions: {self.X.shape}")
+                return
+            except Exception as e:
+                logger.warning(f"Failed to load existing Word2Vec model: {str(e)}. Training new model.")
+        
+        # 如果没有找到模型或加载失败，训练新模型
+        logger.info("Vectorizing text using Word2Vec...")
         
         # 预处理文本
         tokenized_texts = [self.preprocess_text(summary) for summary in self.summaries]
@@ -156,16 +185,36 @@ class BehaviorSummaryClusterer:
                 vectors.append(np.zeros(model.vector_size))
         
         self.X = np.array(vectors)
-        logger.info(f"Word2Vec向量化完成，向量维度: {self.X.shape}")
+        logger.info(f"Word2Vec vectorization complete, vector dimensions: {self.X.shape}")
         
         # 保存模型
-        model_path = os.path.join(self.output_dir, 'word2vec_model.bin')
         model.save(model_path)
-        logger.info(f"Word2Vec模型已保存到 {model_path}")
+        logger.info(f"Word2Vec model saved to {model_path}")
     
     def vectorize_doc2vec(self):
         """使用Doc2Vec向量化文本"""
-        logger.info("使用Doc2Vec向量化文本...")
+        model_path = os.path.join(self.output_dir, 'doc2vec_model.bin')
+        vectors_path = os.path.join(self.output_dir, 'doc2vec_vectors.npy')
+        
+        # 检查是否存在已训练的模型和向量
+        if os.path.exists(model_path) and os.path.exists(vectors_path):
+            logger.info(f"Loading existing Doc2Vec model from {model_path}")
+            try:
+                model = Doc2Vec.load(model_path)
+                vectors = np.load(vectors_path)
+                
+                # 检查向量数量是否与当前摘要数量匹配
+                if len(vectors) == len(self.summaries):
+                    self.X = vectors
+                    logger.info(f"Loaded vectors from {vectors_path}, dimensions: {self.X.shape}")
+                    return
+                else:
+                    logger.warning(f"Number of loaded vectors ({len(vectors)}) doesn't match current summaries ({len(self.summaries)}). Training new model.")
+            except Exception as e:
+                logger.warning(f"Failed to load existing Doc2Vec model or vectors: {str(e)}. Training new model.")
+        
+        # 如果没有找到模型或加载失败，训练新模型
+        logger.info("Vectorizing text using Doc2Vec...")
         
         # 预处理文本
         tokenized_texts = [self.preprocess_text(summary) for summary in self.summaries]
@@ -180,12 +229,13 @@ class BehaviorSummaryClusterer:
         
         # 获取文档向量
         self.X = np.array([model.dv[str(i)] for i in range(len(self.summaries))])
-        logger.info(f"Doc2Vec向量化完成，向量维度: {self.X.shape}")
+        logger.info(f"Doc2Vec vectorization complete, vector dimensions: {self.X.shape}")
         
-        # 保存模型
-        model_path = os.path.join(self.output_dir, 'doc2vec_model.bin')
+        # 保存模型和向量
         model.save(model_path)
-        logger.info(f"Doc2Vec模型已保存到 {model_path}")
+        np.save(vectors_path, self.X)
+        logger.info(f"Doc2Vec model saved to {model_path}")
+        logger.info(f"Doc2Vec vectors saved to {vectors_path}")
     
     def reduce_dimensions(self):
         """降维以便可视化，但不影响聚类过程"""
@@ -203,61 +253,9 @@ class BehaviorSummaryClusterer:
         
         return self.X_2d
     
-    def find_optimal_k(self, max_k=20):
-        """寻找最优的K值"""
-        logger.info(f"寻找最优K值 (1-{max_k})...")
-        
-        inertias = []
-        silhouette_scores = []
-        k_range = range(2, max_k + 1)
-        
-        for k in tqdm(k_range, desc="Testing different K values"):
-            kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-            kmeans.fit(self.X)
-            inertias.append(kmeans.inertia_)
-            
-            # 计算轮廓系数
-            silhouette_avg = silhouette_score(self.X, kmeans.labels_)
-            silhouette_scores.append(silhouette_avg)
-            logger.info(f"K={k}, Silhouette Score={silhouette_avg:.4f}")
-        
-        # 保存肘部曲线
-        plt.figure(figsize=(12, 5))
-        
-        plt.subplot(1, 2, 1)
-        plt.plot(k_range, inertias, 'bo-')
-        plt.xlabel('Number of Clusters (k)')
-        plt.ylabel('Inertia')
-        plt.title('K-Means Elbow Curve')
-        
-        plt.subplot(1, 2, 2)
-        plt.plot(k_range, silhouette_scores, 'ro-')
-        plt.xlabel('Number of Clusters (k)')
-        plt.ylabel('Silhouette Score')
-        plt.title('Silhouette Score Evaluation')
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.output_dir, 'optimal_k.png'), dpi=300)
-        
-        # 返回最优K值 (轮廓系数最高的K值)
-        best_k = k_range[np.argmax(silhouette_scores)]
-        logger.info(f"Optimal K: {best_k}, Silhouette Score: {max(silhouette_scores):.4f}")
-        return best_k
-    
-    def perform_kmeans_clustering(self, k):
-        """执行K-means聚类"""
-        logger.info(f"使用K={k}执行K-means聚类...")
-        
-        self.kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-        self.cluster_labels_kmeans = self.kmeans.fit_predict(self.X)
-        
-        # 将聚类标签添加到元数据
-        for i, item in enumerate(self.metadata):
-            item["cluster_kmeans"] = int(self.cluster_labels_kmeans[i])
-    
-    def perform_spectral_clustering(self, k):
-        """执行谱聚类(Spectral Clustering)"""
-        logger.info(f"Using K={k} for Spectral Clustering...")
+    def perform_spectral_clustering(self, k=30):
+        """执行谱聚类(Spectral Clustering)，固定为30个类"""
+        logger.info(f"Performing Spectral Clustering with K={k}...")
         
         try:
             # 直接在原始向量空间进行聚类
@@ -266,14 +264,14 @@ class BehaviorSummaryClusterer:
                 affinity='nearest_neighbors',
                 random_state=42
             )
-            self.cluster_labels_spectral = spectral.fit_predict(self.X)
+            self.cluster_labels = spectral.fit_predict(self.X)
             
             # 将谱聚类标签添加到元数据
             for i, item in enumerate(self.metadata):
-                item["cluster_spectral"] = int(self.cluster_labels_spectral[i])
+                item["cluster"] = int(self.cluster_labels[i])
                 
             # 计算轮廓系数
-            silhouette_avg = silhouette_score(self.X, self.cluster_labels_spectral)
+            silhouette_avg = silhouette_score(self.X, self.cluster_labels)
             logger.info(f"Spectral Clustering Silhouette Score: {silhouette_avg:.4f}")
             
             return True
@@ -281,122 +279,34 @@ class BehaviorSummaryClusterer:
             logger.error(f"Spectral Clustering error: {str(e)}")
             return False
     
-    def perform_agglomerative_clustering(self, k):
-        """执行层次聚类(Agglomerative Clustering)"""
-        logger.info(f"使用K={k}执行层次聚类...")
-        
-        agglomerative = AgglomerativeClustering(n_clusters=k)
-        self.cluster_labels_agglomerative = agglomerative.fit_predict(self.X)
-        
-        # 将层次聚类标签添加到元数据
-        for i, item in enumerate(self.metadata):
-            item["cluster_agglomerative"] = int(self.cluster_labels_agglomerative[i])
-            
-        # 计算轮廓系数
-        silhouette_avg = silhouette_score(self.X, self.cluster_labels_agglomerative)
-        logger.info(f"层次聚类轮廓系数: {silhouette_avg:.4f}")
-    
-    def perform_dbscan_clustering(self):
-        """执行DBSCAN聚类"""
-        logger.info("Performing DBSCAN clustering...")
-        
-        # 直接在原始向量空间尝试不同的参数
-        eps_values = [0.5, 1.0, 1.5, 2.0, 2.5]
-        min_samples_values = [5, 10, 15]
-        
-        best_silhouette = -1
-        best_params = None
-        best_labels = None
-        
-        for eps in eps_values:
-            for min_samples in min_samples_values:
-                dbscan = DBSCAN(eps=eps, min_samples=min_samples)
-                labels = dbscan.fit_predict(self.X)
-                
-                # 计算聚类数量（不包括噪声点）
-                n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-                
-                # 只有当聚类数量大于1时才计算轮廓系数
-                if n_clusters > 1:
-                    # 排除噪声点进行轮廓系数计算
-                    mask = labels != -1
-                    if sum(mask) > 1:  # 确保至少有两个非噪声点
-                        silhouette_avg = silhouette_score(self.X[mask], labels[mask])
-                        logger.info(f"DBSCAN (eps={eps}, min_samples={min_samples}): clusters={n_clusters}, silhouette={silhouette_avg:.4f}")
-                        
-                        if silhouette_avg > best_silhouette:
-                            best_silhouette = silhouette_avg
-                            best_params = (eps, min_samples)
-                            best_labels = labels
-                else:
-                    logger.info(f"DBSCAN (eps={eps}, min_samples={min_samples}): Only found {n_clusters} clusters")
-        
-        if best_params:
-            logger.info(f"Best DBSCAN parameters: eps={best_params[0]}, min_samples={best_params[1]}, silhouette={best_silhouette:.4f}")
-            self.cluster_labels_dbscan = best_labels
-            
-            # 将DBSCAN聚类标签添加到元数据
-            for i, item in enumerate(self.metadata):
-                item["cluster_dbscan"] = int(self.cluster_labels_dbscan[i])
-            
-            return True
-        else:
-            logger.warning("Could not find suitable DBSCAN parameters")
-            return False
-    
-    def visualize_clusters(self, method="kmeans"):
+    def visualize_clusters(self):
         """可视化聚类结果"""
+        logger.info("Visualizing clusters...")
+        
         plt.figure(figsize=(14, 10))
         
-        if method == "kmeans":
-            labels = self.cluster_labels_kmeans
-            title = f"K-Means Clustering (K={len(set(labels))})"
-        elif method == "spectral":
-            labels = self.cluster_labels_spectral
-            title = f"Spectral Clustering (K={len(set(labels))})"
-        elif method == "agglomerative":
-            labels = self.cluster_labels_agglomerative
-            title = f"Hierarchical Clustering (K={len(set(labels))})"
-        elif method == "dbscan":
-            labels = self.cluster_labels_dbscan
-            title = "DBSCAN Clustering"
-        else:
-            logger.error(f"Unsupported clustering method: {method}")
-            return
-        
         # 获取唯一的聚类标签
-        unique_labels = set(labels)
+        unique_labels = sorted(set(self.cluster_labels))
         n_clusters = len(unique_labels)
-        if -1 in unique_labels:  # DBSCAN可能有噪声点
-            n_clusters -= 1
         
         # 为每个聚类生成颜色
-        colors = cm.rainbow(np.linspace(0, 1, n_clusters + 1))
-        
-        # 为噪声点指定颜色 (如果有)
-        noise_color = 'black'
+        colors = cm.rainbow(np.linspace(0, 1, n_clusters))
         
         # 计算每个聚类的中心点
         cluster_centers = []
         for label in unique_labels:
-            if label != -1:  # 排除噪声点
-                mask = labels == label
-                points = self.X_2d[mask]
-                center = np.mean(points, axis=0)
-                cluster_centers.append((label, center))
+            mask = self.cluster_labels == label
+            points = self.X_2d[mask]
+            center = np.mean(points, axis=0)
+            cluster_centers.append((label, center))
         
         # 绘制每个聚类的点和连接到中心点的线
         for i, label in enumerate(unique_labels):
-            if label == -1:  # 噪声点
-                color = noise_color
-                marker = 'x'
-                label_name = "Noise"
-            else:
-                color = colors[i if label == -1 else label]
-                marker = 'o'
-                label_name = f"Cluster {label}"
+            color = colors[i]
+            marker = 'o'
+            label_name = f"Cluster {label}"
             
-            mask = labels == label
+            mask = self.cluster_labels == label
             plt.scatter(
                 self.X_2d[mask, 0],
                 self.X_2d[mask, 1],
@@ -404,62 +314,43 @@ class BehaviorSummaryClusterer:
                 c=[color],
                 marker=marker,
                 alpha=0.7,
-                label=label_name
+                label=label_name if i % 3 == 0 else ""  # 每3个标签显示一个，避免拥挤
             )
             
-            # 如果不是噪声点，绘制到中心点的线
-            if label != -1:
-                for center_label, center in cluster_centers:
-                    if center_label == label:
-                        for point in self.X_2d[mask]:
-                            plt.plot([point[0], center[0]], [point[1], center[1]], 
-                                     c=color, linewidth=0.5, linestyle='--', alpha=0.3)
+            # 绘制到中心点的线
+            for center_label, center in cluster_centers:
+                if center_label == label:
+                    for point in self.X_2d[mask]:
+                        plt.plot([point[0], center[0]], [point[1], center[1]], 
+                                 c=color, linewidth=0.5, linestyle='--', alpha=0.3)
         
         # 绘制中心点
         for label, center in cluster_centers:
             plt.scatter(center[0], center[1], s=200, c=[colors[label]], marker='*', 
                         edgecolors='k', linewidths=1)
         
-        plt.title(title, fontsize=18)
+        plt.title(f"Spectral Clustering (K={n_clusters})", fontsize=18)
         plt.xlabel("t-SNE Feature 1", fontsize=14)
         plt.ylabel("t-SNE Feature 2", fontsize=14)
-        plt.legend(fontsize=10)
+        plt.legend(fontsize=10, loc='upper right', bbox_to_anchor=(1.15, 1))
         plt.grid(True, alpha=0.3)
         
         # 保存图像
-        file_name = f"{method}_clusters_visualization.png"
+        file_name = "spectral_clusters_visualization.png"
         plt.savefig(os.path.join(self.output_dir, file_name), dpi=300, bbox_inches='tight')
         logger.info(f"Cluster visualization saved to {file_name}")
-        
-    def visualize_heatmap(self, method="kmeans"):
+    
+    def visualize_heatmap(self):
         """使用热图可视化聚类结果"""
-        logger.info(f"Creating heatmap visualization for {method} clustering...")
-        
-        if method == "kmeans":
-            labels = self.cluster_labels_kmeans
-            title = f"K-Means Clustering Heatmap"
-        elif method == "spectral":
-            labels = self.cluster_labels_spectral
-            title = f"Spectral Clustering Heatmap"
-        elif method == "agglomerative":
-            labels = self.cluster_labels_agglomerative
-            title = f"Hierarchical Clustering Heatmap"
-        elif method == "dbscan":
-            labels = self.cluster_labels_dbscan
-            title = "DBSCAN Clustering Heatmap"
-        else:
-            logger.error(f"Unsupported clustering method: {method}")
-            return
+        logger.info("Creating heatmap visualization...")
         
         # 获取唯一的聚类标签
-        unique_labels = sorted(set(labels))
-        if -1 in unique_labels:  # 移除噪声点
-            unique_labels.remove(-1)
+        unique_labels = sorted(set(self.cluster_labels))
         
         # 计算每个聚类的中心
         cluster_centers = []
         for label in unique_labels:
-            mask = labels == label
+            mask = self.cluster_labels == label
             # 直接使用原始向量空间计算中心
             cluster_centers.append(np.mean(self.X[mask], axis=0))
         
@@ -472,31 +363,31 @@ class BehaviorSummaryClusterer:
                 distance_matrix[i, j] = np.linalg.norm(cluster_centers[i] - cluster_centers[j])
         
         # 创建热图
-        plt.figure(figsize=(10, 8))
+        plt.figure(figsize=(12, 10))
         sns.heatmap(
             distance_matrix,
-            annot=True,
+            annot=False,  # 30个类太多，不显示数值
             fmt=".2f",
             cmap="YlGnBu",
             xticklabels=[f"C{label}" for label in unique_labels],
             yticklabels=[f"C{label}" for label in unique_labels],
             cbar_kws={'label': 'Distance'}
         )
-        plt.title(title, fontsize=16)
+        plt.title("Spectral Clustering Heatmap", fontsize=16)
         plt.tight_layout()
         
         # 保存热图
-        file_name = f"{method}_heatmap.png"
+        file_name = "spectral_heatmap.png"
         plt.savefig(os.path.join(self.output_dir, file_name), dpi=300, bbox_inches='tight')
         logger.info(f"Heatmap visualization saved to {file_name}")
         
         # 统计每个聚类的大小
         cluster_sizes = {}
         for label in unique_labels:
-            cluster_sizes[f"Cluster {label}"] = sum(labels == label)
+            cluster_sizes[f"Cluster {label}"] = sum(self.cluster_labels == label)
         
         # 创建条形图显示聚类大小
-        plt.figure(figsize=(12, 6))
+        plt.figure(figsize=(15, 8))
         bars = plt.bar(
             range(len(cluster_sizes)), 
             list(cluster_sizes.values()), 
@@ -515,49 +406,33 @@ class BehaviorSummaryClusterer:
                 fontsize=10
             )
         
-        plt.title(f"{method.capitalize()} Clustering - Cluster Sizes", fontsize=16)
+        plt.title("Spectral Clustering - Cluster Sizes", fontsize=16)
         plt.xlabel("Clusters", fontsize=12)
         plt.ylabel("Number of Samples", fontsize=12)
-        plt.xticks(range(len(cluster_sizes)), list(cluster_sizes.keys()), rotation=45)
+        plt.xticks(range(len(cluster_sizes)), list(cluster_sizes.keys()), rotation=90)
         plt.tight_layout()
         
         # 保存条形图
-        file_name = f"{method}_cluster_sizes.png"
+        file_name = "spectral_cluster_sizes.png"
         plt.savefig(os.path.join(self.output_dir, file_name), dpi=300, bbox_inches='tight')
         logger.info(f"Cluster sizes visualization saved to {file_name}")
     
-    def analyze_clusters(self, method="kmeans"):
+    def analyze_clusters(self):
         """分析聚类内容，提取每个聚类的特征词和代表性summary"""
-        logger.info(f"Analyzing {method} clustering results...")
-        
-        if method == "kmeans":
-            labels = self.cluster_labels_kmeans
-            cluster_field = "cluster_kmeans"
-        elif method == "spectral":
-            labels = self.cluster_labels_spectral
-            cluster_field = "cluster_spectral"
-        elif method == "agglomerative":
-            labels = self.cluster_labels_agglomerative
-            cluster_field = "cluster_agglomerative"
-        elif method == "dbscan":
-            labels = self.cluster_labels_dbscan
-            cluster_field = "cluster_dbscan"
-        else:
-            logger.error(f"Unsupported clustering method: {method}")
-            return
-        
-        # 获取唯一的聚类标签
-        unique_labels = sorted(set(labels))
+        logger.info("Analyzing clustering results...")
         
         # 将元数据转换为DataFrame
         df = pd.DataFrame(self.metadata)
+        
+        # 获取唯一的聚类标签
+        unique_labels = sorted(set(self.cluster_labels))
         
         # 为每个聚类提取特征词和示例
         cluster_analysis = {}
         
         for label in unique_labels:
-            cluster_mask = df[cluster_field] == label
-            cluster_name = "Noise" if label == -1 else f"Cluster {label}"
+            cluster_mask = df["cluster"] == label
+            cluster_name = f"Cluster_{label}"
             
             cluster_summaries = df[cluster_mask]["summary"].tolist()
             
@@ -580,10 +455,10 @@ class BehaviorSummaryClusterer:
             
             # 获取前10个高频词
             top_features = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)[:10]
-            top_features = [word for word, _ in top_features]
+            top_features = [{"word": word, "frequency": freq} for word, freq in top_features]
             
-            # 获取这个聚类中的示例 (最多5个)
-            examples = df[cluster_mask].sample(min(5, len(cluster_summaries)))["summary"].tolist()
+            # 获取这个聚类中的所有样本
+            cluster_samples = df[cluster_mask].to_dict('records')
             
             # 统计聚类大小
             cluster_size = sum(cluster_mask)
@@ -600,34 +475,111 @@ class BehaviorSummaryClusterer:
                 "size": cluster_size,
                 "percentage": f"{cluster_size/len(self.metadata)*100:.1f}%",
                 "top_features": top_features,
-                "examples": examples,
                 "source_distribution": source_percentages,
-                "type_distribution": type_percentages
+                "type_distribution": type_percentages,
+                "samples": cluster_samples  # 包含所有样本的详细信息
             }
         
         # 保存分析结果
-        with open(os.path.join(self.output_dir, f"{method}_cluster_analysis.json"), "w", encoding="utf-8") as f:
+        with open(os.path.join(self.output_dir, "spectral_cluster_analysis.json"), "w", encoding="utf-8") as f:
             json.dump(cluster_analysis, f, ensure_ascii=False, indent=2)
+        logger.info("Cluster analysis saved to spectral_cluster_analysis.json")
         
-        # 打印分析结果
+        # 打印分析结果摘要
         for cluster_name, analysis in cluster_analysis.items():
             logger.info(f"\n{cluster_name} (Contains {analysis['size']} samples, {analysis['percentage']} of total)")
-            logger.info(f"Top features: {', '.join(analysis['top_features'])}")
+            logger.info(f"Top features: {', '.join([item['word'] for item in analysis['top_features']])}")
             logger.info(f"Source distribution: {analysis['source_distribution']}")
             logger.info(f"Type distribution: {analysis['type_distribution']}")
-            logger.info("Examples:")
-            for i, example in enumerate(analysis['examples'][:3], 1):
-                logger.info(f"  {i}. {example}")
             logger.info("-" * 80)
         
         return cluster_analysis
     
-    def run_analysis(self, vectorization_method="word2vec", use_original_space=True):
+    def find_optimal_k_spectral(self, min_k=2, max_k=40, step=2):
+        """寻找谱聚类的最优K值
+        
+        通过计算不同K值的轮廓系数(Silhouette Score)和Davies-Bouldin指数来评估聚类效果
+        
+        Args:
+            min_k: 最小K值
+            max_k: 最大K值
+            step: K值递增步长
+        
+        Returns:
+            最优K值
+        """
+        logger.info(f"Finding optimal K for Spectral Clustering ({min_k}-{max_k}, step={step})...")
+        
+        k_range = range(min_k, max_k + 1, step)
+        silhouette_scores = []
+        davies_bouldin_scores = []
+        
+        # 为了加速计算，可以在降维后的数据上评估
+        # 但最终聚类仍在原始空间进行
+        X_eval = self.X
+        
+        for k in tqdm(k_range, desc="Testing different K values"):
+            try:
+                # 使用nearest_neighbors亲和度，这通常在高维数据上效果更好
+                spectral = SpectralClustering(
+                    n_clusters=k,
+                    affinity='nearest_neighbors',
+                    random_state=42
+                )
+                labels = spectral.fit_predict(X_eval)
+                
+                # 计算评估指标
+                sil_score = silhouette_score(X_eval, labels)
+                db_score = davies_bouldin_score(X_eval, labels)
+                
+                silhouette_scores.append(sil_score)
+                davies_bouldin_scores.append(db_score)
+                
+                logger.info(f"K={k}, Silhouette Score={sil_score:.4f}, Davies-Bouldin Index={db_score:.4f}")
+            except Exception as e:
+                logger.error(f"Error evaluating K={k}: {str(e)}")
+                silhouette_scores.append(-1)
+                davies_bouldin_scores.append(float('inf'))
+        
+        # 绘制评估指标曲线
+        plt.figure(figsize=(12, 10))
+        
+        # 轮廓系数 - 越高越好
+        plt.subplot(2, 1, 1)
+        plt.plot(list(k_range), silhouette_scores, 'bo-')
+        plt.xlabel('Number of Clusters (k)')
+        plt.ylabel('Silhouette Score')
+        plt.title('Silhouette Score Evaluation (higher is better)')
+        plt.grid(True)
+        
+        # Davies-Bouldin指数 - 越低越好
+        plt.subplot(2, 1, 2)
+        plt.plot(list(k_range), davies_bouldin_scores, 'ro-')
+        plt.xlabel('Number of Clusters (k)')
+        plt.ylabel('Davies-Bouldin Index')
+        plt.title('Davies-Bouldin Index Evaluation (lower is better)')
+        plt.grid(True)
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.output_dir, 'spectral_optimal_k.png'), dpi=300)
+        
+        # 根据轮廓系数选择最优K值
+        valid_scores = [(k, score) for k, score in zip(k_range, silhouette_scores) if score > 0]
+        if valid_scores:
+            best_k, best_score = max(valid_scores, key=lambda x: x[1])
+            logger.info(f"Optimal K for Spectral Clustering: {best_k}, Silhouette Score: {best_score:.4f}")
+        else:
+            best_k = 30  # 默认值
+            logger.warning(f"Could not determine optimal K, using default: {best_k}")
+        
+        return best_k
+    
+    def run_analysis(self, vectorization_method="doc2vec", find_optimal_k=True):
         """运行完整的分析流程
         
         Args:
             vectorization_method: 向量化方法，"word2vec"或"doc2vec"
-            use_original_space: 是否在原始向量空间聚类，True表示不降维
+            find_optimal_k: 是否寻找最优K值，False则使用固定值30
         """
         # 收集数据
         self.collect_from_malware_snippets()
@@ -648,60 +600,33 @@ class BehaviorSummaryClusterer:
         # 降维仅用于可视化
         self.reduce_dimensions()
         
-        # 寻找最优K值
-        self.find_optimal_k(max_k=20)
+        # 确定聚类数量
+        if find_optimal_k:
+            # 寻找最优K值
+            k = self.find_optimal_k_spectral(min_k=2, max_k=40, step=2)
+        else:
+            # 使用固定的K值
+            k = 20
+            logger.info(f"Using fixed K={k} for Spectral Clustering")
         
-        # 对k=5到k=19的每个值进行聚类分析
-        for k in range(5, 20):
-            logger.info(f"\n{'='*50}")
-            logger.info(f"开始分析 k={k} 的聚类结果")
-            logger.info(f"{'='*50}")
+        # 执行谱聚类
+        if self.perform_spectral_clustering(k=k):
+            # 可视化聚类结果
+            self.visualize_clusters()
+            self.visualize_heatmap()
             
-            # 创建k值子目录
-            k_output_dir = os.path.join(self.output_dir, f"k_{k}")
-            os.makedirs(k_output_dir, exist_ok=True)
+            # 分析聚类内容
+            cluster_analysis = self.analyze_clusters()
             
-            # 暂时保存原始输出目录
-            original_output_dir = self.output_dir
-            # 修改输出目录到k值子目录
-            self.output_dir = k_output_dir
+            # 保存完整的元数据
+            df = pd.DataFrame(self.metadata)
+            df.to_csv(os.path.join(self.output_dir, "behavior_summaries_with_clusters.csv"), index=False)
             
-            # 执行K-means聚类
-            self.perform_kmeans_clustering(k)
-            self.visualize_clusters(method="kmeans")
-            self.visualize_heatmap(method="kmeans")
-            self.analyze_clusters(method="kmeans")
-            
-            # 执行谱聚类
-            if self.perform_spectral_clustering(k):
-                self.visualize_clusters(method="spectral")
-                self.visualize_heatmap(method="spectral")
-                self.analyze_clusters(method="spectral")
-            
-            # 执行层次聚类
-            self.perform_agglomerative_clustering(k)
-            self.visualize_clusters(method="agglomerative")
-            self.visualize_heatmap(method="agglomerative") 
-            self.analyze_clusters(method="agglomerative")
-            
-            # 恢复原始输出目录
-            self.output_dir = original_output_dir
-        
-        # DBSCAN聚类不需要指定k值，单独执行一次即可
-        if self.perform_dbscan_clustering():
-            self.visualize_clusters(method="dbscan")
-            self.visualize_heatmap(method="dbscan")
-            self.analyze_clusters(method="dbscan")
-        
-        # 保存完整的元数据
-        df = pd.DataFrame(self.metadata)
-        df.to_csv(os.path.join(original_output_dir, "behavior_summaries_with_clusters.csv"), index=False)
-        
-        logger.info("Analysis complete, results saved to the results directory")
+            logger.info("Analysis complete, results saved to the results directory")
+        else:
+            logger.error("Spectral clustering failed")
 
 if __name__ == "__main__":
     clusterer = BehaviorSummaryClusterer()
-    
-    # 可以选择使用Word2Vec或Doc2Vec进行向量化
-    # 直接在原始向量空间进行聚类，而不是降维后的空间
-    clusterer.run_analysis(vectorization_method="doc2vec", use_original_space=True)
+    # 设置find_optimal_k=True来寻找最优K值，False则使用固定值30
+    clusterer.run_analysis(vectorization_method="doc2vec", find_optimal_k=False) 
