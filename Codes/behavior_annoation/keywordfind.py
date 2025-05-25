@@ -225,22 +225,48 @@ class MalwareBehaviorAnalyzer:
         summary_df.to_csv(os.path.join(self.output_dir, "summary_classifications.csv"), index=False)
         
         # 2. Save primary classification for each package-version
-        primary_records = [
-            {'package_id': pid, 'package_name': pid.split('-')[0], 'version': pid.split('-')[1], 'classification': cls}
-            for pid, cls in self.package_primary_classifications.items()
-        ]
+        primary_records = []
+        for pid, cls in self.package_primary_classifications.items():
+            # Use rsplit to correctly handle package names with hyphens
+            parts = pid.rsplit('-', 1)
+            if len(parts) == 2:
+                package_name, version = parts
+            else:
+                # Fallback if no version found
+                package_name, version = pid, "unknown"
+            
+            primary_records.append({
+                'package_id': pid, 
+                'package_name': package_name, 
+                'version': version, 
+                'classification': cls
+            })
+        
         primary_df = pd.DataFrame(primary_records)
         primary_df.to_csv(os.path.join(self.output_dir, "package_primary_classifications.csv"), index=False)
         
         # 3. Save all classifications for each package-version
-        all_records = [
-            {'package_id': pid, 'package_name': pid.split('-')[0], 'version': pid.split('-')[1], 
-             'classifications': list(classifications)}
-            for pid, classifications in self.package_all_classifications.items()
-        ]
+        all_records = []
+        for pid, classifications in self.package_all_classifications.items():
+            # Use rsplit to correctly handle package names with hyphens
+            parts = pid.rsplit('-', 1)
+            if len(parts) == 2:
+                package_name, version = parts
+            else:
+                # Fallback if no version found
+                package_name, version = pid, "unknown"
+            
+            all_records.append({
+                'package_id': pid, 
+                'package_name': package_name, 
+                'version': version,
+                'classifications': list(classifications)
+            })
+        
         all_df = pd.DataFrame(all_records)
         all_df.to_csv(os.path.join(self.output_dir, "package_all_classifications.csv"), index=False)
         
+        # ...existing code...
         # 4. Save unmatched summaries
         if self.unmatched_summaries:
             unmatched_df = pd.DataFrame(self.unmatched_summaries)
