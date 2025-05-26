@@ -220,20 +220,62 @@ class MalwareDetectionAnalyzer:
         plt.xlabel('Year Group')
         plt.ylabel('Detection Tool')
         
+        # # 2. Line plot of detection rates over time
+        # plt.subplot(2, 3, 2)
+        # for i, tool in enumerate(tools_with_data):
+        #     rates = [detection_rates[tool].get(yg, {'detection_rate': 0})['detection_rate'] 
+        #             for yg in year_groups[:-1]]  # Exclude 'Unknown'
+        #     plt.plot(year_groups[:-1], rates, marker='o', linewidth=2, label=tool)
+        
+        # plt.title('Detection Rate Trends Over Time', fontsize=14, fontweight='bold')
+        # plt.xlabel('Year Group')
+        # plt.ylabel('Detection Rate (%)')
+        # plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        # plt.xticks(rotation=45)
+        # plt.grid(True, alpha=0.3)
+        
+
+        # ...existing code...
         # 2. Line plot of detection rates over time
         plt.subplot(2, 3, 2)
+        
+        # Define distinct colors and line styles for better differentiation
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
+                 '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+                 '#aec7e8', '#ffbb78', '#98df8a', '#ff9896', '#c5b0d5']
+        
+        line_styles = ['-', '--', '-.', ':', '-', '--', '-.', ':', '-', '--']
+        markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'h']
+        
         for i, tool in enumerate(tools_with_data):
             rates = [detection_rates[tool].get(yg, {'detection_rate': 0})['detection_rate'] 
                     for yg in year_groups[:-1]]  # Exclude 'Unknown'
-            plt.plot(year_groups[:-1], rates, marker='o', linewidth=2, label=tool)
+            
+            # Use different color, line style, and marker for each tool
+            color = colors[i % len(colors)]
+            line_style = line_styles[i % len(line_styles)]
+            marker = markers[i % len(markers)]
+            
+            plt.plot(year_groups[:-1], rates, 
+                    marker=marker, 
+                    linewidth=2.5, 
+                    linestyle=line_style,
+                    color=color,
+                    markersize=8,
+                    markeredgewidth=1,
+                    markeredgecolor='white',
+                    label=tool)
         
         plt.title('Detection Rate Trends Over Time', fontsize=14, fontweight='bold')
         plt.xlabel('Year Group')
         plt.ylabel('Detection Rate (%)')
-        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', frameon=True, 
+                  fancybox=True, shadow=True)
         plt.xticks(rotation=45)
         plt.grid(True, alpha=0.3)
-        
+        plt.ylim(0, 100)  # Set y-axis limits for better visualization
+# ...existing code...
+
         # 3. Bar plot of total detections by year
         plt.subplot(2, 3, 3)
         year_totals = defaultdict(int)
