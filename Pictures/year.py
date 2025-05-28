@@ -50,19 +50,42 @@ for i, (year, value) in enumerate(zip(years, malicious_counts)):
 
 plt.xticks(rotation=45)
 
+# # 3. Pie Chart
+# ax3 = plt.subplot(2, 3, 3)
+# colors_pie = ['#FF9999', '#66B2FF', '#99FF99', '#FFCC99', '#FF99CC']
+# wedges, texts, autotexts = ax3.pie(malicious_counts, labels=years, autopct='%1.1f%%',
+#                                    colors=colors_pie, startangle=90, 
+#                                    explode=(0.05, 0.05, 0.05, 0.05, 0.05))
+# ax3.set_title('Distribution of Malicious NPM Packages\n(Pie Chart)', 
+#               fontsize=14, fontweight='bold', pad=20)
+
+# # Enhance pie chart text
+# for autotext in autotexts:
+#     autotext.set_color('white')
+#     autotext.set_fontweight('bold')
+
+
 # 3. Pie Chart
 ax3 = plt.subplot(2, 3, 3)
-colors_pie = ['#FF9999', '#66B2FF', '#99FF99', '#FFCC99', '#FF99CC']
-wedges, texts, autotexts = ax3.pie(malicious_counts, labels=years, autopct='%1.1f%%',
+colors_pie = [ 
+                 '#e377c2', '#17becf',
+                 '#ffbb78', '#98df8a', '#ff9896', '#c5b0d5']  # Softer, more academic colors
+wedges, texts, autotexts = ax3.pie(malicious_counts, labels=years, autopct=lambda pct: f'{pct:.1f}%\n({int(pct/100*sum(malicious_counts))})',
                                    colors=colors_pie, startangle=90, 
                                    explode=(0.05, 0.05, 0.05, 0.05, 0.05))
-ax3.set_title('Distribution of Malicious NPM Packages\n(Pie Chart)', 
+ax3.set_title('Distribution of Malicious NPM Packages', 
               fontsize=14, fontweight='bold', pad=20)
 
-# Enhance pie chart text
+# Enhance pie chart text - larger font for better visibility when scaled
 for autotext in autotexts:
-    autotext.set_color('white')
+    autotext.set_color('black')
     autotext.set_fontweight('bold')
+    autotext.set_fontsize(11)  # Larger font size
+
+# Enhance year labels
+for text in texts:
+    text.set_fontsize(10)
+    text.set_fontweight('bold')
 
 # 4. Horizontal Bar Chart with Gradient Effect
 ax4 = plt.subplot(2, 3, 4)

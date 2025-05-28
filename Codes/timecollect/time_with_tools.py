@@ -204,10 +204,13 @@ class MalwareDetectionAnalyzer:
             return
         
         # Create figure with subplots
-        fig = plt.figure(figsize=(20, 15))
+        # fig = plt.figure(figsize=(20, 15))
+        fig = plt.figure(figsize=(24, 12))
+        
         
         # 1. Heatmap of detection rates
         plt.subplot(2, 3, 1)
+
         if rate_matrix:
             sns.heatmap(rate_matrix, 
                        xticklabels=year_groups, 
@@ -269,8 +272,13 @@ class MalwareDetectionAnalyzer:
         plt.title('Detection Rate Trends Over Time', fontsize=14, fontweight='bold')
         plt.xlabel('Year Group')
         plt.ylabel('Detection Rate (%)')
-        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', frameon=True, 
-                  fancybox=True, shadow=True)
+        
+        # 修改图例设置以匹配背景颜色
+        legend = plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', 
+                           frameon=True, fancybox=False, shadow=False,
+                           facecolor='white', edgecolor='none')
+        legend.get_frame().set_alpha(1.0)  # 设置图例背景完全不透明
+        
         plt.xticks(rotation=45)
         plt.grid(True, alpha=0.3)
         plt.ylim(0, 100)  # Set y-axis limits for better visualization
@@ -289,7 +297,6 @@ class MalwareDetectionAnalyzer:
         plt.bar(years, totals, color='skyblue', alpha=0.7)
         plt.title('Total Malware Samples by Year', fontsize=14, fontweight='bold')
         plt.xlabel('Year Group')
-        plt.ylabel('Number of Samples')
         plt.xticks(rotation=45)
         
         # 4. Box plot of detection rates by tool
