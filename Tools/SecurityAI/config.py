@@ -1,11 +1,12 @@
 import os
-from dotenv import load_dotenv
 
-load_dotenv()
+# 不再需要dotenv库
+# from dotenv import load_dotenv
+# load_dotenv()
 
 class Config:
     # OpenAI API配置
-    OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+    OPENAI_API_KEY = "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"
     
     # 模型配置
     # mini是更强的模型（对应论文中的GPT-4）
@@ -29,3 +30,21 @@ class Config:
     
     # 用户提示词（严格按照论文）
     USER_PROMPT = "Analyze the above code for malicious behavior. Remember to respond in the required JSON format. Consider ALL of the code carefully. Check the beginning, middle, and end of the code. Work step-by-step to get the right answer."
+    
+    # 数据集分析配置
+    # 数据集路径
+    BENIGN_DATASET_PATH = "/home2/wenbo/Documents/NPMAnalysis/Dataset/unzip_benign"
+    MALWARE_DATASET_PATH = "/home2/wenbo/Documents/NPMAnalysis/Dataset/unzip_malware"
+    
+    # 输出路径
+    BENIGN_OUTPUT_PATH = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/socketai/benign"
+    MALWARE_OUTPUT_PATH = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/socketai/malware"
+    
+    # 文件大小限制 (175KB)
+    MAX_FILE_SIZE = 175 * 1024
+    
+    # 每个包最多检测的JS文件数
+    MAX_JS_FILES_PER_PACKAGE = 10
+    
+    # 固定进程数量
+    PROCESS_COUNT = 20

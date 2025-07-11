@@ -14,11 +14,13 @@ class SocketAI:
     def _load_prompts(self) -> Dict[str, str]:
         """加载所有提示词文件"""
         prompts = {}
-        prompt_dir = Path("prompts")
+        # 使用相对于当前文件的路径
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        prompt_dir = os.path.join(current_dir, "prompts")
         
-        prompts['step1'] = (prompt_dir / "step1_initial.txt").read_text(encoding='utf-8')
-        prompts['step2'] = (prompt_dir / "step2_critical.txt").read_text(encoding='utf-8')
-        prompts['step3'] = (prompt_dir / "step3_final.txt").read_text(encoding='utf-8')
+        prompts['step1'] = Path(os.path.join(prompt_dir, "step1_initial.txt")).read_text(encoding='utf-8')
+        prompts['step2'] = Path(os.path.join(prompt_dir, "step2_critical.txt")).read_text(encoding='utf-8')
+        prompts['step3'] = Path(os.path.join(prompt_dir, "step3_final.txt")).read_text(encoding='utf-8')
         
         return prompts
     
@@ -134,7 +136,7 @@ class SocketAI:
     def analyze_file(self, file_path: str, use_strong_model: bool = False) -> Dict[str, Any]:
         """分析单个文件的完整工作流程"""
         # 读取文件内容
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             code = f.read()
         
         print(f"\n开始分析文件: {file_path}")
