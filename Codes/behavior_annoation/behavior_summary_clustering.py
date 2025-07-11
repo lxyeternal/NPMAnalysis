@@ -195,12 +195,17 @@ class BehaviorSummaryClusterer:
         X_pca = pca.fit_transform(self.X)
         logger.info(f"PCA reduced dimensions: {X_pca.shape}")
         
-        # t-SNE降维到2维用于可视化
-        self.tsne = TSNE(n_components=2, random_state=42)
-        self.X_2d = self.tsne.fit_transform(X_pca)
-        logger.info(f"t-SNE reduced dimensions: {self.X_2d.shape}")
+        # t-SNE降维到3维用于可视化
+        self.tsne = TSNE(n_components=3, random_state=42)
+        self.X_3d = self.tsne.fit_transform(X_pca)
+        logger.info(f"t-SNE reduced dimensions: {self.X_3d.shape}")
         
-        return self.X_2d
+        # 同时保留2D版本用于兼容现有代码
+        self.tsne_2d = TSNE(n_components=2, random_state=42)
+        self.X_2d = self.tsne_2d.fit_transform(X_pca)
+        logger.info(f"t-SNE 2D reduced dimensions: {self.X_2d.shape}")
+        
+        return self.X_3d
     
     def find_optimal_k(self, max_k=20):
         """寻找最优的K值"""
@@ -345,20 +350,26 @@ class BehaviorSummaryClusterer:
     
     def visualize_clusters(self, method="kmeans"):
         """可视化聚类结果"""
+        # 创建2D和3D两个可视化
+        self._visualize_clusters_2d(method)
+        self._visualize_clusters_3d(method)
+        
+    def _visualize_clusters_2d(self, method="kmeans"):
+        """二维可视化聚类结果"""
         plt.figure(figsize=(14, 10))
         
         if method == "kmeans":
             labels = self.cluster_labels_kmeans
-            title = f"K-Means Clustering (K={len(set(labels))})"
+            title = f"K-Means Clustering (K={len(set(labels))}) - 2D"
         elif method == "spectral":
             labels = self.cluster_labels_spectral
-            title = f"Spectral Clustering (K={len(set(labels))})"
+            title = f"Spectral Clustering (K={len(set(labels))}) - 2D"
         elif method == "agglomerative":
             labels = self.cluster_labels_agglomerative
-            title = f"Hierarchical Clustering (K={len(set(labels))})"
+            title = f"Hierarchical Clustering (K={len(set(labels))}) - 2D"
         elif method == "dbscan":
             labels = self.cluster_labels_dbscan
-            title = "DBSCAN Clustering"
+            title = "DBSCAN Clustering - 2D"
         else:
             logger.error(f"Unsupported clustering method: {method}")
             return
@@ -426,9 +437,113 @@ class BehaviorSummaryClusterer:
         plt.grid(True, alpha=0.3)
         
         # 保存图像
-        file_name = f"{method}_clusters_visualization.png"
+        file_name = f"{method}_clusters_visualization_2d.png"
         plt.savefig(os.path.join(self.output_dir, file_name), dpi=300, bbox_inches='tight')
-        logger.info(f"Cluster visualization saved to {file_name}")
+        logger.info(f"2D Cluster visualization saved to {file_name}")
+    
+    def _visualize_clusters_3d(self, method="kmeans"):
+        """三维可视化聚类结果"""
+        fig = plt.figure(figsize=(16, 12))
+        ax = fig.add_subplot(111, projection='3d')
+        
+        if method == "kmeans":
+            labels = self.cluster_labels_kmeans
+            title = f"K-Means Clustering (K={len(set(labels))}) - 3D"
+        elif method == "spectral":
+            labels = self.cluster_labels_spectral
+            title = f"Spectral Clustering (K={len(set(labels))}) - 3D"
+        elif method == "agglomerative":
+            labels = self.cluster_labels_agglomerative
+            title = f"Hierarchical Clustering (K={len(set(labels))}) - 3D"
+        elif method == "dbscan":
+            labels = self.cluster_labels_dbscan
+            title = "DBSCAN Clustering - 3D"
+        else:
+            logger.error(f"Unsupported clustering method: {method}")
+            return
+        
+        # 获取唯一的聚类标签
+        unique_labels = set(labels)
+        n_clusters = len(unique_labels)
+        if -1 in unique_labels:  # DBSCAN可能有噪声点
+            n_clusters -= 1
+        
+        # 为每个聚类生成颜色
+        colors = cm.rainbow(np.linspace(0, 1, n_clusters + 1))
+        
+        # 为噪声点指定颜色 (如果有)
+        noise_color = 'black'
+        
+        # 计算每个聚类的中心点
+        cluster_centers = []
+        for label in unique_labels:
+            if label != -1:  # 排除噪声点
+                mask = labels == label
+                points = self.X_3d[mask]
+                center = np.mean(points, axis=0)
+                cluster_centers.append((label, center))
+        
+        # 绘制每个聚类的点
+        for i, label in enumerate(unique_labels):
+            if label == -1:  # 噪声点
+                color = noise_color
+                marker = 'x'
+                label_name = "Noise"
+            else:
+                color = colors[i if label == -1 else label]
+                marker = 'o'
+                label_name = f"Cluster {label}"
+            
+            mask = labels == label
+            ax.scatter(
+                self.X_3d[mask, 0],
+                self.X_3d[mask, 1],
+                self.X_3d[mask, 2],
+                s=50, 
+                c=[color],
+                marker=marker,
+                alpha=0.7,
+                label=label_name
+            )
+            
+            # 如果不是噪声点，绘制到中心点的线（可选，在3D中可能会使图形过于复杂）
+            if label != -1 and len(self.X_3d[mask]) < 100:  # 限制线条数量以避免过度绘制
+                for center_label, center in cluster_centers:
+                    if center_label == label:
+                        for point in self.X_3d[mask]:
+                            ax.plot([point[0], center[0]], 
+                                    [point[1], center[1]], 
+                                    [point[2], center[2]],
+                                    c=color, linewidth=0.5, linestyle='--', alpha=0.2)
+        
+        # 绘制中心点
+        for label, center in cluster_centers:
+            ax.scatter(center[0], center[1], center[2], 
+                      s=200, c=[colors[label]], marker='*', 
+                      edgecolors='k', linewidths=1)
+        
+        ax.set_title(title, fontsize=18)
+        ax.set_xlabel("t-SNE Feature 1", fontsize=14)
+        ax.set_ylabel("t-SNE Feature 2", fontsize=14)
+        ax.set_zlabel("t-SNE Feature 3", fontsize=14)
+        
+        # 添加图例
+        ax.legend(fontsize=10)
+        
+        # 设置视角
+        ax.view_init(elev=30, azim=45)
+        
+        # 保存图像
+        file_name = f"{method}_clusters_visualization_3d.png"
+        plt.savefig(os.path.join(self.output_dir, file_name), dpi=300, bbox_inches='tight')
+        logger.info(f"3D Cluster visualization saved to {file_name}")
+        
+        # 创建额外的视角
+        for angle in [0, 90, 180, 270]:
+            ax.view_init(elev=30, azim=angle)
+            file_name = f"{method}_clusters_visualization_3d_angle_{angle}.png"
+            plt.savefig(os.path.join(self.output_dir, file_name), dpi=300, bbox_inches='tight')
+            logger.info(f"3D Cluster visualization (angle {angle}) saved to {file_name}")
         
     def visualize_heatmap(self, method="kmeans"):
         """使用热图可视化聚类结果"""

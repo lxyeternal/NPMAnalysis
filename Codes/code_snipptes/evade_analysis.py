@@ -401,6 +401,13 @@ Please analyze the following malicious code snippet from an NPM package, its beh
 ## Evasion Techniques:
 {evasion_techniques}
 
+## Important Note:
+If the Behavior Summary or Evasion Techniques sections above are empty, please analyze the code directly to determine:
+- The malware's behavior and purpose (what it does)
+- Any evasion techniques used (how it tries to hide or avoid detection)
+
+Note that not all malicious code uses evasion techniques. If the code doesn't employ any evasion methods, you can return an empty list for evasion_formal.
+
 Your task is to normalize the behavior and evasion techniques into standardized formal categories.
 
 ## Behavior Categories
@@ -449,6 +456,18 @@ Response:
 }}
 ```
 
+### Example 4:
+Behavior Summary: "Simple keylogger that records keystrokes and saves them locally."
+Evasion Techniques: ""
+
+Response:
+```json
+{{
+  "behavior_formal": ["sensitive_data_collection"],
+  "evasion_formal": []
+}}
+```
+
 Respond with a JSON object in this exact format:
 {{
   "behavior_formal": ["category1", "category2", ...],
@@ -457,7 +476,7 @@ Respond with a JSON object in this exact format:
 
 Instructions:
 1. For behavior_formal, identify ALL applicable behavior categories (at least one)
-2. For evasion_formal, identify ALL applicable evasion techniques (at least one)
+2. For evasion_formal, identify ALL applicable evasion techniques (can be empty if none are used)
 3. Use concise, snake_case naming for all categories
 4. Try to reuse existing categories when appropriate
 5. Create new categories only when necessary and ensure they follow the same naming pattern
