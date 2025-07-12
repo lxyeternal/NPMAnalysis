@@ -7,6 +7,8 @@ import multiprocessing
 import time
 import random
 import argparse
+import sys
+from datetime import datetime
 
 # 定义源目录和目标目录
 MALWARE_SOURCE_DIR = "/tmp/malicious_package/unzip_malware"
@@ -21,6 +23,18 @@ NUM_DOCKER_CONTAINERS = 4  # 默认Docker容器数量，可通过命令行参数
 DOCKER_IMAGE = "ossillate/packj:latest"
 HOST_PM_UTIL_PATH = "/home2/wenbo/Documents/NPMAnalysis/Tools/packj/packj/audit/pm_util.py"
 CONTAINER_PM_UTIL_PATH = "/home/ubuntu/packj/packj/audit/pm_util.py"
+
+# 创建一个全局锁，用于同步输出
+print_lock = multiprocessing.Lock()
+
+def synchronized_print(*args, **kwargs):
+    """
+    线程安全的打印函数，避免输出混乱
+    """
+    with print_lock:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        print(f"[{timestamp}]", *args, **kwargs)
+        sys.stdout.flush()  # 确保立即输出
 
 class DockerManager:
     """
@@ -47,7 +61,7 @@ class DockerManager:
         if not containers:
             return
         
-        print(f"正在删除现有容器: {', '.join(containers)}")
+        synchronized_print(f"正在删除现有容器: {', '.join(containers)}")
         for container in containers:
             # 先停止容器（如果正在运行）
             stop_cmd = f"docker stop {container}"
@@ -61,66 +75,79 @@ class DockerManager:
         """
         创建指定数量的Docker容器
         """
-        print(f"正在创建 {self.num_containers} 个Docker容器...")
+        synchronized_print(f"正在创建 {self.num_containers} 个Docker容器...")
         for container_name in self.container_names:
             # 使用--entrypoint覆盖入口点，并运行tail命令保持容器运行
-            cmd = f"docker run -d --name {container_name} --entrypoint '/bin/bash' {DOCKER_IMAGE} -c 'tail -f /dev/null'"
-            print(f"创建容器: {container_name}")
+            # 添加卷挂载，将宿主机的/tmp目录挂载到容器的/tmp/packj目录
+            cmd = f"docker run -d --name {container_name} --entrypoint '/bin/bash' -v /tmp:/tmp/packj {DOCKER_IMAGE} -c 'tail -f /dev/null'"
+            synchronized_print(f"创建容器: {container_name} (挂载 /tmp -> /tmp/packj)")
             result = subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
             
             if result.returncode != 0:
-                print(f"创建容器 {container_name} 失败: {result.stderr}")
+                synchronized_print(f"创建容器 {container_name} 失败: {result.stderr}")
             else:
                 # 检查容器是否成功启动
                 check_cmd = f"docker ps -q -f name={container_name}"
                 check_result = subprocess.run(check_cmd, shell=True, capture_output=True, text=True)
                 if check_result.stdout.strip():
-                    print(f"容器 {container_name} 成功启动")
+                    synchronized_print(f"容器 {container_name} 成功启动")
+                    # 设置容器内挂载目录的权限
+                    chmod_cmd = f"docker exec -u 0 {container_name} chmod -R 777 /tmp/packj"
+                    chmod_result = subprocess.run(chmod_cmd, shell=True, stderr=subprocess.PIPE, text=True)
+                    if chmod_result.returncode == 0:
+                        synchronized_print(f"容器 {container_name} 内的 /tmp/packj 权限设置成功")
+                    else:
+                        synchronized_print(f"容器 {container_name} 内的 /tmp/packj 权限设置失败: {chmod_result.stderr}")
                 else:
-                    print(f"警告: 容器 {container_name} 可能未成功启动")
+                    synchronized_print(f"警告: 容器 {container_name} 可能未成功启动")
 
     def set_container_permissions(self):
         """
         设置容器内的权限
         """
-        print("正在设置容器权限...")
+        synchronized_print("正在设置容器权限...")
+        
+        # 不再对宿主机目录进行chmod操作
+        # synchronized_print(f"设置宿主机目录权限: {DOMAIN_PACKAGE_DIR}")
+        # os.system(f"chmod -R 777 {DOMAIN_PACKAGE_DIR}")
+        
         for container_name in self.container_names:
             # 检查容器是否在运行
             check_cmd = f"docker ps -q -f name={container_name}"
             check_result = subprocess.run(check_cmd, shell=True, capture_output=True, text=True)
             if not check_result.stdout.strip():
-                print(f"警告: 容器 {container_name} 不存在或未运行，跳过权限设置")
+                synchronized_print(f"警告: 容器 {container_name} 不存在或未运行，跳过权限设置")
                 continue
             
             # 设置目录所有权
             chown_cmd = f"docker exec -u 0 -it {container_name} chown -R ubuntu:ubuntu /tmp/packj"
-            print(f"设置容器 {container_name} 的目录所有权: {chown_cmd}")
+            synchronized_print(f"设置容器 {container_name} 的目录所有权: {chown_cmd}")
             chown_result = subprocess.run(chown_cmd, shell=True, stderr=subprocess.PIPE, text=True)
             
             if chown_result.returncode != 0:
-                print(f"设置容器 {container_name} 的目录所有权失败: {chown_result.stderr}")
+                synchronized_print(f"设置容器 {container_name} 的目录所有权失败: {chown_result.stderr}")
             
             # 设置目录权限
             chmod_cmd = f"docker exec -u 0 -it {container_name} chmod -R 755 /tmp/packj"
-            print(f"设置容器 {container_name} 的目录权限: {chmod_cmd}")
+            synchronized_print(f"设置容器 {container_name} 的目录权限: {chmod_cmd}")
             chmod_result = subprocess.run(chmod_cmd, shell=True, stderr=subprocess.PIPE, text=True)
             
             if chmod_result.returncode != 0:
-                print(f"设置容器 {container_name} 的目录权限失败: {chmod_result.stderr}")
+                synchronized_print(f"设置容器 {container_name} 的目录权限失败: {chmod_result.stderr}")
             else:
-                print(f"容器 {container_name} 的权限设置成功")
+                synchronized_print(f"容器 {container_name} 的权限设置成功")
 
     def copy_files_to_containers(self):
         """
         将必要的文件复制到每个容器中
         """
-        print(f"正在将文件复制到容器...")
+        synchronized_print(f"正在将文件复制到容器...")
         for container_name in self.container_names:
             # 检查容器是否存在并运行
             check_cmd = f"docker ps -q -f name={container_name}"
             result = subprocess.run(check_cmd, shell=True, capture_output=True, text=True)
             if not result.stdout.strip():
-                print(f"警告: 容器 {container_name} 不存在或未运行，跳过文件复制")
+                synchronized_print(f"警告: 容器 {container_name} 不存在或未运行，跳过文件复制")
                 continue
             
             # 创建目标目录（如果不存在）
@@ -129,31 +156,31 @@ class DockerManager:
             
             # 复制文件到容器
             cp_cmd = f"docker cp {HOST_PM_UTIL_PATH} {container_name}:{CONTAINER_PM_UTIL_PATH}"
-            print(f"复制文件到 {container_name}: {cp_cmd}")
+            synchronized_print(f"复制文件到 {container_name}: {cp_cmd}")
             result = subprocess.run(cp_cmd, shell=True, capture_output=True, text=True)
             
             if result.returncode != 0:
-                print(f"警告: 复制文件到容器 {container_name} 失败: {result.stderr}")
+                synchronized_print(f"警告: 复制文件到容器 {container_name} 失败: {result.stderr}")
             else:
-                print(f"成功复制文件到容器 {container_name}")
+                synchronized_print(f"成功复制文件到容器 {container_name}")
     
     def setup_containers(self):
         """
         设置Docker容器：检查现有容器，删除旧容器，创建新容器，复制文件
         """
-        print("开始设置Docker容器...")
+        synchronized_print("开始设置Docker容器...")
         
         # 检查现有容器
         existing_containers = self.get_existing_containers()
         if existing_containers:
-            print(f"发现现有容器: {', '.join(existing_containers)}")
+            synchronized_print(f"发现现有容器: {', '.join(existing_containers)}")
             self.remove_containers(existing_containers)
         
         # 创建新容器
         self.create_containers()
         
         # 等待容器启动
-        print("等待容器启动...")
+        synchronized_print("等待容器启动...")
         time.sleep(2)
         
         # 设置容器权限
@@ -162,7 +189,7 @@ class DockerManager:
         # 复制文件到容器
         self.copy_files_to_containers()
         
-        print("Docker容器设置完成")
+        synchronized_print("Docker容器设置完成")
         return self.container_names
 
 def find_package_json_dir(start_path):
@@ -213,7 +240,18 @@ def is_already_analyzed(package_name, version, target_base_dir):
             return True
     return False
 
-def process_domain_package(package_path, package_name, version, is_malware):
+# 修改路径映射逻辑
+def get_docker_path(host_path):
+    """
+    将宿主机路径转换为Docker容器内路径
+    规则：
+    1. /tmp/* -> /tmp/packj/*
+    """
+    if host_path.startswith('/tmp/'):
+        return '/tmp/packj' + host_path[4:]
+    return host_path
+
+def process_domain_package(package_path, package_name, version, is_malware, container_name="unknown"):
     """
     处理作用域包（以@开头且包含##的包名）
     将其转换为标准npm作用域包结构并复制到/tmp/domain_package目录
@@ -244,11 +282,22 @@ def process_domain_package(package_path, package_name, version, is_malware):
         # 构建新路径
         target_path = os.path.join(DOMAIN_PACKAGE_DIR, source_type, rel_path)
         target_dir = os.path.dirname(target_path)
-        os.makedirs(target_dir, exist_ok=True)
+        
+        try:
+            # 确保目录存在，但不设置权限
+            os.makedirs(target_dir, exist_ok=True)
+        except PermissionError:
+            synchronized_print(f"[{container_name}] 权限错误: 无法创建目录 {target_dir}")
+            # 跳过作用域包处理，直接使用原始路径
+            synchronized_print(f"[{container_name}] 跳过作用域包处理，使用原始路径: {package_path}")
+            return package_path, package_name, original_package_name
+        except Exception as e:
+            synchronized_print(f"[{container_name}] 创建目录失败: {str(e)}")
+            return package_path, package_name, original_package_name
         
         # 检查目标路径是否已存在
         if os.path.exists(target_path):
-            print(f"目标路径已存在: {target_path}")
+            synchronized_print(f"[{container_name}] 目标路径已存在: {target_path}")
             # 不尝试删除现有文件，直接使用现有路径
         else:
             # 复制文件/目录
@@ -257,13 +306,17 @@ def process_domain_package(package_path, package_name, version, is_malware):
                     shutil.copytree(package_path, target_path)
                 else:
                     shutil.copy2(package_path, target_path)
-                print(f"已将 {package_name} 转换为标准作用域包结构: {standard_package_name}")
+                synchronized_print(f"[{container_name}] 已将 {package_name} 转换为标准作用域包结构: {standard_package_name}")
+                # 不再设置复制后文件的权限
             except PermissionError as e:
-                print(f"权限错误，无法复制文件: {str(e)}")
-                # 如果无法复制，但目标路径已存在，仍然继续使用该路径
+                synchronized_print(f"[{container_name}] 权限错误，无法复制文件: {str(e)}")
+                # 如果无法复制，使用原始路径
+                synchronized_print(f"[{container_name}] 使用原始路径: {package_path}")
+                return package_path, package_name, original_package_name
             except Exception as e:
-                print(f"复制文件时出错: {str(e)}")
-                # 如果出现其他错误，仍然尝试使用该路径
+                synchronized_print(f"[{container_name}] 复制文件时出错: {str(e)}")
+                # 如果出现其他错误，使用原始路径
+                return package_path, package_name, original_package_name
         
         # 返回新路径用于分析，但保留原始包名用于结果保存
         return target_path, standard_package_name, original_package_name
@@ -290,39 +343,33 @@ def run_packj_analysis(package_path, is_malware, source_base_dir, docker_contain
     # 检查是否已经分析过
     result_file = os.path.join(result_dir_path, "result.txt")
     if os.path.exists(result_file) and os.path.getsize(result_file) > 0:
-        print(f"[{docker_container}] 跳过已分析的包: {package_name}/{version}")
+        synchronized_print(f"[{docker_container}] 跳过已分析的包: {package_name}/{version}")
         return True
     
     # 处理作用域包
-    analysis_path, display_name, result_name = process_domain_package(package_path, package_name, version, is_malware)
+    analysis_path, display_name, result_name = process_domain_package(package_path, package_name, version, is_malware, docker_container)
     
     # 使用原始包名/版本创建结果目录
     target_dir = os.path.join(target_base_dir, result_name, version)
-    os.makedirs(target_dir, exist_ok=True)
+    try:
+        os.makedirs(target_dir, exist_ok=True)
+    except Exception as e:
+        synchronized_print(f"[{docker_container}] 创建结果目录失败: {str(e)}")
+        return False
     
     # 打印原始路径，帮助调试
-    print(f"[{docker_container}] 原始路径: {package_path}")
-    print(f"[{docker_container}] 处理后路径: {analysis_path}")
+    synchronized_print(f"[{docker_container}] 原始路径: {package_path}")
+    synchronized_print(f"[{docker_container}] 处理后路径: {analysis_path}")
     
-    # 修改路径格式，添加/tmp/packj前缀，只替换路径最前面的/tmp
-    if DOMAIN_PACKAGE_DIR in analysis_path:
-        # 对于已经处理过的作用域包，使用新路径
-        # 只替换路径开头的/tmp，而不是所有出现的/tmp
-        if analysis_path.startswith('/tmp/'):
-            docker_path = '/tmp/packj' + analysis_path[4:]
-        else:
-            docker_path = analysis_path
-    else:
-        # 对于普通包，使用原路径
-        docker_path = package_path.replace("/tmp/malicious_package", "/tmp/packj/malicious_package")
-        docker_path = docker_path.replace("/tmp/malicious_packagee", "/tmp/packj/malicious_package")  # 修复可能的拼写错误
+    # 修改路径格式，将宿主机路径转换为Docker容器内路径
+    docker_path = get_docker_path(analysis_path)
     
     # 打印Docker路径，帮助调试
-    print(f"[{docker_container}] Docker路径: {docker_path}")
+    synchronized_print(f"[{docker_container}] Docker路径: {docker_path}")
     
     # 运行docker命令
     cmd = f"docker exec -u ubuntu -it {docker_container} python3 /home/ubuntu/packj/main.py audit -t -p local_nodejs:{docker_path}"
-    print(f"[{docker_container}] 执行Docker命令: {cmd}")
+    synchronized_print(f"[{docker_container}] 执行Docker命令: {cmd}")
     
     try:
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
@@ -332,10 +379,12 @@ def run_packj_analysis(package_path, is_malware, source_base_dir, docker_contain
         with open(result_file, 'w') as f:
             f.write(result.stdout)
         
-        print(f"[{docker_container}] 分析完成: {result_name}/{version}, 结果保存到 {result_file}")
+        synchronized_print(f"[{docker_container}] 分析完成: {result_name}/{version}, 结果保存到 {result_file}")
+        synchronized_print("-" * 80)  # 添加分隔线，使输出更清晰
         return True
     except Exception as e:
-        print(f"[{docker_container}] 分析失败: {analysis_path}, 错误: {str(e)}")
+        synchronized_print(f"[{docker_container}] 分析失败: {analysis_path}, 错误: {str(e)}")
+        synchronized_print("-" * 80)  # 添加分隔线，使输出更清晰
         return False
 
 def worker_process(package_list, is_malware, source_base_dir, worker_id, docker_containers):
@@ -345,12 +394,17 @@ def worker_process(package_list, is_malware, source_base_dir, worker_id, docker_
     # 为每个工作进程分配一个Docker容器
     docker_container = docker_containers[worker_id % len(docker_containers)]
     
-    print(f"工作进程 {worker_id} 使用Docker容器 {docker_container} 开始处理 {len(package_list)} 个包")
+    synchronized_print(f"工作进程 {worker_id} 使用Docker容器 {docker_container} 开始处理 {len(package_list)} 个包")
+    synchronized_print("=" * 80)  # 添加明显的分隔线
     
-    for package_path in package_list:
+    for i, package_path in enumerate(package_list):
         # 添加一个小的随机延迟，避免所有进程同时启动
         time.sleep(random.uniform(0.1, 0.5))
+        synchronized_print(f"[{docker_container}] 处理包 {i+1}/{len(package_list)}: {os.path.basename(os.path.dirname(package_path))}")
         run_packj_analysis(package_path, is_malware, source_base_dir, docker_container)
+    
+    synchronized_print(f"[{docker_container}] 已完成所有 {len(package_list)} 个包的处理")
+    synchronized_print("=" * 80)  # 添加明显的分隔线
 
 def process_directory(source_dir, is_malware, use_parallel=False, num_containers=1):
     """
@@ -367,15 +421,15 @@ def process_directory(source_dir, is_malware, use_parallel=False, num_containers
             package_json_dir = find_package_json_dir(package_dir)
             
             if package_json_dir:
-                print(f"找到package.json目录: {package_json_dir}")
+                synchronized_print(f"找到package.json目录: {package_json_dir}")
                 run_packj_analysis(package_json_dir, is_malware, source_dir)
             else:
-                print(f"未找到package.json: {package_dir}")
+                synchronized_print(f"未找到package.json: {package_dir}")
     else:
         # 并行处理
         # 生成Docker容器名称列表
         docker_containers = [f"{DOCKER_CONTAINER_PREFIX}{i+1}" for i in range(num_containers)]
-        print(f"使用 {num_containers} 个Docker容器进行并行处理: {', '.join(docker_containers)}")
+        synchronized_print(f"使用 {num_containers} 个Docker容器进行并行处理: {', '.join(docker_containers)}")
         
         # 收集所有需要处理的包路径
         all_packages = []
@@ -384,13 +438,13 @@ def process_directory(source_dir, is_malware, use_parallel=False, num_containers
             package_json_dir = find_package_json_dir(package_dir)
             
             if package_json_dir:
-                print(f"找到package.json目录: {package_json_dir}")
+                synchronized_print(f"找到package.json目录: {package_json_dir}")
                 all_packages.append(package_json_dir)
             else:
-                print(f"未找到package.json: {package_dir}")
+                synchronized_print(f"未找到package.json: {package_dir}")
         
         if not all_packages:
-            print(f"没有找到需要处理的包: {source_dir}")
+            synchronized_print(f"没有找到需要处理的包: {source_dir}")
             return
         
         # 将包列表分成几个子列表，每个进程处理一个子列表
@@ -398,7 +452,7 @@ def process_directory(source_dir, is_malware, use_parallel=False, num_containers
         for i, package_path in enumerate(all_packages):
             container_idx = i % num_containers
             container_name = docker_containers[container_idx]
-            print(f"[{container_name}] 分配包: {os.path.basename(os.path.dirname(package_path))}")
+            synchronized_print(f"[{container_name}] 分配包: {os.path.basename(os.path.dirname(package_path))}")
             packages_per_process[container_idx].append(package_path)
         
         # 创建并启动多个进程
@@ -406,7 +460,7 @@ def process_directory(source_dir, is_malware, use_parallel=False, num_containers
         for i in range(num_containers):
             if packages_per_process[i]:  # 只有当有包需要处理时才创建进程
                 container_name = docker_containers[i]
-                print(f"[{container_name}] 启动工作进程，处理 {len(packages_per_process[i])} 个包")
+                synchronized_print(f"[{container_name}] 启动工作进程，处理 {len(packages_per_process[i])} 个包")
                 p = multiprocessing.Process(
                     target=worker_process,
                     args=(packages_per_process[i], is_malware, source_dir, i, docker_containers)
@@ -419,7 +473,7 @@ def process_directory(source_dir, is_malware, use_parallel=False, num_containers
             p.join()
         
         container_summary = [f"{docker_containers[i]}: {len(packages_per_process[i])}个包" for i in range(num_containers) if packages_per_process[i]]
-        print(f"所有进程已完成处理 {len(all_packages)} 个包 ({', '.join(container_summary)})")
+        synchronized_print(f"所有进程已完成处理 {len(all_packages)} 个包 ({', '.join(container_summary)})")
 
 def parse_arguments():
     """
@@ -456,37 +510,48 @@ def main():
         docker_manager.setup_containers()
         
         if only_docker_setup:
-            print(f"\n已完成 {num_containers} 个Docker容器的设置。")
-            print(f"容器名称: {', '.join([f'{DOCKER_CONTAINER_PREFIX}{i+1}' for i in range(num_containers)])}")
+            synchronized_print(f"\n已完成 {num_containers} 个Docker容器的设置。")
+            synchronized_print(f"容器名称: {', '.join([f'{DOCKER_CONTAINER_PREFIX}{i+1}' for i in range(num_containers)])}")
             return  # 如果只执行Docker设置，此处退出
     
     # 打印运行模式
     if use_parallel:
-        print(f"使用并行模式，{num_containers} 个Docker容器")
+        synchronized_print(f"使用并行模式，{num_containers} 个Docker容器")
     else:
-        print("使用串行模式，单Docker容器")
+        synchronized_print("使用串行模式，单Docker容器")
+    
+    # 确保domain_package目录存在并有正确的权限
+    os.makedirs(DOMAIN_PACKAGE_DIR, exist_ok=True)
+    # 不再设置domain_package目录权限
+    # os.system(f"chmod -R 777 {DOMAIN_PACKAGE_DIR}")
     
     # 第二步：处理包
-    print("\n开始处理恶意包...")
+    synchronized_print("\n开始处理恶意包...")
     if os.path.exists(MALWARE_SOURCE_DIR):
         process_directory(MALWARE_SOURCE_DIR, True, use_parallel, num_containers)
     else:
-        print(f"目录不存在: {MALWARE_SOURCE_DIR}")
+        synchronized_print(f"目录不存在: {MALWARE_SOURCE_DIR}")
     
-    print("\n开始处理良性包...")
+    synchronized_print("\n开始处理良性包...")
     if os.path.exists(BENIGN_SOURCE_DIR):
         process_directory(BENIGN_SOURCE_DIR, False, use_parallel, num_containers)
     else:
-        print(f"目录不存在: {BENIGN_SOURCE_DIR}")
+        synchronized_print(f"目录不存在: {BENIGN_SOURCE_DIR}")
 
 if __name__ == "__main__":
     # 确保目标目录存在
     os.makedirs(MALWARE_TARGET_DIR, exist_ok=True)
     os.makedirs(BENIGN_TARGET_DIR, exist_ok=True)
     os.makedirs(DOMAIN_PACKAGE_DIR, exist_ok=True)
+    # 不再设置domain_package目录权限
+    # os.system(f"chmod -R 777 {DOMAIN_PACKAGE_DIR}")
     
     # 设置多进程启动方法（如果在Windows上运行）
     if os.name == 'nt':
         multiprocessing.set_start_method('spawn')
     
     main()
+
+
+# python detect_trace.py --only-docker-setup --containers 3
+# python detect_trace.py --parallel --containers 3 --skip-docker-setup
