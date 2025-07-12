@@ -1,28 +1,74 @@
+import os
+import datetime
 from packj.util.enum_util import PackageManagerEnum, LanguageEnum
 
-def get_pm_install_cmd(pm_enum, pkg_name, ver_str, quiet=True):
-	if pm_enum == PackageManagerEnum.pypi:
-		base_cmd = 'pip3 install '
-		quiet_args = '--quiet --no-warn-script-location --disable-pip-version-check '
-		ver_cmd = f'=={ver_str}'
-	elif pm_enum == PackageManagerEnum.npmjs:
-		base_cmd = f'npm install'
-		quiet_args = ' --silent --no-progress --no-update-notifier '
-		ver_cmd = f'@{ver_str}'
-	elif pm_enum == PackageManagerEnum.rubygems:
-		base_cmd = 'gem install --user'
-		quiet_args = ' --silent '
-		ver_cmd = f' -v {ver_str}'
-	else:
-		raise Exception(f'Package manager {pm_enum} is not supported')
+def log_install_command(cmd, pm_enum, pkg_name, ver_str, log_file="/home/ubuntu/packj/packj/audit/install_commands.log"):
+    """
+    Log the install command to a file
+    
+    Args:
+        cmd: Generated command
+        pm_enum: Package manager enum
+        pkg_name: Package name
+        ver_str: Version string
+        log_file: Log file path
+    """
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Ensure log directory exists
+    os.makedirs(os.path.dirname(log_file) if os.path.dirname(log_file) else '.', exist_ok=True)
+    
+    log_entry = f"[{timestamp}] PM: {pm_enum} | Package: {pkg_name} | Version: {ver_str or 'latest'} | Command: {cmd}\n"
+    
+    with open(log_file, 'a', encoding='utf-8') as f:
+        f.write(log_entry)
 
-	cmd = base_cmd
-	if quiet:
-		cmd += quiet_args
-	cmd += f'{pkg_name}'
-	if ver_str:
-		cmd += ver_cmd
-	return cmd
+def get_pm_install_cmd(pm_enum, pkg_name, ver_str, quiet=True, log_file=None):
+    """
+    Original function with minimal log enhancement
+    """
+    # 打印传入的参数
+    print(f"DEBUG - get_pm_install_cmd parameters:")
+    print(f"  pm_enum: {pm_enum} (type: {type(pm_enum)})")
+    print(f"  pkg_name: {pkg_name} (type: {type(pkg_name)})")
+    print(f"  ver_str: {ver_str} (type: {type(ver_str)})")
+    print(f"  quiet: {quiet} (type: {type(quiet)})")
+    print(f"  log_file: {log_file} (type: {type(log_file)})")
+    
+    if pm_enum == PackageManagerEnum.pypi:
+        base_cmd = 'pip3 install '
+        quiet_args = '--quiet --no-warn-script-location --disable-pip-version-check '
+        ver_cmd = f'=={ver_str}'
+    elif pm_enum == PackageManagerEnum.npmjs:
+        base_cmd = f'npm install'
+        quiet_args = ' --silent --no-progress --no-update-notifier '
+        ver_cmd = f'@{ver_str}'
+    elif pm_enum == PackageManagerEnum.rubygems:
+        base_cmd = 'gem install --user'
+        quiet_args = ' --silent '
+        ver_cmd = f' -v {ver_str}'
+    elif pm_enum == PackageManagerEnum.local_nodejs:
+        # 对于local_nodejs，检查是否存在对应的tarball文件
+        base_cmd = f'npm install'
+        quiet_args = ' --silent --no-progress --no-update-notifier '
+        ver_cmd = ''
+        
+    else:
+        raise Exception(f'Package manager {pm_enum} is not supported')
+
+    cmd = base_cmd
+    if quiet:
+        cmd += quiet_args
+    cmd += f' {pkg_name}'
+    if ver_str and pm_enum != PackageManagerEnum.local_nodejs:
+        cmd += ver_cmd
+    
+    # Log the command if log_file is provided
+    if log_file:
+        log_install_command(cmd, pm_enum, pkg_name, ver_str, log_file)
+    # 打印最终生成的命令
+    print(f"DEBUG - Final command: {cmd}")
+    return cmd
 
 def get_pm_enum(pm_name):
 	if pm_name == 'pypi':

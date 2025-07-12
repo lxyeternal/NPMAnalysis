@@ -989,12 +989,15 @@ def trace_installation(pm_enum, pkg_name, ver_str, report_dir, risks, report):
 			raise Exception('"strace" not installed!')
 		if not os.path.exists(strace_bin):
 			raise Exception(f'{strace_bin} not found!')
-
+		
 		# install package under strace and collect system call traces
 		install_cmd = get_pm_install_cmd(pm_enum, pkg_name, ver_str)
+		
 		_, trace_filepath = tempfile.mkstemp(prefix='trace_', dir=report_dir, suffix='.log')
 
-		strace_cmd = f'{strace_bin} -f -e trace=network,file,process -ttt -T -o {trace_filepath } {install_cmd}'
+		strace_cmd = f'{strace_bin} -f -e trace=network,file,process -ttt -T -o {trace_filepath} {install_cmd}'
+
+		print(f"strace_cmd: {strace_cmd}")
 		stdout, stderr, error = exec_command("strace", strace_cmd.split(), redirect_mask=3)
 		if error:
 			logging.debug(f'strace failed with:\n{stdout}\n{stderr}')
