@@ -4,6 +4,7 @@ import glob
 import fnmatch
 import pandas as pd
 import numpy as np
+import json
 from collections import defaultdict
 
 def load_skip_list(file_path):
@@ -27,6 +28,24 @@ def analyze_guarddog(file_path, folder_type):
             return "benign"
         else:
             return "malware"
+
+def analyze_socketai(file_path, folder_type):
+    """
+    分析socketai的检测结果
+    解析package_summary.txt文件中的is_malicious字段
+    如果is_malicious为true，则返回malware，否则返回benign
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+            data = json.loads(content)
+            if data.get("is_malicious", False):
+                return "malware"
+            else:
+                return "benign"
+    except (json.JSONDecodeError, KeyError, FileNotFoundError):
+        # 如果解析失败，默认为benign
+        return "benign"
 
 def analyze_ossgadget(file_path, folder_type):
     """
@@ -210,15 +229,19 @@ def extract_package_info(file_path, folder_type):
     
     return f"{package_name}/{version}"
 
-def find_package_files(base_path, package_type):
-    """递归查找所有的txt文件"""
+def find_package_files(base_path, package_type, tool_name):
+    """递归查找工具的输出文件"""
     result = []
     package_path = os.path.join(base_path, package_type)
     
     for root, dirs, files in os.walk(package_path):
         for file in files:
-            if file.endswith('.txt') or file.endswith('.csv'):
-                result.append(os.path.join(root, file))
+            if tool_name == "socketai":
+                if file == 'package_summary.txt':
+                    result.append(os.path.join(root, file))
+            else:
+                if file.endswith('.txt') or file.endswith('.csv'):
+                    result.append(os.path.join(root, file))
     
     return result
 
@@ -244,7 +267,7 @@ def evaluate_tool(tool_name, tool_function, malware_benign_skip_list, selected_b
     }
     
     # 处理良性样本
-    benign_files = find_package_files(base_path, "benign")
+    benign_files = find_package_files(base_path, "benign", tool_name)
     for file_path in benign_files:
         package_info = extract_package_info(file_path, "benign")
         
@@ -262,7 +285,7 @@ def evaluate_tool(tool_name, tool_function, malware_benign_skip_list, selected_b
             results["false_positive"] += 1
     
     # 处理恶意样本
-    malware_files = find_package_files(base_path, "malware")
+    malware_files = find_package_files(base_path, "malware", tool_name)
     for file_path in malware_files:
         package_info = extract_package_info(file_path, "malware")
         
@@ -307,7 +330,8 @@ def main():
     basic_tools = {
         "ossgadget": analyze_ossgadget,
         "guarddog": analyze_guarddog,
-        "genie": analyze_genie
+        "genie": analyze_genie,
+        "socketai": analyze_socketai
     }
     
     # packj工具有两种检测方式

@@ -91,13 +91,30 @@ class DockerManager:
                 check_result = subprocess.run(check_cmd, shell=True, capture_output=True, text=True)
                 if check_result.stdout.strip():
                     synchronized_print(f"容器 {container_name} 成功启动")
-                    # 设置容器内挂载目录的权限
+                    
+                    # 设置容器内挂载目录的权限 - 第一条命令
                     chmod_cmd = f"docker exec -u 0 {container_name} chmod -R 777 /tmp/packj"
                     chmod_result = subprocess.run(chmod_cmd, shell=True, stderr=subprocess.PIPE, text=True)
                     if chmod_result.returncode == 0:
                         synchronized_print(f"容器 {container_name} 内的 /tmp/packj 权限设置成功")
                     else:
                         synchronized_print(f"容器 {container_name} 内的 /tmp/packj 权限设置失败: {chmod_result.stderr}")
+                    
+                    # 设置容器内 /tmp 目录的权限 - 第二条命令
+                    chmod_cmd = f"docker exec -u 0 {container_name} chmod -R 777 /tmp"
+                    chmod_result = subprocess.run(chmod_cmd, shell=True, stderr=subprocess.PIPE, text=True)
+                    if chmod_result.returncode == 0:
+                        synchronized_print(f"容器 {container_name} 内的 /tmp 权限设置成功")
+                    else:
+                        synchronized_print(f"容器 {container_name} 内的 /tmp 权限设置失败: {chmod_result.stderr}")
+                    
+                    # 设置容器内根目录的权限 - 第三条命令
+                    chmod_cmd = f"docker exec -u 0 {container_name} chmod -R 777 /"
+                    chmod_result = subprocess.run(chmod_cmd, shell=True, stderr=subprocess.PIPE, text=True)
+                    if chmod_result.returncode == 0:
+                        synchronized_print(f"容器 {container_name} 内的根目录权限设置成功")
+                    else:
+                        synchronized_print(f"容器 {container_name} 内的根目录权限设置失败: {chmod_result.stderr}")
                 else:
                     synchronized_print(f"警告: 容器 {container_name} 可能未成功启动")
 
@@ -127,15 +144,32 @@ class DockerManager:
             if chown_result.returncode != 0:
                 synchronized_print(f"设置容器 {container_name} 的目录所有权失败: {chown_result.stderr}")
             
-            # 设置目录权限
-            chmod_cmd = f"docker exec -u 0 -it {container_name} chmod -R 755 /tmp/packj"
-            synchronized_print(f"设置容器 {container_name} 的目录权限: {chmod_cmd}")
+            # 设置 /tmp/packj 目录权限 - 第一条命令
+            chmod_cmd = f"docker exec -u 0 -it {container_name} chmod -R 777 /tmp/packj"
+            synchronized_print(f"设置容器 {container_name} 的 /tmp/packj 目录权限: {chmod_cmd}")
             chmod_result = subprocess.run(chmod_cmd, shell=True, stderr=subprocess.PIPE, text=True)
             
             if chmod_result.returncode != 0:
-                synchronized_print(f"设置容器 {container_name} 的目录权限失败: {chmod_result.stderr}")
+                synchronized_print(f"设置容器 {container_name} 的 /tmp/packj 目录权限失败: {chmod_result.stderr}")
+            
+            # 设置 /tmp 目录权限 - 第二条命令
+            chmod_cmd = f"docker exec -u 0 -it {container_name} chmod -R 777 /tmp"
+            synchronized_print(f"设置容器 {container_name} 的 /tmp 目录权限: {chmod_cmd}")
+            chmod_result = subprocess.run(chmod_cmd, shell=True, stderr=subprocess.PIPE, text=True)
+            
+            if chmod_result.returncode != 0:
+                synchronized_print(f"设置容器 {container_name} 的 /tmp 目录权限失败: {chmod_result.stderr}")
+            
+            # 设置根目录权限 - 第三条命令
+            chmod_cmd = f"docker exec -u 0 -it {container_name} chmod -R 777 /"
+            synchronized_print(f"设置容器 {container_name} 的根目录权限: {chmod_cmd}")
+            chmod_result = subprocess.run(chmod_cmd, shell=True, stderr=subprocess.PIPE, text=True)
+            
+            if chmod_result.returncode != 0:
+                synchronized_print(f"设置容器 {container_name} 的根目录权限失败: {chmod_result.stderr}")
             else:
-                synchronized_print(f"容器 {container_name} 的权限设置成功")
+                synchronized_print(f"容器 {container_name} 的所有权限设置成功")
+
 
     def copy_files_to_containers(self):
         """

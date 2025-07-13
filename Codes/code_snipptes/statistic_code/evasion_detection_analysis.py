@@ -29,6 +29,14 @@ except OSError:
         plt.style.use('default')
 sns.set_palette("husl")
 
+# 设置全局字体大小
+plt.rcParams.update({'font.size': 18})
+plt.rcParams.update({'axes.labelsize': 20})
+plt.rcParams.update({'axes.titlesize': 24})
+plt.rcParams.update({'xtick.labelsize': 18})
+plt.rcParams.update({'ytick.labelsize': 18})
+plt.rcParams.update({'legend.fontsize': 18})
+
 class EvasionDetectionAnalyzer:
     def __init__(self, malware_snippets_dir, stats_output_dir):
         """
@@ -83,8 +91,8 @@ class EvasionDetectionAnalyzer:
                 if 'malicious_snippets' in data:
                     for snippet in data['malicious_snippets']:
                         # Get formal evasion techniques
-                        if 'evasion_formal' in snippet:
-                            for technique in snippet['evasion_formal']:
+                        if 'validate_evasion_formal' in snippet:
+                            for technique in snippet['validate_evasion_formal']:
                                 if technique:  # Skip empty strings
                                     self.evasion_techniques.add(technique)
                                     package_evasions.add(technique)
@@ -163,22 +171,22 @@ class EvasionDetectionAnalyzer:
         
         # Plot distribution if we have data
         if len(evasion_df) > 0:
-            plt.figure(figsize=(15, 8))
+            plt.figure(figsize=(20, 12))
             top_20 = evasion_df.head(20)
             
             bars = plt.bar(range(len(top_20)), top_20['count'])
-            plt.xticks(range(len(top_20)), top_20['technique'], rotation=45, ha='right')
-            plt.ylabel('Number of Packages')
-            plt.title('Top 20 Most Common Evasion Techniques')
-            plt.tight_layout()
+            plt.xticks(range(len(top_20)), top_20['technique'], rotation=45, ha='right', fontsize=24)
+            plt.ylabel('Number of Packages', fontsize=28)
+            plt.title('Top 20 Most Common Evasion Techniques', fontsize=32, fontweight='bold')
             
-            # Add value labels on bars
+            # Add value labels on bars with larger font
             for bar in bars:
                 height = bar.get_height()
                 plt.text(bar.get_x() + bar.get_width()/2., height,
                         f'{int(height)}',
-                        ha='center', va='bottom')
+                        ha='center', va='bottom', fontsize=24, fontweight='bold')
             
+            plt.tight_layout()
             plt.savefig('evasion_distribution.png', dpi=300, bbox_inches='tight')
             plt.close()
             
@@ -256,7 +264,7 @@ class EvasionDetectionAnalyzer:
                     detection_matrix[i, j] = self.analysis_results['tool_detection'][tool][technique]['detection_rate']
         
         # Create heatmap
-        plt.figure(figsize=(20, 10))
+        plt.figure(figsize=(24, 12))
         sns.heatmap(detection_matrix, 
                    xticklabels=significant_techniques,
                    yticklabels=tools,
@@ -264,12 +272,15 @@ class EvasionDetectionAnalyzer:
                    fmt='.2f',
                    cmap='RdYlGn',
                    vmin=0, 
-                   vmax=1)
+                   vmax=1,
+                   annot_kws={"size": 14, "weight": "bold"})
         
-        plt.title('Tool Detection Rates by Evasion Technique')
-        plt.xlabel('Evasion Techniques')
-        plt.ylabel('Security Tools')
-        plt.xticks(rotation=45, ha='right')
+        plt.title('Tool Detection Rates by Evasion Technique', fontsize=26, fontweight='bold')
+        plt.xlabel('Evasion Techniques', fontsize=22)
+        plt.ylabel('Security Tools', fontsize=22)
+        plt.xticks(rotation=45, ha='right', fontsize=16)
+        plt.yticks(fontsize=16)
+        
         plt.tight_layout()
         plt.savefig('detection_rate_heatmap.png', dpi=300, bbox_inches='tight')
         plt.close()
@@ -393,6 +404,93 @@ class EvasionDetectionAnalyzer:
         
         print("Detailed results saved to CSV files")
     
+    def analyze_package_evasion_count(self):
+        """Analyze how many evasion techniques each package uses."""
+        print("Analyzing evasion technique count per package...")
+        
+        # Count number of evasion techniques per package
+        package_evasion_counts = {}
+        for package_id, evasions in self.package_evasion_map.items():
+            package_evasion_counts[package_id] = len(evasions)
+        
+        # Create a counter for the distribution
+        evasion_count_distribution = Counter(package_evasion_counts.values())
+        
+        # Sort by number of evasion techniques
+        sorted_distribution = sorted(evasion_count_distribution.items())
+        
+        # Create report
+        report = []
+        report.append("# Package Evasion Technique Count Analysis")
+        report.append("=" * 50)
+        report.append("")
+        
+        # Overall statistics
+        total_packages = len(package_evasion_counts)
+        packages_with_evasions = sum(1 for count in package_evasion_counts.values() if count > 0)
+        
+        report.append(f"Total packages analyzed: {total_packages}")
+        report.append(f"Packages with at least one evasion technique: {packages_with_evasions} ({packages_with_evasions/total_packages*100:.1f}%)")
+        report.append("")
+        
+        # Distribution summary
+        report.append("## Distribution of Evasion Technique Counts")
+        report.append("Number of evasion techniques | Number of packages | Percentage")
+        report.append("---------------------------- | ----------------- | ----------")
+        
+        for count, num_packages in sorted_distribution:
+            percentage = num_packages / total_packages * 100
+            report.append(f"{count} | {num_packages} | {percentage:.1f}%")
+        
+        report.append("")
+        
+        # Detailed breakdown by count
+        report.append("## Detailed Breakdown by Evasion Count")
+        
+        for count, _ in sorted_distribution:
+            # Get packages with this count
+            packages_with_count = [pkg_id for pkg_id, evade_count in package_evasion_counts.items() if evade_count == count]
+            
+            report.append(f"### Packages with {count} evasion technique{'s' if count != 1 else ''}")
+            report.append(f"Total: {len(packages_with_count)} packages")
+            
+            # List packages and their techniques (limit to 20 for readability)
+            display_count = min(20, len(packages_with_count))
+            
+            if display_count > 0:
+                report.append("Package | Evasion Techniques")
+                report.append("------- | -----------------")
+                
+                for i in range(display_count):
+                    pkg_id = packages_with_count[i]
+                    techniques = ", ".join(sorted(self.package_evasion_map[pkg_id]))
+                    report.append(f"{pkg_id} | {techniques}")
+                
+                if display_count < len(packages_with_count):
+                    report.append(f"... and {len(packages_with_count) - display_count} more packages")
+            
+            report.append("")
+        
+        # Save report
+        with open('package_evasion_count_report.txt', 'w', encoding='utf-8') as f:
+            f.write('\n'.join(report))
+        
+        print("Package evasion count report generated: package_evasion_count_report.txt")
+        
+        # Create and save CSV data
+        csv_data = []
+        for package_id, evasions in self.package_evasion_map.items():
+            evasion_count = len(evasions)
+            evasion_list = ", ".join(sorted(evasions))
+            csv_data.append({
+                'package_id': package_id,
+                'evasion_count': evasion_count,
+                'evasion_techniques': evasion_list
+            })
+        
+        pd.DataFrame(csv_data).to_csv('package_evasion_counts.csv', index=False)
+        print("Package evasion count data saved to: package_evasion_counts.csv")
+    
     def run_complete_analysis(self):
         """Run the complete analysis pipeline."""
         print("Starting complete evasion detection analysis...")
@@ -404,6 +502,7 @@ class EvasionDetectionAnalyzer:
         # Perform analysis
         self.analyze_evasion_distribution()
         self.analyze_tool_detection_capabilities()
+        self.analyze_package_evasion_count()
         
         # Generate outputs
         self.generate_summary_report()
@@ -413,14 +512,16 @@ class EvasionDetectionAnalyzer:
         print("- evasion_distribution.png: Distribution of evasion techniques")
         print("- detection_rate_heatmap.png: Tool detection rates heatmap")
         print("- evasion_detection_report.txt: Summary report")
+        print("- package_evasion_count_report.txt: Report on packages with multiple evasion techniques")
+        print("- package_evasion_counts.csv: Detailed data on package evasion counts")
         print("- *.csv files: Detailed data for further analysis")
 
 def main():
     """Main function to run the analysis."""
     
     # Define paths
-    malware_snippets_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/code_snipptes/malware_snippets"
-    stats_output_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/tool_detect/tool_output_statistic/reports/stats_output"
+    malware_snippets_dir = "/home2/wenbo/Documents/NPMAnalysis/Codes/code_snipptes/malware_snippets"
+    stats_output_dir = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output_statistic/reports/stats_output"
     
     # Create analyzer and run analysis
     analyzer = EvasionDetectionAnalyzer(malware_snippets_dir, stats_output_dir)
