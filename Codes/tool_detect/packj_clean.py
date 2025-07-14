@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 
 # 指定目录路径
-base_dir = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/packj/result_trace/malware"
+base_dir = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/packj/result_trace/benign"
 
 def find_files_without_html_summary():
     """查找所有不包含'HTML summary available at:'的文件"""
