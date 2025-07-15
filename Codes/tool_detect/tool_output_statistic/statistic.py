@@ -17,7 +17,7 @@ parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(parent_dir)
 # Import the functions from accuracy_npm.py
 from accuracy_npm import (load_skip_list, analyze_guarddog, analyze_ossgadget, 
-                         analyze_packj, analyze_genie, extract_package_info, 
+                         analyze_packj, analyze_genie, analyze_socketai, extract_package_info, 
                          find_package_files)
 
 def save_detection_results(tool_name, sub_tool=None):
@@ -29,7 +29,7 @@ def save_detection_results(tool_name, sub_tool=None):
     - false positives (benign classified as malware)
     """
     base_path = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/tool_detect/tool_output"
-    output_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/tool_detect/stats_output"
+    output_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/tool_detect/tool_output_statistic/reports/stats_output"
     
     # Load skip lists
     malware_benign_path = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/dataclean/malware_benign.txt"
@@ -47,6 +47,8 @@ def save_detection_results(tool_name, sub_tool=None):
         tool_function = analyze_genie
     elif tool_name == "packj":
         tool_function = analyze_packj
+    elif tool_name == "socketai":
+        tool_function = analyze_socketai
     else:
         print(f"Unknown tool: {tool_name}")
         return
@@ -69,7 +71,7 @@ def save_detection_results(tool_name, sub_tool=None):
     false_positives = {}    # FP (benign detected as malware)
     
     # Process benign samples
-    benign_files = find_package_files(tool_path, "benign")
+    benign_files = find_package_files(tool_path, "benign", tool_name)
     for file_path in benign_files:
         package_info = extract_package_info(file_path, "benign")
         
@@ -95,7 +97,7 @@ def save_detection_results(tool_name, sub_tool=None):
             }
     
     # Process malware samples
-    malware_files = find_package_files(tool_path, "malware")
+    malware_files = find_package_files(tool_path, "malware", tool_name)
     for file_path in malware_files:
         package_info = extract_package_info(file_path, "malware")
         
@@ -144,7 +146,7 @@ def save_detection_results(tool_name, sub_tool=None):
 def save_sap_detection_results():
     """Save SAP ML algorithm detection results as JSON files"""
     base_path = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Tools/sap/scripts"
-    output_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/tool_detect/stats_output"
+    output_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/tool_detect/tool_output_statistic/reports/stats_output"
     
     # Load skip lists
     malware_benign_path = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/dataclean/malware_benign.txt"
@@ -195,7 +197,7 @@ def save_sap_detection_results():
                 continue
             
             # Convert package name to the standard format
-            standard_package_name = package_name.replace('$$', '/')
+            standard_package_name = str(package_name).replace('$$', '/')
             
             if sample_type == 'malware' and prediction == 1:
                 # True positive
@@ -246,13 +248,13 @@ def save_sap_detection_results():
 def main():
     """Main function to run the detection results saving"""
     # Create the stats output directory
-    output_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/tool_detect/stats_output"
+    output_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/tool_detect/tool_output_statistic/reports/stats_output"
     os.makedirs(output_dir, exist_ok=True)
     
     print("Starting to count and save NPM package detection reports...\n")
     
     # Process basic tools
-    basic_tools = ["ossgadget", "guarddog", "genie"]
+    basic_tools = ["ossgadget", "guarddog", "genie", "socketai"]
     for tool_name in basic_tools:
         save_detection_results(tool_name)
     
