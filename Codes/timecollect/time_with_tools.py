@@ -173,8 +173,16 @@ class MalwareDetectionAnalyzer:
         """Create comprehensive visualizations"""
         print("\nCreating visualizations...")
         
-        # Set up the plotting style
-        plt.style.use('seaborn-v0_8')
+        # Set up the plotting style - use compatible style
+        try:
+            plt.style.use('seaborn-v0_8')
+        except OSError:
+            try:
+                plt.style.use('seaborn')
+            except OSError:
+                plt.style.use('default')
+                print("Using default matplotlib style (seaborn not available)")
+        
         sns.set_palette("husl")
         
         # Prepare data for plotting
@@ -366,7 +374,13 @@ class MalwareDetectionAnalyzer:
         plt.xticks(rotation=45)
         
         plt.tight_layout()
-        plt.savefig('malware_detection_analysis.png', dpi=300, bbox_inches='tight')
+        
+        # Create output directory if it doesn't exist
+        output_dir = '/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/timecollect/time_tools'
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        
+        plt.savefig(os.path.join(output_dir, 'malware_detection_analysis.png'), dpi=300, bbox_inches='tight')
         plt.show()
         
         return fig
@@ -490,7 +504,11 @@ class MalwareDetectionAnalyzer:
         report_lines.append("=" * 80)
         
         # Save report to file
-        with open('malware_detection_summary_report.txt', 'w') as f:
+        output_dir = '/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/timecollect/time_tools'
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        
+        with open(os.path.join(output_dir, 'malware_detection_summary_report.txt'), 'w') as f:
             f.write('\n'.join(report_lines))
         
         # Print summary to console
@@ -517,9 +535,9 @@ class MalwareDetectionAnalyzer:
         self.generate_summary_report(detection_rates)
         
         print("\nAnalysis completed!")
-        print("Files generated:")
-        print("- malware_detection_analysis.png (visualization)")
-        print("- malware_detection_summary_report.txt (summary report)")
+        print("Files generated in time_tools/ directory:")
+        print("- time_tools/malware_detection_analysis.png (visualization)")
+        print("- time_tools/malware_detection_summary_report.txt (summary report)")
         
         return detection_rates
 
