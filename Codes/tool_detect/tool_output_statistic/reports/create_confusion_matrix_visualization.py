@@ -118,11 +118,11 @@ class ConfusionMatrixVisualizer:
             
             # Add colorbar without border
             cbar = plt.colorbar(im, ax=ax, shrink=0.8)
-            cbar.ax.tick_params(labelsize=12)
+            cbar.ax.tick_params(labelsize=16)
             cbar.outline.set_visible(False)  # Remove colorbar border
             
             # Set title
-            ax.set_title(title, fontsize=16, fontweight='bold', pad=20)
+            ax.set_title(title, fontsize=20, fontweight='bold', pad=20)
             
             # Remove axes spines (borders)
             ax.spines['top'].set_visible(False)
@@ -133,8 +133,8 @@ class ConfusionMatrixVisualizer:
             # Set ticks and labels
             ax.set_xticks(range(len(self.tools)))
             ax.set_yticks(range(len(self.tools)))
-            ax.set_xticklabels(self.tools, rotation=45, ha='right', fontsize=12)
-            ax.set_yticklabels(self.tools, rotation=45, ha='right', fontsize=12)
+            ax.set_xticklabels(self.tools, rotation=45, ha='right', fontsize=16)
+            ax.set_yticklabels(self.tools, rotation=45, ha='right', fontsize=16)
             
             # Add text annotations
             for i in range(len(self.tools)):
@@ -143,7 +143,7 @@ class ConfusionMatrixVisualizer:
                     text_color = 'white' if matrix[i, j] > matrix.max() * 0.5 else 'black'
                     ax.text(j, i, str(value), 
                            ha='center', va='center', 
-                           color=text_color, fontweight='bold', fontsize=10)
+                           color=text_color, fontweight='bold', fontsize=14)
         
         plt.tight_layout()
         
