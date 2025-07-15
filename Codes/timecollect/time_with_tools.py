@@ -48,7 +48,7 @@ class MalwareDetectionAnalyzer:
             if pd.isna(year):
                 return 'Unknown'
             elif year <= 2020:
-                return '2011-2020'
+                return 'early 2020'
             elif year == 2021:
                 return '2021'
             elif year == 2022:
@@ -108,6 +108,10 @@ class MalwareDetectionAnalyzer:
     def combine_data(self):
         """Combine detection data with timestamp data"""
         print("\nCombining detection and timestamp data...")
+        
+        if self.time_data is None:
+            print("Error: Time data not loaded")
+            return
         
         for tool, tool_data in self.detection_data.items():
             combined_tool_data = defaultdict(lambda: defaultdict(lambda: {'detected': 0, 'missed': 0, 'total': 0}))
@@ -170,7 +174,7 @@ class MalwareDetectionAnalyzer:
         return detection_rates
     
     def create_visualizations(self, detection_rates):
-        """Create comprehensive visualizations"""
+        """Create line plot visualization for detection rate trends over time"""
         print("\nCreating visualizations...")
         
         # Set up the plotting style - use compatible style
@@ -186,70 +190,28 @@ class MalwareDetectionAnalyzer:
         sns.set_palette("husl")
         
         # Prepare data for plotting
-        year_groups = ['2011-2020', '2021', '2022', '2023', '2024-2025', 'Unknown']
+        year_groups = ['early 2020', '2021', '2022', '2023', '2024-2025', 'Unknown']
         tools = list(detection_rates.keys())
         
-        # Create detection rate matrix
-        rate_matrix = []
+        # Find tools with data
         tools_with_data = []
-        
         for tool in tools:
-            tool_rates = []
             has_data = False
             for year_group in year_groups:
                 if year_group in detection_rates[tool]:
-                    tool_rates.append(detection_rates[tool][year_group]['detection_rate'])
                     has_data = True
-                else:
-                    tool_rates.append(0)
-            
-            if has_data:  # Only include tools with some data
-                rate_matrix.append(tool_rates)
+                    break
+            if has_data:
                 tools_with_data.append(tool)
         
-        if not rate_matrix:
+        if not tools_with_data:
             print("No data available for visualization")
             return
         
-        # Create figure with subplots
-        # fig = plt.figure(figsize=(20, 15))
-        fig = plt.figure(figsize=(24, 12))
+        # Create figure
+        fig = plt.figure(figsize=(12, 8))
         
-        
-        # 1. Heatmap of detection rates
-        plt.subplot(2, 3, 1)
-
-        if rate_matrix:
-            sns.heatmap(rate_matrix, 
-                       xticklabels=year_groups, 
-                       yticklabels=tools_with_data,
-                       annot=True, 
-                       fmt='.1f', 
-                       cmap='RdYlGn',
-                       cbar_kws={'label': 'Detection Rate (%)'})
-        plt.title('Detection Rates Heatmap by Tool and Year', fontsize=14, fontweight='bold')
-        plt.xlabel('Year Group')
-        plt.ylabel('Detection Tool')
-        
-        # # 2. Line plot of detection rates over time
-        # plt.subplot(2, 3, 2)
-        # for i, tool in enumerate(tools_with_data):
-        #     rates = [detection_rates[tool].get(yg, {'detection_rate': 0})['detection_rate'] 
-        #             for yg in year_groups[:-1]]  # Exclude 'Unknown'
-        #     plt.plot(year_groups[:-1], rates, marker='o', linewidth=2, label=tool)
-        
-        # plt.title('Detection Rate Trends Over Time', fontsize=14, fontweight='bold')
-        # plt.xlabel('Year Group')
-        # plt.ylabel('Detection Rate (%)')
-        # plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        # plt.xticks(rotation=45)
-        # plt.grid(True, alpha=0.3)
-        
-
-        # ...existing code...
-        # 2. Line plot of detection rates over time
-        plt.subplot(2, 3, 2)
-        
+        # Line plot of detection rates over time
         # Define distinct colors and line styles for better differentiation
         colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
                  '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
@@ -277,101 +239,23 @@ class MalwareDetectionAnalyzer:
                     markeredgecolor='white',
                     label=tool)
         
-        plt.title('Detection Rate Trends Over Time', fontsize=14, fontweight='bold')
-        plt.xlabel('Year Group')
-        plt.ylabel('Detection Rate (%)')
+        plt.xlabel('')  # Remove x-axis label
+        plt.ylabel('Performance (%)', fontsize=20)
         
-        # 修改图例设置以匹配背景颜色
+        # Set transparent background and grid
+        plt.gca().set_facecolor('none')  # Transparent plot area
+        plt.gcf().patch.set_facecolor('white')  # White figure background
+        plt.grid(True, alpha=0.5, linestyle='-', linewidth=0.5, color='gray')
+        
+        # 修改图例设置：无边框，放大字体
         legend = plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', 
-                           frameon=True, fancybox=False, shadow=False,
-                           facecolor='white', edgecolor='none')
-        legend.get_frame().set_alpha(1.0)  # 设置图例背景完全不透明
+                           frameon=False,  # 去掉边框
+                           handlelength=2, handletextpad=0.5, columnspacing=1,
+                           fontsize=16)  # 放大图例字体
         
-        plt.xticks(rotation=45)
-        plt.grid(True, alpha=0.3)
+        plt.xticks(rotation=45, fontsize=16)  # 放大x轴刻度字体
+        plt.yticks(fontsize=16)  # 放大y轴刻度字体
         plt.ylim(0, 100)  # Set y-axis limits for better visualization
-# ...existing code...
-
-        # 3. Bar plot of total detections by year
-        plt.subplot(2, 3, 3)
-        year_totals = defaultdict(int)
-        for tool in tools_with_data:
-            for year_group in year_groups:
-                if year_group in detection_rates[tool]:
-                    year_totals[year_group] += detection_rates[tool][year_group]['total']
-        
-        years = list(year_totals.keys())
-        totals = list(year_totals.values())
-        plt.bar(years, totals, color='skyblue', alpha=0.7)
-        plt.title('Total Malware Samples by Year', fontsize=14, fontweight='bold')
-        plt.xlabel('Year Group')
-        plt.xticks(rotation=45)
-        
-        # 4. Box plot of detection rates by tool
-        plt.subplot(2, 3, 4)
-        tool_rates_list = []
-        tool_names_list = []
-        
-        for tool in tools_with_data:
-            rates = [detection_rates[tool][yg]['detection_rate'] 
-                    for yg in detection_rates[tool] if yg != 'Unknown']
-            if rates:  # Only include if there are rates
-                tool_rates_list.extend(rates)
-                tool_names_list.extend([tool] * len(rates))
-        
-        if tool_rates_list:
-            df_box = pd.DataFrame({'Tool': tool_names_list, 'Detection_Rate': tool_rates_list})
-            sns.boxplot(data=df_box, x='Tool', y='Detection_Rate')
-            plt.title('Detection Rate Distribution by Tool', fontsize=14, fontweight='bold')
-            plt.xticks(rotation=45)
-            plt.ylabel('Detection Rate (%)')
-        
-        # 5. Stacked bar chart of detected vs missed
-        plt.subplot(2, 3, 5)
-        bottom_detected = np.zeros(len(year_groups))
-        bottom_missed = np.zeros(len(year_groups))
-        
-        colors_detected = plt.cm.Set3(np.linspace(0, 1, len(tools_with_data)))
-        colors_missed = plt.cm.Set1(np.linspace(0, 1, len(tools_with_data)))
-        
-        for i, tool in enumerate(tools_with_data):
-            detected_counts = [detection_rates[tool].get(yg, {'detected': 0})['detected'] 
-                             for yg in year_groups]
-            missed_counts = [detection_rates[tool].get(yg, {'missed': 0})['missed'] 
-                           for yg in year_groups]
-            
-            plt.bar(year_groups, detected_counts, bottom=bottom_detected, 
-                   label=f'{tool} (Detected)', color=colors_detected[i], alpha=0.8)
-            plt.bar(year_groups, missed_counts, bottom=bottom_missed + detected_counts, 
-                   label=f'{tool} (Missed)', color=colors_missed[i], alpha=0.5, hatch='//')
-            
-            bottom_detected += detected_counts
-            bottom_missed += missed_counts
-        
-        plt.title('Detected vs Missed Malware by Year', fontsize=14, fontweight='bold')
-        plt.xlabel('Year Group')
-        plt.ylabel('Number of Samples')
-        plt.xticks(rotation=45)
-        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        
-        # 6. Average detection rate by year
-        plt.subplot(2, 3, 6)
-        avg_rates_by_year = {}
-        for year_group in year_groups:
-            rates = []
-            for tool in tools_with_data:
-                if year_group in detection_rates[tool]:
-                    rates.append(detection_rates[tool][year_group]['detection_rate'])
-            if rates:
-                avg_rates_by_year[year_group] = np.mean(rates)
-        
-        years = list(avg_rates_by_year.keys())
-        avg_rates = list(avg_rates_by_year.values())
-        plt.bar(years, avg_rates, color='lightcoral', alpha=0.7)
-        plt.title('Average Detection Rate Across All Tools', fontsize=14, fontweight='bold')
-        plt.xlabel('Year Group')
-        plt.ylabel('Average Detection Rate (%)')
-        plt.xticks(rotation=45)
         
         plt.tight_layout()
         
@@ -380,7 +264,7 @@ class MalwareDetectionAnalyzer:
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
         
-        plt.savefig(os.path.join(output_dir, 'malware_detection_analysis.png'), dpi=300, bbox_inches='tight')
+        plt.savefig(os.path.join(output_dir, 'detection_rate_trends.png'), dpi=300, bbox_inches='tight')
         plt.show()
         
         return fig
@@ -421,7 +305,7 @@ class MalwareDetectionAnalyzer:
         report_lines.append("YEAR-WISE ANALYSIS")
         report_lines.append("-" * 40)
         
-        year_groups = ['2011-2020', '2021', '2022', '2023', '2024-2025', 'Unknown']
+        year_groups = ['early 2020', '2021', '2022', '2023', '2024-2025', 'Unknown']
         
         for year_group in year_groups:
             year_total = 0
@@ -494,8 +378,8 @@ class MalwareDetectionAnalyzer:
                 tool_overall_rates[tool] = (detected / total) * 100
         
         if tool_overall_rates:
-            best_tool = max(tool_overall_rates, key=tool_overall_rates.get)
-            worst_tool = min(tool_overall_rates, key=tool_overall_rates.get)
+            best_tool = max(tool_overall_rates.keys(), key=lambda x: tool_overall_rates[x])
+            worst_tool = min(tool_overall_rates.keys(), key=lambda x: tool_overall_rates[x])
             
             report_lines.append(f"Best performing tool: {best_tool} ({tool_overall_rates[best_tool]:.2f}%)")
             report_lines.append(f"Worst performing tool: {worst_tool} ({tool_overall_rates[worst_tool]:.2f}%)")
@@ -536,7 +420,7 @@ class MalwareDetectionAnalyzer:
         
         print("\nAnalysis completed!")
         print("Files generated in time_tools/ directory:")
-        print("- time_tools/malware_detection_analysis.png (visualization)")
+        print("- time_tools/detection_rate_trends.png (detection rate trends visualization)")
         print("- time_tools/malware_detection_summary_report.txt (summary report)")
         
         return detection_rates
