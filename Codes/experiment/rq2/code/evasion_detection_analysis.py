@@ -224,25 +224,30 @@ class CategoryBasedEvasionAnalyzer:
         
         # Plot category distribution
         if len(category_df) > 0:
-            plt.figure(figsize=(20, 12))
+            plt.figure(figsize=(18, 14))
             
-            # Create horizontal bar chart for better label readability
-            y_pos = list(range(len(category_df)))
+            # Create vertical bar chart
+            x_pos = list(range(len(category_df)))
             counts = category_df['count'].tolist()
             categories = category_df['category'].tolist()
             
-            bars = plt.barh(y_pos, counts)
+            bars = plt.bar(x_pos, counts)
             
-            plt.yticks(y_pos, categories, fontsize=20)
-            plt.xlabel('Number of Occurrences', fontsize=28)
-            plt.title('Distribution of Evasion Categories', fontsize=32, fontweight='bold')
+            plt.xticks(x_pos, categories, fontsize=22, rotation=45, ha='right')
+            plt.yticks(fontsize=22)
+            plt.ylabel('Number of Occurrences', fontsize=30)
+            
+            # Set white background with grid
+            plt.gca().set_facecolor('white')
+            plt.gcf().patch.set_facecolor('white')
+            plt.grid(True, alpha=0.5, linestyle='-', linewidth=0.5, color='gray')
             
             # Add value labels on bars
             for i, (bar, count) in enumerate(zip(bars, counts)):
-                plt.text(bar.get_width() + max(counts) * 0.01, 
-                        bar.get_y() + bar.get_height()/2,
+                plt.text(bar.get_x() + bar.get_width()/2, 
+                        bar.get_height() + max(counts) * 0.01,
                         f'{int(count)}',
-                        ha='left', va='center', fontsize=22, fontweight='bold')
+                        ha='center', va='bottom', fontsize=24, fontweight='bold')
             
             plt.tight_layout()
             plt.savefig(self.output_dir / 'category_distribution.png', dpi=300, bbox_inches='tight')

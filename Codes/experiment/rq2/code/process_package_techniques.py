@@ -34,7 +34,7 @@ def process_package_categories():
     """Process package technique mapping and generate category-based statistics"""
     
     # Load data
-    input_file = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/code_snipptes/statistic/package_technique_mapping.csv"
+    input_file = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/code_snipptes/statistic_code/package_technique_mapping.csv"
     output_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/experiment/rq2/statistic"
     
     # Ensure output directory exists

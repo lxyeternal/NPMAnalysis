@@ -29,12 +29,12 @@ except OSError:
         plt.style.use('default')
 
 # Global font settings
-plt.rcParams.update({'font.size': 16})
-plt.rcParams.update({'axes.labelsize': 20})
-plt.rcParams.update({'axes.titlesize': 24})
-plt.rcParams.update({'xtick.labelsize': 16})
-plt.rcParams.update({'ytick.labelsize': 16})
-plt.rcParams.update({'legend.fontsize': 16})
+plt.rcParams.update({'font.size': 20})
+plt.rcParams.update({'axes.labelsize': 24})
+plt.rcParams.update({'axes.titlesize': 28})
+plt.rcParams.update({'xtick.labelsize': 20})
+plt.rcParams.update({'ytick.labelsize': 20})
+plt.rcParams.update({'legend.fontsize': 20})
 
 class EvasionTimeAnalyzerV2:
     def __init__(self, package_category_file, malware_time_file, output_dir):
@@ -54,7 +54,7 @@ class EvasionTimeAnalyzerV2:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         # Define time periods in order
-        self.time_periods = ["early2020", "2021", "2022", "2023", "2024-2025"]
+        self.time_periods = ["early_2020", "2021", "2022", "2023", "2024-2025"]
         
         # Data containers
         self.package_categories = {}
@@ -201,30 +201,30 @@ class EvasionTimeAnalyzerV2:
         # Prepare data for plotting
         category_stats = self.analysis_results['category_stats']
         
-        # Filter categories with sufficient data points
-        significant_categories = []
-        for category, stats in category_stats.items():
-            if stats['total_packages'] >= 10:  # At least 10 packages
-                significant_categories.append(category)
+        # Get all categories (removed minimum package filter)
+        all_categories = list(category_stats.keys())
         
-        if len(significant_categories) == 0:
-            print("No categories with sufficient data for visualization")
+        if len(all_categories) == 0:
+            print("No categories available for visualization")
             return
         
         # Sort categories by total package count (descending)
-        significant_categories.sort(key=lambda x: category_stats[x]['total_packages'], reverse=True)
+        all_categories.sort(key=lambda x: category_stats[x]['total_packages'], reverse=True)
         
-        # Take top 8 categories for better visibility
-        top_categories = significant_categories[:8]
+        # Show all categories (changed from top 8 to all)
+        top_categories = all_categories
         
-        # Create the plot
-        plt.figure(figsize=(14, 10))
+        # Create the plot with larger size for more categories
+        plt.figure(figsize=(16, 12))
         
-        # Define colors and styles
+        # Define more colors and styles for all categories
         colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
-                 '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
-        line_styles = ['-', '--', '-.', ':', '-', '--', '-.', ':']
-        markers = ['o', 's', '^', 'D', 'v', 'p', '*', 'h']
+                 '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+                 '#ff1744', '#00e676', '#ff9800', '#9c27b0']
+        line_styles = ['-', '--', '-.', ':', '-', '--', '-.', ':', 
+                      '-', '--', '-.', ':', '-', '--']
+        markers = ['o', 's', '^', 'D', 'v', 'p', '*', 'h', 
+                  'P', 'X', '+', 'x', '8', '4']
         
         max_count = 0
         
@@ -252,27 +252,25 @@ class EvasionTimeAnalyzerV2:
                     markersize=8,
                     markeredgewidth=1,
                     markeredgecolor='white',
-                    label=f"{category} ({stats['total_packages']} total)")
+                    label=category)
         
         # Customize the plot
-        plt.xlabel('Time Period', fontsize=20)
-        plt.ylabel('Number of Packages', fontsize=20)
-        plt.title('Evasion Technique Categories: Time Distribution Trends', fontsize=24, fontweight='bold')
+        plt.ylabel('Number of Packages', fontsize=24)
         
         # Set background and grid
         plt.gca().set_facecolor('none')
         plt.gcf().patch.set_facecolor('white')
         plt.grid(True, alpha=0.5, linestyle='-', linewidth=0.5, color='gray')
         
-        # Configure legend
+        # Configure legend with single column
         legend = plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left',
                            frameon=False,
                            handlelength=2, handletextpad=0.5,
-                           fontsize=14)
+                           fontsize=16, ncol=1)
         
         # Set axis limits and ticks
-        plt.xticks(rotation=45, fontsize=16)
-        plt.yticks(fontsize=16)
+        plt.xticks(rotation=45, fontsize=20)
+        plt.yticks(fontsize=20)
         plt.ylim(0, max_count * 1.1)
         
         plt.tight_layout()
@@ -295,10 +293,10 @@ class EvasionTimeAnalyzerV2:
         # Prepare data for stacked bar chart
         category_stats = self.analysis_results.get('category_stats', {})
         
-        # Get top categories
+        # Get all categories (changed from top 10 to all)
         top_categories = sorted(category_stats.keys(), 
                                key=lambda x: category_stats[x]['total_packages'], 
-                               reverse=True)[:10]
+                               reverse=True)
         
         # Create data matrix
         data_matrix = []
@@ -309,8 +307,8 @@ class EvasionTimeAnalyzerV2:
                 category_data.append(count)
             data_matrix.append(category_data)
         
-        # Create stacked bar chart
-        plt.figure(figsize=(14, 10))
+        # Create stacked bar chart with larger size for all categories
+        plt.figure(figsize=(16, 12))
         
         # Define colors
         import matplotlib.cm as cm
@@ -323,16 +321,20 @@ class EvasionTimeAnalyzerV2:
                     color=colors[i], alpha=0.8, edgecolor='white', linewidth=0.5)
             bottom += np.array(data)
         
-        plt.xlabel('Time Period', fontsize=20)
-        plt.ylabel('Number of Packages', fontsize=20)
-        plt.title('Evasion Technique Categories Distribution by Time Period', fontsize=24, fontweight='bold')
+        # plt.xlabel('Time Period', fontsize=26)  # 去掉横轴标题
+        plt.ylabel('Number of Packages', fontsize=26)
+        # plt.title('Evasion Technique Categories Distribution by Time Period (All Categories)', fontsize=30, fontweight='bold')  # 去掉标题
         
-        # Configure legend
-        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', frameon=False, fontsize=12)
+        # Set background and grid - 白色底的线条网格
+        plt.gca().set_facecolor('white')
+        plt.gcf().patch.set_facecolor('white')
+        plt.grid(True, alpha=0.5, linestyle='-', linewidth=0.5, color='gray')
         
-        plt.xticks(rotation=45, fontsize=16)
-        plt.yticks(fontsize=16)
-        plt.grid(True, alpha=0.3, axis='y')
+        # Configure legend with smaller font for all categories - 改为一列
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', frameon=False, fontsize=16, ncol=1)
+        
+        plt.xticks(rotation=45, fontsize=22)
+        plt.yticks(fontsize=22)
         
         plt.tight_layout()
         
@@ -441,7 +443,7 @@ class EvasionTimeAnalyzerV2:
             for period in self.time_periods:
                 row_data = {'period': period}
                 for category in categories:
-                    row_data[category] = self.period_category_counts[period].get(category, 0)
+                    row_data[category] = str(self.period_category_counts[period].get(category, 0))
                 matrix_data.append(row_data)
             
             matrix_df = pd.DataFrame(matrix_data)
