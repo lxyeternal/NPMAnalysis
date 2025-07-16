@@ -357,9 +357,16 @@ def process_domain_package(package_path, package_name, version, is_malware, cont
     
     return package_path, package_name, original_package_name
 
-def run_packj_analysis(package_path, is_malware, source_base_dir, docker_container=None):
+def run_packj_analysis(package_path, is_malware, source_base_dir, docker_container=None, timeout_seconds=180):
     """
     运行packj分析并保存结果
+    
+    Args:
+        package_path: 包路径
+        is_malware: 是否为恶意包
+        source_base_dir: 源目录
+        docker_container: Docker容器名称
+        timeout_seconds: 超时时间（秒）
     """
     # 使用默认Docker容器名称如果未指定
     if docker_container is None:
@@ -406,22 +413,48 @@ def run_packj_analysis(package_path, is_malware, source_base_dir, docker_contain
     synchronized_print(f"[{docker_container}] 执行Docker命令: {cmd}")
     
     try:
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        # 使用subprocess.Popen和超时机制
+        process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         
-        # 保存结果到文件
-        result_file = os.path.join(target_dir, "result.txt")
-        with open(result_file, 'w') as f:
-            f.write(result.stdout)
-        
-        synchronized_print(f"[{docker_container}] 分析完成: {result_name}/{version}, 结果保存到 {result_file}")
-        synchronized_print("-" * 80)  # 添加分隔线，使输出更清晰
-        return True
+        try:
+            # 等待进程完成，设置超时
+            stdout, stderr = process.communicate(timeout=timeout_seconds)
+            
+            # 保存结果到文件
+            result_file = os.path.join(target_dir, "result.txt")
+            with open(result_file, 'w') as f:
+                f.write(stdout)
+            
+            synchronized_print(f"[{docker_container}] 分析完成: {result_name}/{version}, 结果保存到 {result_file}")
+            synchronized_print("-" * 80)  # 添加分隔线，使输出更清晰
+            return True
+            
+        except subprocess.TimeoutExpired:
+            # 超时处理：终止当前进程但保留Docker容器
+            process.kill()
+            
+            # 清理可能残留的进程
+            cleanup_cmd = f"docker exec {docker_container} pkill -f 'python3 /home/ubuntu/packj/main.py'"
+            subprocess.run(cleanup_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            # 记录超时信息
+            timeout_msg = f"分析超时（{timeout_seconds}秒）"
+            synchronized_print(f"[{docker_container}] {timeout_msg}: {result_name}/{version}")
+            
+            # 保存超时信息到结果文件
+            result_file = os.path.join(target_dir, "result.txt")
+            with open(result_file, 'w') as f:
+                f.write(f"ERROR: {timeout_msg}")
+            
+            synchronized_print("-" * 80)  # 添加分隔线，使输出更清晰
+            return False
+            
     except Exception as e:
         synchronized_print(f"[{docker_container}] 分析失败: {analysis_path}, 错误: {str(e)}")
         synchronized_print("-" * 80)  # 添加分隔线，使输出更清晰
         return False
 
-def worker_process(package_list, is_malware, source_base_dir, worker_id, docker_containers):
+def worker_process(package_list, is_malware, source_base_dir, worker_id, docker_containers, timeout_seconds):
     """
     工作进程函数，处理分配给它的包列表
     """
@@ -435,12 +468,12 @@ def worker_process(package_list, is_malware, source_base_dir, worker_id, docker_
         # 添加一个小的随机延迟，避免所有进程同时启动
         time.sleep(random.uniform(0.1, 0.5))
         synchronized_print(f"[{docker_container}] 处理包 {i+1}/{len(package_list)}: {os.path.basename(os.path.dirname(package_path))}")
-        run_packj_analysis(package_path, is_malware, source_base_dir, docker_container)
+        run_packj_analysis(package_path, is_malware, source_base_dir, docker_container, timeout_seconds)
     
     synchronized_print(f"[{docker_container}] 已完成所有 {len(package_list)} 个包的处理")
     synchronized_print("=" * 80)  # 添加明显的分隔线
 
-def process_directory(source_dir, is_malware, use_parallel=False, num_containers=1):
+def process_directory(source_dir, is_malware, use_parallel=False, num_containers=1, timeout_seconds=180):
     """
     处理指定目录下的所有包，可选择并行处理
     """
@@ -456,7 +489,7 @@ def process_directory(source_dir, is_malware, use_parallel=False, num_containers
             
             if package_json_dir:
                 synchronized_print(f"找到package.json目录: {package_json_dir}")
-                run_packj_analysis(package_json_dir, is_malware, source_dir)
+                run_packj_analysis(package_json_dir, is_malware, source_dir, timeout_seconds=timeout_seconds)
             else:
                 synchronized_print(f"未找到package.json: {package_dir}")
     else:
@@ -497,7 +530,7 @@ def process_directory(source_dir, is_malware, use_parallel=False, num_containers
                 synchronized_print(f"[{container_name}] 启动工作进程，处理 {len(packages_per_process[i])} 个包")
                 p = multiprocessing.Process(
                     target=worker_process,
-                    args=(packages_per_process[i], is_malware, source_dir, i, docker_containers)
+                    args=(packages_per_process[i], is_malware, source_dir, i, docker_containers, timeout_seconds)
                 )
                 processes.append(p)
                 p.start()
@@ -521,6 +554,8 @@ def parse_arguments():
                         help='跳过Docker容器设置（假设容器已经存在并准备好）')
     parser.add_argument('--only-docker-setup', action='store_true',
                         help='只执行Docker容器设置，不进行包分析')
+    parser.add_argument('--timeout', type=int, default=180,
+                        help='单个包分析的超时时间（秒），默认180秒(3分钟)')
     return parser.parse_args()
 
 def main():
@@ -533,6 +568,7 @@ def main():
     num_containers = args.containers
     skip_docker_setup = args.skip_docker_setup
     only_docker_setup = args.only_docker_setup
+    timeout_seconds = args.timeout
     
     # 如果只执行Docker设置，强制使用并行模式
     if only_docker_setup:
@@ -550,9 +586,9 @@ def main():
     
     # 打印运行模式
     if use_parallel:
-        synchronized_print(f"使用并行模式，{num_containers} 个Docker容器")
+        synchronized_print(f"使用并行模式，{num_containers} 个Docker容器，超时时间: {timeout_seconds}秒")
     else:
-        synchronized_print("使用串行模式，单Docker容器")
+        synchronized_print(f"使用串行模式，单Docker容器，超时时间: {timeout_seconds}秒")
     
     # 确保domain_package目录存在并有正确的权限
     os.makedirs(DOMAIN_PACKAGE_DIR, exist_ok=True)
@@ -562,13 +598,13 @@ def main():
     # 第二步：处理包
     synchronized_print("\n开始处理恶意包...")
     if os.path.exists(MALWARE_SOURCE_DIR):
-        process_directory(MALWARE_SOURCE_DIR, True, use_parallel, num_containers)
+        process_directory(MALWARE_SOURCE_DIR, True, use_parallel, num_containers, timeout_seconds)
     else:
         synchronized_print(f"目录不存在: {MALWARE_SOURCE_DIR}")
     
     synchronized_print("\n开始处理良性包...")
     if os.path.exists(BENIGN_SOURCE_DIR):
-        process_directory(BENIGN_SOURCE_DIR, False, use_parallel, num_containers)
+        process_directory(BENIGN_SOURCE_DIR, False, use_parallel, num_containers, timeout_seconds)
     else:
         synchronized_print(f"目录不存在: {BENIGN_SOURCE_DIR}")
 
