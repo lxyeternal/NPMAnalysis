@@ -224,7 +224,7 @@ class CategoryBasedEvasionAnalyzer:
         
         # Plot category distribution
         if len(category_df) > 0:
-            plt.figure(figsize=(18, 14))
+            plt.figure(figsize=(18, 13))
             
             # Create vertical bar chart
             x_pos = list(range(len(category_df)))
@@ -233,9 +233,9 @@ class CategoryBasedEvasionAnalyzer:
             
             bars = plt.bar(x_pos, counts)
             
-            plt.xticks(x_pos, categories, fontsize=22, rotation=45, ha='right')
-            plt.yticks(fontsize=22)
-            plt.ylabel('Number of Occurrences', fontsize=30)
+            plt.xticks(x_pos, categories, fontsize=26, rotation=30, ha='right')
+            plt.yticks(fontsize=26)
+            plt.ylabel('Number of Packages', fontsize=32)
             
             # Set white background with grid
             plt.gca().set_facecolor('white')
@@ -247,7 +247,7 @@ class CategoryBasedEvasionAnalyzer:
                 plt.text(bar.get_x() + bar.get_width()/2, 
                         bar.get_height() + max(counts) * 0.01,
                         f'{int(count)}',
-                        ha='center', va='bottom', fontsize=24, fontweight='bold')
+                        ha='center', va='bottom', fontsize=28, fontweight='bold')
             
             plt.tight_layout()
             plt.savefig(self.output_dir / 'category_distribution.png', dpi=300, bbox_inches='tight')
@@ -327,14 +327,13 @@ class CategoryBasedEvasionAnalyzer:
                    cmap='RdYlGn',
                    vmin=0, 
                    vmax=1,
-                   annot_kws={"size": 14, "weight": "bold"},
-                   cbar_kws={'label': 'Detection Rate'})
+                   annot_kws={"size": 18, "weight": "bold"})
         
-        plt.title('Tool Detection Rates by Evasion Category', fontsize=26, fontweight='bold')
-        plt.xlabel('Evasion Categories', fontsize=22)
-        plt.ylabel('Security Tools', fontsize=22)
-        plt.xticks(rotation=45, ha='right', fontsize=16)
-        plt.yticks(fontsize=16)
+        plt.title('Tool Detection Rates by Evasion Category', fontsize=30, fontweight='bold')
+        plt.xlabel('Evasion Categories', fontsize=26)
+        plt.ylabel('Security Tools', fontsize=26)
+        plt.xticks(rotation=30, ha='right', fontsize=20)
+        plt.yticks(fontsize=20)
         
         plt.tight_layout()
         plt.savefig(self.output_dir / 'category_detection_heatmap.png', dpi=300, bbox_inches='tight')
@@ -543,10 +542,10 @@ def main():
     """Main function to run the analysis."""
     
     # Define paths
-    malware_snippets_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/code_snipptes/malware_snippets"
-    stats_output_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/tool_detect/tool_output_statistic/reports/stats_output"
-    classification_file = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/experiment/rq2/statistic/evation_classification.csv"
-    output_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/experiment/rq2/statistic"
+    malware_snippets_dir = "/home2/wenbo/Documents/NPMAnalysis/Codes/code_snipptes/malware_snippets"
+    stats_output_dir = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output_statistic/reports/stats_output"
+    classification_file = "/home2/wenbo/Documents/NPMAnalysis/Codes/experiment/rq2/statistic/evation_classification.csv"
+    output_dir = "/home2/wenbo/Documents/NPMAnalysis/Codes/experiment/rq2/statistic"
     
     # Create analyzer and run analysis
     analyzer = CategoryBasedEvasionAnalyzer(
