@@ -48,7 +48,7 @@ class MalwareDetectionAnalyzer:
             if pd.isna(year):
                 return 'Unknown'
             elif year <= 2020:
-                return 'early 2020'
+                return 'early_2020'
             elif year == 2021:
                 return '2021'
             elif year == 2022:
@@ -190,7 +190,7 @@ class MalwareDetectionAnalyzer:
         sns.set_palette("husl")
         
         # Prepare data for plotting
-        year_groups = ['early 2020', '2021', '2022', '2023', '2024-2025', 'Unknown']
+        year_groups = ['early_2020', '2021', '2022', '2023', '2024-2025', 'Unknown']
         tools = list(detection_rates.keys())
         
         # Find tools with data
@@ -240,7 +240,7 @@ class MalwareDetectionAnalyzer:
                     label=tool)
         
         plt.xlabel('')  # Remove x-axis label
-        plt.ylabel('Performance (%)', fontsize=20)
+        plt.ylabel('Performance (%)', fontsize=24)
         
         # Set transparent background and grid
         plt.gca().set_facecolor('none')  # Transparent plot area
@@ -251,10 +251,10 @@ class MalwareDetectionAnalyzer:
         legend = plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', 
                            frameon=False,  # 去掉边框
                            handlelength=2, handletextpad=0.5, columnspacing=1,
-                           fontsize=16)  # 放大图例字体
+                           fontsize=20)  # 放大图例字体
         
-        plt.xticks(rotation=45, fontsize=16)  # 放大x轴刻度字体
-        plt.yticks(fontsize=16)  # 放大y轴刻度字体
+        plt.xticks(rotation=45, fontsize=20)  # 放大x轴刻度字体
+        plt.yticks(fontsize=20)  # 放大y轴刻度字体
         plt.ylim(0, 100)  # Set y-axis limits for better visualization
         
         plt.tight_layout()
@@ -305,7 +305,7 @@ class MalwareDetectionAnalyzer:
         report_lines.append("YEAR-WISE ANALYSIS")
         report_lines.append("-" * 40)
         
-        year_groups = ['early 2020', '2021', '2022', '2023', '2024-2025', 'Unknown']
+        year_groups = ['early_2020', '2021', '2022', '2023', '2024-2025', 'Unknown']
         
         for year_group in year_groups:
             year_total = 0
