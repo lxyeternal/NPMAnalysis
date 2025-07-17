@@ -139,14 +139,14 @@ def create_behavior_trends_plot(behaviors_df, output_dir):
                     alpha=0.8)
     
     # Customize the plot with larger fonts
-    plt.ylabel('Number of Packages', fontsize=16, fontweight='bold')  # Changed to Count and larger font
+    plt.ylabel('Number of Packages', fontsize=20, fontweight='bold')  # Increased by 4 (16→20)
     plt.grid(True, alpha=0.3)
-    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=12)  # Larger legend font
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=16)  # Increased by 4 (12→16)
     
     # Set axis properties
     years = sorted(plot_data.index, key=sort_key)  # Sort years properly
-    plt.xticks(range(len(years)), years, fontsize=14)  # Use range for proper spacing
-    plt.yticks(fontsize=14)  # Larger tick labels
+    plt.xticks(range(len(years)), years, fontsize=18)  # Increased by 4 (14→18)
+    plt.yticks(fontsize=18)  # Increased by 4 (14→18)
     
     # Add grid lines similar to reference
     plt.gca().set_axisbelow(True)

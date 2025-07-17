@@ -16,7 +16,7 @@ class MalwareBehaviorAnalyzer:
         self.base_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis"
         self.malware_snippets_dir = os.path.join(self.base_dir, "Codes/code_snipptes/malware_snippets")
         self.package_label_dir = os.path.join(self.base_dir, "Codes/dataclean/package_label")
-        self.output_dir = os.path.join(self.base_dir, "Codes/behavior_annoation/key_results_3")
+        self.output_dir = os.path.join(self.base_dir, "Codes/behavior_annoation/key_results")
         
         # 创建输出目录
         os.makedirs(self.output_dir, exist_ok=True)
@@ -48,7 +48,6 @@ class MalwareBehaviorAnalyzer:
             "Proxy Manipulation": ["proxy", "scrape", "list", "sock", "tunnel"],
             "Prototype Pollution": ["prototype", "global", "extend", "override", "modify"],
             "File Operations": ["file", "read", "write", "delet", "disk", "local", "path"],
-            "NSFW Content": ["nsfw", "r18", "adult", "porn", "pixiv", "hentai"]
         }
         
         # Store classification results
