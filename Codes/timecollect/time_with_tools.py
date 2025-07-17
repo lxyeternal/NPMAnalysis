@@ -48,7 +48,7 @@ class MalwareDetectionAnalyzer:
             if pd.isna(year):
                 return 'Unknown'
             elif year <= 2020:
-                return 'early_2020'
+                return 'early 2020'
             elif year == 2021:
                 return '2021'
             elif year == 2022:
@@ -190,7 +190,7 @@ class MalwareDetectionAnalyzer:
         sns.set_palette("husl")
         
         # Prepare data for plotting
-        year_groups = ['early_2020', '2021', '2022', '2023', '2024-2025', 'Unknown']
+        year_groups = ['early 2020', '2021', '2022', '2023', '2024-2025', 'Unknown']
         tools = list(detection_rates.keys())
         
         # Find tools with data
@@ -305,7 +305,7 @@ class MalwareDetectionAnalyzer:
         report_lines.append("YEAR-WISE ANALYSIS")
         report_lines.append("-" * 40)
         
-        year_groups = ['early_2020', '2021', '2022', '2023', '2024-2025', 'Unknown']
+        year_groups = ['early 2020', '2021', '2022', '2023', '2024-2025', 'Unknown']
         
         for year_group in year_groups:
             year_total = 0
