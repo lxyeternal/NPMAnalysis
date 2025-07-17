@@ -116,25 +116,48 @@ def analyze_classifications_by_category(classifications, reports):
 def generate_statistics_csv(category_stats, classification_counts, output_dir):
     """Generate CSV statistics files"""
     
+    # Define the desired tool order
+    tool_order = ['sap_XGB', 'sap_RF', 'sap_DT', 'packj_trace', 'packj_static', 
+                  'ossgadget', 'guarddog', 'genie', 'socketai']
+    
     os.makedirs(output_dir, exist_ok=True)
     
-    # 1. Tool-specific statistics
-    for tool_name, tool_data in category_stats.items():
-        tool_stats = []
-        for category, classifications in tool_data.items():
-            for classification, count in classifications.items():
-                tool_stats.append({
-                    'tool': tool_name,
-                    'category': category,
-                    'classification': classification,
-                    'count': count
-                })
-        
-        if tool_stats:
-            df = pd.DataFrame(tool_stats)
-            df.to_csv(os.path.join(output_dir, f'{tool_name}_classification_stats.csv'), index=False)
+    # 1. Tool-specific statistics (ordered by tool_order)
+    for tool_name in tool_order:
+        if tool_name in category_stats:
+            tool_data = category_stats[tool_name]
+            tool_stats = []
+            for category, classifications in tool_data.items():
+                for classification, count in classifications.items():
+                    tool_stats.append({
+                        'tool': tool_name,
+                        'category': category,
+                        'classification': classification,
+                        'count': count
+                    })
+            
+            if tool_stats:
+                df = pd.DataFrame(tool_stats)
+                df.to_csv(os.path.join(output_dir, f'{tool_name}_classification_stats.csv'), index=False)
     
-    # 2. Overall classification statistics
+    # Also generate for any tools not in the predefined order
+    for tool_name, tool_data in category_stats.items():
+        if tool_name not in tool_order:
+            tool_stats = []
+            for category, classifications in tool_data.items():
+                for classification, count in classifications.items():
+                    tool_stats.append({
+                        'tool': tool_name,
+                        'category': category,
+                        'classification': classification,
+                        'count': count
+                    })
+            
+            if tool_stats:
+                df = pd.DataFrame(tool_stats)
+                df.to_csv(os.path.join(output_dir, f'{tool_name}_classification_stats.csv'), index=False)
+    
+    # 2. Overall classification statistics (ordered by tool_order)
     overall_stats = []
     for classification, categories in classification_counts.items():
         for category, count in categories.items():
@@ -148,7 +171,37 @@ def generate_statistics_csv(category_stats, classification_counts, output_dir):
         df_overall = pd.DataFrame(overall_stats)
         df_overall.to_csv(os.path.join(output_dir, 'overall_classification_stats.csv'), index=False)
     
-    # 3. Summary statistics
+    # 3. Combined analysis CSV (ordered by tool_order)
+    combined_stats = []
+    for tool_name in tool_order:
+        if tool_name in category_stats:
+            tool_data = category_stats[tool_name]
+            for category, classifications in tool_data.items():
+                for classification, count in classifications.items():
+                    combined_stats.append({
+                        'tool': tool_name,
+                        'category': category,
+                        'classification': classification,
+                        'count': count
+                    })
+    
+    # Add any tools not in the predefined order
+    for tool_name, tool_data in category_stats.items():
+        if tool_name not in tool_order:
+            for category, classifications in tool_data.items():
+                for classification, count in classifications.items():
+                    combined_stats.append({
+                        'tool': tool_name,
+                        'category': category,
+                        'classification': classification,
+                        'count': count
+                    })
+    
+    if combined_stats:
+        df_combined = pd.DataFrame(combined_stats)
+        df_combined.to_csv(os.path.join(output_dir, 'combined_malware_analysis.csv'), index=False)
+    
+    # 4. Summary statistics
     summary_stats = []
     all_classifications = set()
     all_categories = set()
