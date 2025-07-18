@@ -542,10 +542,11 @@ def main():
     """Main function to run the analysis."""
     
     # Define paths
-    malware_snippets_dir = "/home2/wenbo/Documents/NPMAnalysis/Codes/code_snipptes/malware_snippets"
-    stats_output_dir = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output_statistic/reports/stats_output"
-    classification_file = "/home2/wenbo/Documents/NPMAnalysis/Codes/experiment/rq2/statistic/evation_classification.csv"
-    output_dir = "/home2/wenbo/Documents/NPMAnalysis/Codes/experiment/rq2/statistic"
+
+    malware_snippets_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/code_snipptes/malware_snippets"
+    stats_output_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/tool_detect/tool_output_statistic/reports/stats_output"
+    classification_file = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/experiment/rq2/statistic/evation_classification.csv"
+    output_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/experiment/rq2/statistic"
     
     # Create analyzer and run analysis
     analyzer = CategoryBasedEvasionAnalyzer(
@@ -558,3 +559,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
