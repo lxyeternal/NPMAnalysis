@@ -2,44 +2,91 @@
 import os
 import glob
 import shutil
+import re
 from pathlib import Path
+from collections import Counter
 
 # 指定目录路径
-base_dir = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/packj/result_trace/benign"
+base_dir = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/packj/result_trace/malware"
 
-def find_files_without_html_summary():
-    """查找所有不包含'HTML summary available at:'的文件"""
+def find_files_with_code_pattern():
+    """查找所有包含[code X]格式字符串的文件，并统计各种code值的出现次数"""
     total_files = 0
-    files_without_html_summary = 0
-    files_without_html_summary_list = []
+    files_with_code_pattern = 0
+    files_with_code_pattern_list = []
+    code_pattern_counter = Counter()
+    all_patterns_found = set()
     
     # 使用glob递归查找所有result.txt文件
     result_files = glob.glob(f"{base_dir}/*/*/result.txt", recursive=True)
     
+    # 正则表达式匹配[code X]格式
+    code_pattern = re.compile(r'\[code\s+([^\]]+)\]')
+    
     # 遍历所有文件
     for file_path in result_files:
         total_files += 1
+        file_has_pattern = False
         
         try:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
+                # 查找所有匹配的模式
+                matches = code_pattern.findall(content)
+                
+                if matches:
+                    file_has_pattern = True
+                    files_with_code_pattern_list.append(file_path)
+                    
+                    # 统计每种code值的出现次数
+                    for match in matches:
+                        code_value = match.strip()
+                        code_pattern_counter[code_value] += 1
+                        all_patterns_found.add(f"[code {code_value}]")
+                
+                # 检查是否包含"list index out of range"
+                if "list index out of range" in content:
+                    if not file_has_pattern:
+                        file_has_pattern = True
+                        files_with_code_pattern_list.append(file_path)
+                    code_pattern_counter["list index out of range"] += 1
+                    all_patterns_found.add("[list index out of range]")
+                
+                # 检查是否包含"KeyboardInterrupt"
                 if "KeyboardInterrupt" in content:
-                    files_without_html_summary += 1
-                    files_without_html_summary_list.append(file_path)
+                    if not file_has_pattern:
+                        file_has_pattern = True
+                        files_with_code_pattern_list.append(file_path)
+                    code_pattern_counter["KeyboardInterrupt"] += 1
+                    all_patterns_found.add("[KeyboardInterrupt]")
+        
         except Exception as e:
             print(f"处理文件 {file_path} 时出错: {e}")
+        
+        if file_has_pattern:
+            files_with_code_pattern += 1
     
     # 输出结果
     print(f"总共检查的文件数量: {total_files}")
-    print(f"不包含'HTML summary available at:'的文件数量: {files_without_html_summary}")
-    print(f"不包含该字符串的文件比例: {files_without_html_summary/total_files:.2%}")
+    print(f"包含[code X]格式或特定错误字符串的文件数量: {files_with_code_pattern}")
+    print(f"包含这些字符串的文件比例: {files_with_code_pattern/total_files:.2%}")
     
-    # 输出不包含该字符串的文件列表
-    print("\n不包含'HTML summary available at:'的文件列表:")
-    for file_path in files_without_html_summary_list:
-        print(f"- {file_path}")
+    # 输出各种code值的统计信息
+    print("\n各种code值及其出现次数:")
+    for code_value, count in sorted(code_pattern_counter.items(), key=lambda x: x[1], reverse=True):
+        print(f"- [code {code_value}]: {count}次")
     
-    return files_without_html_summary_list
+    # 输出所有发现的模式
+    print("\n所有发现的模式:")
+    for pattern in sorted(all_patterns_found):
+        print(f"- {pattern}")
+    
+    # 输出包含这些模式的文件列表
+    # print("\n包含这些模式的文件列表:")
+    # for file_path in files_with_code_pattern_list:
+    #     print(f"- {file_path}")
+    
+    return files_with_code_pattern_list
 
 def delete_files_and_folders(files_list):
     """删除指定文件列表中的文件所在的版本文件夹，并在必要时删除包名文件夹"""
@@ -88,11 +135,11 @@ def delete_files_and_folders(files_list):
         print(f"- {dir_path}")
 
 def main():
-    # 第一步：查找不包含指定字符串的文件
-    print("正在查找不包含'HTML summary available at:'的文件...\n")
-    files_to_remove = find_files_without_html_summary()
+    # 查找包含[code X]格式字符串的文件
+    print("正在查找包含[code X]格式字符串的文件...\n")
+    files_to_remove = find_files_with_code_pattern()
     
-    # 第二步：询问用户是否要删除
+    # 询问用户是否要删除
     if files_to_remove:
         user_input = input("\n是否要删除这些文件所在的版本文件夹？(yes/no): ")
         if user_input.lower() == "yes":

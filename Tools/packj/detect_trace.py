@@ -481,17 +481,43 @@ def process_directory(source_dir, is_malware, use_parallel=False, num_containers
     package_dirs = [os.path.join(source_dir, d) for d in os.listdir(source_dir) 
                    if os.path.isdir(os.path.join(source_dir, d))]
     
+    # 确定目标目录
+    target_base_dir = MALWARE_TARGET_DIR if is_malware else BENIGN_TARGET_DIR
+    
     if not use_parallel:
         # 串行处理
         for package_dir in package_dirs:
-            # 查找包含package.json的最浅目录
-            package_json_dir = find_package_json_dir(package_dir)
+            package_name = os.path.basename(package_dir)
+            synchronized_print(f"处理包: {package_name}")
             
-            if package_json_dir:
-                synchronized_print(f"找到package.json目录: {package_json_dir}")
-                run_packj_analysis(package_json_dir, is_malware, source_dir, timeout_seconds=timeout_seconds)
-            else:
-                synchronized_print(f"未找到package.json: {package_dir}")
+            # 获取包下的所有版本目录
+            try:
+                version_dirs = [os.path.join(package_dir, v) for v in os.listdir(package_dir)
+                              if os.path.isdir(os.path.join(package_dir, v))]
+                
+                if not version_dirs:
+                    synchronized_print(f"警告: 包 {package_name} 下没有版本目录")
+                    continue
+                
+                for version_dir in version_dirs:
+                    version = os.path.basename(version_dir)
+                    synchronized_print(f"处理版本: {package_name}/{version}")
+                    
+                    # 先检查是否已经分析过
+                    if is_already_analyzed(package_name, version, target_base_dir):
+                        synchronized_print(f"跳过已分析的包: {package_name}/{version}")
+                        continue
+                    
+                    # 在版本目录中查找package.json
+                    package_json_dir = find_package_json_dir(version_dir)
+                    
+                    if package_json_dir:
+                        synchronized_print(f"找到package.json: {package_json_dir}")
+                        run_packj_analysis(package_json_dir, is_malware, source_dir, timeout_seconds=timeout_seconds)
+                    else:
+                        synchronized_print(f"未找到package.json: {version_dir}")
+            except Exception as e:
+                synchronized_print(f"处理包 {package_name} 时出错: {str(e)}")
     else:
         # 并行处理
         # 生成Docker容器名称列表
@@ -501,14 +527,37 @@ def process_directory(source_dir, is_malware, use_parallel=False, num_containers
         # 收集所有需要处理的包路径
         all_packages = []
         for package_dir in package_dirs:
-            # 查找包含package.json的最浅目录
-            package_json_dir = find_package_json_dir(package_dir)
+            package_name = os.path.basename(package_dir)
+            synchronized_print(f"处理包: {package_name}")
             
-            if package_json_dir:
-                synchronized_print(f"找到package.json目录: {package_json_dir}")
-                all_packages.append(package_json_dir)
-            else:
-                synchronized_print(f"未找到package.json: {package_dir}")
+            # 获取包下的所有版本目录
+            try:
+                version_dirs = [os.path.join(package_dir, v) for v in os.listdir(package_dir)
+                              if os.path.isdir(os.path.join(package_dir, v))]
+                
+                if not version_dirs:
+                    synchronized_print(f"警告: 包 {package_name} 下没有版本目录")
+                    continue
+                
+                for version_dir in version_dirs:
+                    version = os.path.basename(version_dir)
+                    synchronized_print(f"处理版本: {package_name}/{version}")
+                    
+                    # 先检查是否已经分析过
+                    if is_already_analyzed(package_name, version, target_base_dir):
+                        synchronized_print(f"跳过已分析的包: {package_name}/{version}")
+                        continue
+                    
+                    # 在版本目录中查找package.json
+                    package_json_dir = find_package_json_dir(version_dir)
+                    
+                    if package_json_dir:
+                        synchronized_print(f"找到package.json: {package_json_dir}")
+                        all_packages.append(package_json_dir)
+                    else:
+                        synchronized_print(f"未找到package.json: {version_dir}")
+            except Exception as e:
+                synchronized_print(f"处理包 {package_name} 时出错: {str(e)}")
         
         if not all_packages:
             synchronized_print(f"没有找到需要处理的包: {source_dir}")
@@ -519,7 +568,7 @@ def process_directory(source_dir, is_malware, use_parallel=False, num_containers
         for i, package_path in enumerate(all_packages):
             container_idx = i % num_containers
             container_name = docker_containers[container_idx]
-            synchronized_print(f"[{container_name}] 分配包: {os.path.basename(os.path.dirname(package_path))}")
+            synchronized_print(f"[{container_name}] 分配包: {os.path.basename(os.path.dirname(os.path.dirname(package_path)))}/{os.path.basename(os.path.dirname(package_path))}")
             packages_per_process[container_idx].append(package_path)
         
         # 创建并启动多个进程
@@ -554,7 +603,7 @@ def parse_arguments():
                         help='跳过Docker容器设置（假设容器已经存在并准备好）')
     parser.add_argument('--only-docker-setup', action='store_true',
                         help='只执行Docker容器设置，不进行包分析')
-    parser.add_argument('--timeout', type=int, default=180,
+    parser.add_argument('--timeout', type=int, default=600,
                         help='单个包分析的超时时间（秒），默认180秒(3分钟)')
     return parser.parse_args()
 
@@ -614,7 +663,7 @@ if __name__ == "__main__":
     os.makedirs(BENIGN_TARGET_DIR, exist_ok=True)
     os.makedirs(DOMAIN_PACKAGE_DIR, exist_ok=True)
     # 不再设置domain_package目录权限
-    # os.system(f"chmod -R 777 {DOMAIN_PACKAGE_DIR}")
+   # os.system(f"chmod -R 777 {DOMAIN_PACKAGE_DIR}")
     
     # 设置多进程启动方法（如果在Windows上运行）
     if os.name == 'nt':
@@ -624,4 +673,4 @@ if __name__ == "__main__":
 
 
 # python detect_trace.py --only-docker-setup --containers 3
-# python detect_trace.py --parallel --containers 3 --skip-docker-setup
+# python detect_trace.py --parallel --containers 40 --skip-docker-setup --timeout 600
