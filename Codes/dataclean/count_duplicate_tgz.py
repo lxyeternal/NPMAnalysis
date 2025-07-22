@@ -5,7 +5,7 @@ import glob
 from collections import defaultdict
 
 # 定义目标目录
-target_dir = '/home2/wenbo/Documents/NPMAnalysis/Dataset/zip_malware'
+target_dir = '/home2/mynames/Documents/NPMAnalysis/Dataset/zip_malware'
 
 # 用于存储文件名和哈希值的字典
 file_hash_dict = defaultdict(list)

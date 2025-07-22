@@ -7,8 +7,8 @@ import sys
 from pathlib import Path
 
 # 定义路径
-SOURCE_DIR = '/home2/wenbo/Documents/NPMAnalysis/Codes/dataclean/package_label'
-TARGET_DIR = '/home2/wenbo/Documents/NPMAnalysis/Codes/code_snipptes/malware_snippets'
+SOURCE_DIR = '/home2/mynames/Documents/NPMAnalysis/Codes/dataclean/package_label'
+TARGET_DIR = '/home2/mynames/Documents/NPMAnalysis/Codes/code_snipptes/malware_snippets'
 
 def calculate_hash(code_string):
     """计算代码字符串的MD5哈希值"""
@@ -39,7 +39,7 @@ def process_package_file(package_path):
                 "version": version,
                 "report_path": "",  # 设置为空
                 "match_count": len(data.get('malicious_code', {})),
-                "unzip_dir": f"/home2/wenbo/Documents/NPMAnalysis/Dataset/unzip_malware/{package_name}/{version}"
+                "unzip_dir": f"/home2/mynames/Documents/NPMAnalysis/Dataset/unzip_malware/{package_name}/{version}"
             },
             "malicious_snippets": []
         }

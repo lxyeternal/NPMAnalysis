@@ -5,7 +5,7 @@
 # @Description：分析恶意代码片段并规范化其行为和规避技术
 
 import sys
-sys.path.append("/home2/wenbo/Documents/NPMAnalysis/Codes")
+sys.path.append("/home2/mynames/Documents/NPMAnalysis/Codes")
 import os
 import json
 import copy
@@ -484,7 +484,7 @@ Instructions:
         return prompt
 
 def main():
-    base_dir = "/home2/wenbo/Documents/NPMAnalysis/Codes/code_snipptes/malware_snippets"
+    base_dir = "/home2/mynames/Documents/NPMAnalysis/Codes/code_snipptes/malware_snippets"
     analyzer = MalwareAnalyzer(base_dir)
     analyzer.analyze_all_packages()
     

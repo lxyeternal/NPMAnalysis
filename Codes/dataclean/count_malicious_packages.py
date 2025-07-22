@@ -4,7 +4,7 @@ import json
 from collections import defaultdict
 
 # 设置根目录
-root_dir = "/home2/wenbo/Documents/NPMAnalysis/Codes/dataclean/package_label"
+root_dir = "/home2/mynames/Documents/NPMAnalysis/Codes/dataclean/package_label"
 
 # 统计变量
 malicious_count = 0
@@ -76,7 +76,7 @@ for pkg_name, stats in sorted(package_stats.items(),
         print(f"{pkg_name}: 总版本 {total}, 恶意版本 {stats['malicious']}, 良性版本 {stats['benign']}")
 
 # 保存详细统计结果到文件
-output_file = "/home2/wenbo/Documents/NPMAnalysis/Codes/dataclean/package_stats.json"
+output_file = "/home2/mynames/Documents/NPMAnalysis/Codes/dataclean/package_stats.json"
 with open(output_file, 'w') as f:
     json.dump({
         "summary": {

@@ -7,8 +7,8 @@ from pathlib import Path
 # 定义源目录和目标目录
 MALWARE_SOURCE_DIR = "/tmp/malicious_package/unzip_malware"
 BENIGN_SOURCE_DIR = "/tmp/malicious_package/unzip_benign"
-MALWARE_TARGET_DIR = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/packj/result_trace/malware"
-BENIGN_TARGET_DIR = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/packj/result_trace/benign"
+MALWARE_TARGET_DIR = "/home2/mynames/Documents/NPMAnalysis/Codes/tool_detect/tool_output/packj/result_trace/malware"
+BENIGN_TARGET_DIR = "/home2/mynames/Documents/NPMAnalysis/Codes/tool_detect/tool_output/packj/result_trace/benign"
 DOMAIN_PACKAGE_DIR = "/tmp/domain_package"
 
 def find_package_json_dir(start_path):

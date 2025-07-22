@@ -4,7 +4,7 @@ import random
 import glob
 
 # 指定路径
-benign_path = "/home2/wenbo/Documents/NPMAnalysis/Dataset/zip_benign"
+benign_path = "/home2/mynames/Documents/NPMAnalysis/Dataset/zip_benign"
 output_file = "selected_benign_packages.txt"
 
 def get_all_package_versions():

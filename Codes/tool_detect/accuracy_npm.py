@@ -247,7 +247,7 @@ def find_package_files(base_path, package_type, tool_name):
 
 def evaluate_tool(tool_name, tool_function, malware_benign_skip_list, selected_benign_skip_list, sub_tool=None):
     """评估特定工具的检测效果"""
-    base_path = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output"
+    base_path = "/home2/mynames/Documents/NPMAnalysis/Codes/tool_detect/tool_output"
     
     # 为packj工具添加子路径
     if sub_tool:
@@ -316,8 +316,8 @@ def evaluate_tool(tool_name, tool_function, malware_benign_skip_list, selected_b
 def main():
     """主函数"""
     # 加载需要跳过的包列表
-    malware_benign_path = "/home2/wenbo/Documents/NPMAnalysis/Codes/dataclean/malware_benign.txt"
-    selected_benign_path = "/home2/wenbo/Documents/NPMAnalysis/Codes/dataclean/selected_benign_packages.txt"
+    malware_benign_path = "/home2/mynames/Documents/NPMAnalysis/Codes/dataclean/malware_benign.txt"
+    selected_benign_path = "/home2/mynames/Documents/NPMAnalysis/Codes/dataclean/selected_benign_packages.txt"
     
     malware_benign_skip_list = load_skip_list(malware_benign_path)
     selected_benign_skip_list = load_skip_list(selected_benign_path)
@@ -388,7 +388,7 @@ def main():
     
     # 分析SAP工具的检测结果
     print("\n分析SAP工具的检测结果...\n")
-    sap_file_path = "/home2/wenbo/Documents/NPMAnalysis/Tools/sap/scripts/sap_detection_results.csv"
+    sap_file_path = "/home2/mynames/Documents/NPMAnalysis/Tools/sap/scripts/sap_detection_results.csv"
     analyze_sap(sap_file_path, malware_benign_skip_list, selected_benign_skip_list)
 
 if __name__ == "__main__":

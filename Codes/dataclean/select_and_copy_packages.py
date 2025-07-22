@@ -6,12 +6,12 @@ from pathlib import Path
 import re
 
 # 源路径和目标路径
-SOURCE_BASE = "/home2/wenbo/Documents/NPMAnalysis/Dataset"
-TARGET_BASE = "/home2/wenbo/Documents/PyPIAgent/Dataset/npm_data"
+SOURCE_BASE = "/home2/mynames/Documents/NPMAnalysis/Dataset"
+TARGET_BASE = "/home2/mynames/Documents/PyPIAgent/Dataset/npm_data"
 
 # 需要跳过的包列表文件
-MALWARE_BENIGN_SKIP_LIST = "/home2/wenbo/Documents/NPMAnalysis/Codes/dataclean/malware_benign.txt"
-SELECTED_BENIGN_SKIP_LIST = "/home2/wenbo/Documents/NPMAnalysis/Codes/dataclean/selected_benign_packages.txt"
+MALWARE_BENIGN_SKIP_LIST = "/home2/mynames/Documents/NPMAnalysis/Codes/dataclean/malware_benign.txt"
+SELECTED_BENIGN_SKIP_LIST = "/home2/mynames/Documents/NPMAnalysis/Codes/dataclean/selected_benign_packages.txt"
 
 # 要选择的包数量
 NUM_PACKAGES = 1000

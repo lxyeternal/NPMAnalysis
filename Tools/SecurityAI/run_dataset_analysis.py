@@ -16,11 +16,11 @@ def print_banner():
     print("基于论文: Leveraging Large Language Models to Detect npm Malicious Packages")
     print("="*60)
     print("\n数据集路径:")
-    print("- 良性数据集: /home2/wenbo/Documents/NPMAnalysis/Dataset/unzip_benign")
-    print("- 恶意数据集: /home2/wenbo/Documents/NPMAnalysis/Dataset/unzip_malware")
+    print("- 良性数据集: /home2/mynames/Documents/NPMAnalysis/Dataset/unzip_benign")
+    print("- 恶意数据集: /home2/mynames/Documents/NPMAnalysis/Dataset/unzip_malware")
     print("\n输出路径:")
-    print("- 良性结果: /home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/socketai/benign")
-    print("- 恶意结果: /home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/socketai/malware")
+    print("- 良性结果: /home2/mynames/Documents/NPMAnalysis/Codes/tool_detect/tool_output/socketai/benign")
+    print("- 恶意结果: /home2/mynames/Documents/NPMAnalysis/Codes/tool_detect/tool_output/socketai/malware")
     print("="*60)
 
 def main():

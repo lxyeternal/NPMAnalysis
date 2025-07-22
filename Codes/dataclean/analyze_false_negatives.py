@@ -16,10 +16,10 @@ sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__f
 from llmquery import LLMAgent
 
 # 路径配置
-OUTPUT_TXT_PATH = "/home2/wenbo/Documents/NPMAnalysis/Codes/dataclean/output.txt"
-UNZIP_MALWARE_PATH = "/home2/wenbo/Documents/NPMAnalysis/Dataset/unzip_malware"
-OUTPUT_PATH = "/home2/wenbo/Documents/NPMAnalysis/Codes/dataclean/package_label"
-PROMPTS_PATH = "/home2/wenbo/Documents/NPMAnalysis/Prompts"
+OUTPUT_TXT_PATH = "/home2/mynames/Documents/NPMAnalysis/Codes/dataclean/output.txt"
+UNZIP_MALWARE_PATH = "/home2/mynames/Documents/NPMAnalysis/Dataset/unzip_malware"
+OUTPUT_PATH = "/home2/mynames/Documents/NPMAnalysis/Codes/dataclean/package_label"
+PROMPTS_PATH = "/home2/mynames/Documents/NPMAnalysis/Prompts"
 
 # 创建输出目录
 os.makedirs(OUTPUT_PATH, exist_ok=True)

@@ -20,12 +20,12 @@ logging.basicConfig(
 
 # 要处理的基础路径
 MALWARE_PATHS = [
-    "/home2/wenbo/Documents/NPMAnalysis/Dataset/zip_malware",
-    "/home2/wenbo/Documents/NPMAnalysis/Dataset/unzip_malware"
+    "/home2/mynames/Documents/NPMAnalysis/Dataset/zip_malware",
+    "/home2/mynames/Documents/NPMAnalysis/Dataset/unzip_malware"
 ]
 
-TOOL_OUTPUT_PATH = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output"
-DUPLICATE_FILE_PATH = "/home2/wenbo/Documents/NPMAnalysis/Codes/dataclean/duplicate_packages.txt"
+TOOL_OUTPUT_PATH = "/home2/mynames/Documents/NPMAnalysis/Codes/tool_detect/tool_output"
+DUPLICATE_FILE_PATH = "/home2/mynames/Documents/NPMAnalysis/Codes/dataclean/duplicate_packages.txt"
 
 def parse_duplicate_file(file_path):
     """

@@ -41,5 +41,5 @@ def reorganize_packages(base_dir):
     print(f"总共处理了 {count} 个文件")
 
 if __name__ == "__main__":
-    base_directory = "/home/wenbo/NPMAnalysis/Dataset/zip_benign"
+    base_directory = "/home/mynames/NPMAnalysis/Dataset/zip_benign"
     reorganize_packages(base_directory) 

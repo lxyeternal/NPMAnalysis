@@ -520,8 +520,8 @@ def main():
     """Main function to run the analysis."""
     
     # Define paths
-    malware_snippets_dir = "/home2/wenbo/Documents/NPMAnalysis/Codes/code_snipptes/malware_snippets"
-    stats_output_dir = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output_statistic/reports/stats_output"
+    malware_snippets_dir = "/home2/mynames/Documents/NPMAnalysis/Codes/code_snipptes/malware_snippets"
+    stats_output_dir = "/home2/mynames/Documents/NPMAnalysis/Codes/tool_detect/tool_output_statistic/reports/stats_output"
     
     # Create analyzer and run analysis
     analyzer = EvasionDetectionAnalyzer(malware_snippets_dir, stats_output_dir)

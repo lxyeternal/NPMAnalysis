@@ -13,9 +13,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 from Codes.utils.llmquery import LLMAgent
 
 # 定义路径
-SOURCE_DIR = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/guarddog/malware"
-TARGET_DIR = "/home2/wenbo/Documents/NPMAnalysis/Codes/code_snipptes/malware_snippets"
-PROMPT_PATH = "/home2/wenbo/Documents/NPMAnalysis/Prompts/single_snippets_prompt.txt"
+SOURCE_DIR = "/home2/mynames/Documents/NPMAnalysis/Codes/tool_detect/tool_output/guarddog/malware"
+TARGET_DIR = "/home2/mynames/Documents/NPMAnalysis/Codes/code_snipptes/malware_snippets"
+PROMPT_PATH = "/home2/mynames/Documents/NPMAnalysis/Prompts/single_snippets_prompt.txt"
 
 # 设置进程数
 NUM_PROCESSES = 24  # 可以根据CPU核心数调整
@@ -55,7 +55,7 @@ def extract_malicious_locations(txt_content):
     unzip_base_path = zip_path.replace('zip_malware', 'unzip_malware')
     
     # 提取到版本目录的路径（去掉压缩包文件名）
-    # 例如: /home2/wenbo/Documents/NPMAnalysis/Dataset/unzip_malware/@abdallaeg##sap_access/0.0.0/
+    # 例如: /home2/mynames/Documents/NPMAnalysis/Dataset/unzip_malware/@abdallaeg##sap_access/0.0.0/
     unzip_dir = os.path.dirname(unzip_base_path)
     print(f"解压后的目录路径: {unzip_dir}")
     

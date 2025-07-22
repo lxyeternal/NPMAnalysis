@@ -13,15 +13,15 @@ from datetime import datetime
 # 定义源目录和目标目录
 MALWARE_SOURCE_DIR = "/tmp/malicious_package/unzip_malware"
 BENIGN_SOURCE_DIR = "/tmp/malicious_package/unzip_benign"
-MALWARE_TARGET_DIR = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/packj/result_trace/malware"
-BENIGN_TARGET_DIR = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/packj/result_trace/benign"
+MALWARE_TARGET_DIR = "/home2/mynames/Documents/NPMAnalysis/Codes/tool_detect/tool_output/packj/result_trace/malware"
+BENIGN_TARGET_DIR = "/home2/mynames/Documents/NPMAnalysis/Codes/tool_detect/tool_output/packj/result_trace/benign"
 DOMAIN_PACKAGE_DIR = "/tmp/domain_package"
 
 # Docker容器配置
 DOCKER_CONTAINER_PREFIX = "packj-dev-"
 NUM_DOCKER_CONTAINERS = 4  # 默认Docker容器数量，可通过命令行参数修改
 DOCKER_IMAGE = "ossillate/packj:latest"
-HOST_PM_UTIL_PATH = "/home2/wenbo/Documents/NPMAnalysis/Tools/packj/packj/audit/pm_util.py"
+HOST_PM_UTIL_PATH = "/home2/mynames/Documents/NPMAnalysis/Tools/packj/packj/audit/pm_util.py"
 CONTAINER_PM_UTIL_PATH = "/home/ubuntu/packj/packj/audit/pm_util.py"
 
 # 创建一个全局锁，用于同步输出

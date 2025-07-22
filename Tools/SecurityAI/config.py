@@ -33,12 +33,12 @@ class Config:
     
     # 数据集分析配置
     # 数据集路径
-    BENIGN_DATASET_PATH = "/home2/wenbo/Documents/NPMAnalysis/Dataset/unzip_benign"
-    MALWARE_DATASET_PATH = "/home2/wenbo/Documents/NPMAnalysis/Dataset/unzip_malware"
+    BENIGN_DATASET_PATH = "/home2/mynames/Documents/NPMAnalysis/Dataset/unzip_benign"
+    MALWARE_DATASET_PATH = "/home2/mynames/Documents/NPMAnalysis/Dataset/unzip_malware"
     
     # 输出路径
-    BENIGN_OUTPUT_PATH = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/socketai/benign"
-    MALWARE_OUTPUT_PATH = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/socketai/malware"
+    BENIGN_OUTPUT_PATH = "/home2/mynames/Documents/NPMAnalysis/Codes/tool_detect/tool_output/socketai/benign"
+    MALWARE_OUTPUT_PATH = "/home2/mynames/Documents/NPMAnalysis/Codes/tool_detect/tool_output/socketai/malware"
     
     # 文件大小限制 (175KB)
     MAX_FILE_SIZE = 175 * 1024

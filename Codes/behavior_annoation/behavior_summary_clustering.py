@@ -34,7 +34,7 @@ except LookupError:
 
 class BehaviorSummaryClusterer:
     def __init__(self):
-        self.base_dir = "/home2/wenbo/Documents/NPMAnalysis"
+        self.base_dir = "/home2/mynames/Documents/NPMAnalysis"
         self.malware_snippets_dir = os.path.join(self.base_dir, "Codes/code_snipptes/malware_snippets")
         self.package_label_dir = os.path.join(self.base_dir, "Codes/dataclean/package_label")
         self.output_dir = os.path.join(self.base_dir, "Codes/behavior_annoation/results")

@@ -7,8 +7,8 @@ import re
 from collections import defaultdict
 
 # 定义路径
-MALWARE_DIR = "/home2/wenbo/Documents/NPMAnalysis/Codes/code_snipptes/malware_snippets"
-OUTPUT_DIR = "/home2/wenbo/Documents/NPMAnalysis/Codes/code_snipptes"
+MALWARE_DIR = "/home2/mynames/Documents/NPMAnalysis/Codes/code_snipptes/malware_snippets"
+OUTPUT_DIR = "/home2/mynames/Documents/NPMAnalysis/Codes/code_snipptes"
 
 def analyze_malicious_install_scripts():
     """分析恶意软件包中的安装脚本"""

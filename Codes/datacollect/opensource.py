@@ -162,13 +162,13 @@ def main():
     """主函数"""
     
     # 配置路径
-    source_benign = "/home2/wenbo/Documents/NPMAnalysis/Dataset/zip_benign"
-    source_malware = "/home2/wenbo/Documents/NPMAnalysis/Dataset/zip_malware"
-    target_base = "/home2/wenbo/Documents/NPMAnalysis/Open_Dataset"
+    source_benign = "/home2/mynames/Documents/NPMAnalysis/Dataset/zip_benign"
+    source_malware = "/home2/mynames/Documents/NPMAnalysis/Dataset/zip_malware"
+    target_base = "/home2/mynames/Documents/NPMAnalysis/Open_Dataset"
     
     # 跳过列表路径
-    malware_skip_path = "/home2/wenbo/Documents/NPMAnalysis/Codes/dataclean/malware_benign.txt"
-    benign_skip_path = "/home2/wenbo/Documents/NPMAnalysis/Codes/dataclean/selected_benign_packages.txt"
+    malware_skip_path = "/home2/mynames/Documents/NPMAnalysis/Codes/dataclean/malware_benign.txt"
+    benign_skip_path = "/home2/mynames/Documents/NPMAnalysis/Codes/dataclean/selected_benign_packages.txt"
     
     # 检查源路径是否存在
     if not os.path.exists(source_benign):

@@ -5,7 +5,7 @@
 # @File     : unzip_npm_packages.py
 # @Project  : NPMAnalysis
 # Time      : 2024
-# Author    : wenbo
+# Author    : mynames
 # version   : python 3.8
 # Description：解压NPM包并保持三级目录结构 (名称-版本-解压后文件)
 """
@@ -118,10 +118,10 @@ def process_npm_packages(input_dir, output_dir):
 
 if __name__ == "__main__":
     # 定义固定的输入和输出路径
-    benign_input_dir = "/home/wenbo/NPMAnalysis/Dataset/zip_benign"
-    benign_output_dir = "/home/wenbo/NPMAnalysis/Dataset/unzip_benign"
-    malware_input_dir = "/home/wenbo/NPMAnalysis/Dataset/zip_malware"
-    malware_output_dir = "/home/wenbo/NPMAnalysis/Dataset/unzip_malware"
+    benign_input_dir = "/home/mynames/NPMAnalysis/Dataset/zip_benign"
+    benign_output_dir = "/home/mynames/NPMAnalysis/Dataset/unzip_benign"
+    malware_input_dir = "/home/mynames/NPMAnalysis/Dataset/zip_malware"
+    malware_output_dir = "/home/mynames/NPMAnalysis/Dataset/unzip_malware"
     
     print("==== 开始解压良性NPM包 ====")
     process_npm_packages(benign_input_dir, benign_output_dir)

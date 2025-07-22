@@ -9,9 +9,9 @@ from functools import partial
 from collections import defaultdict
 
 # 路径配置
-GUARDDOG_MALWARE_PATH = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/guarddog/malware"
-UNZIP_MALWARE_PATH = "/home2/wenbo/Documents/NPMAnalysis/Dataset/unzip_malware"
-DEST_PATH = "/home2/wenbo/Documents/NPMAnalysis/Codes/dataclean/false_negative"
+GUARDDOG_MALWARE_PATH = "/home2/mynames/Documents/NPMAnalysis/Codes/tool_detect/tool_output/guarddog/malware"
+UNZIP_MALWARE_PATH = "/home2/mynames/Documents/NPMAnalysis/Dataset/unzip_malware"
+DEST_PATH = "/home2/mynames/Documents/NPMAnalysis/Codes/dataclean/false_negative"
 
 # 进程数量
 NUM_PROCESSES = 24
