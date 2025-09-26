@@ -13,15 +13,15 @@ from datetime import datetime
 # 定义源目录和目标目录
 MALWARE_SOURCE_DIR = "/tmp/malicious_package/unzip_malware"
 BENIGN_SOURCE_DIR = "/tmp/malicious_package/unzip_benign"
-MALWARE_TARGET_DIR = "/home2/mynames/Documents/NPMAnalysis/Codes/tool_detect/tool_output/packj/result_trace/malware"
-BENIGN_TARGET_DIR = "/home2/mynames/Documents/NPMAnalysis/Codes/tool_detect/tool_output/packj/result_trace/benign"
+MALWARE_TARGET_DIR = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/packj/result_trace/malware"
+BENIGN_TARGET_DIR = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/packj/result_trace/benign"
 DOMAIN_PACKAGE_DIR = "/tmp/domain_package"
 
 # Docker容器配置
 DOCKER_CONTAINER_PREFIX = "packj-dev-"
 NUM_DOCKER_CONTAINERS = 4  # 默认Docker容器数量，可通过命令行参数修改
 DOCKER_IMAGE = "ossillate/packj:latest"
-HOST_PM_UTIL_PATH = "/home2/mynames/Documents/NPMAnalysis/Tools/packj/packj/audit/pm_util.py"
+HOST_PM_UTIL_PATH = "/home2/wenbo/Documents/NPMAnalysis/Tools/packj/packj/audit/pm_util.py"
 CONTAINER_PM_UTIL_PATH = "/home/ubuntu/packj/packj/audit/pm_util.py"
 
 # 创建一个全局锁，用于同步输出
@@ -171,6 +171,53 @@ class DockerManager:
                 synchronized_print(f"容器 {container_name} 的所有权限设置成功")
 
 
+    def upgrade_nodejs_in_containers(self):
+        """
+        在每个容器中升级Node.js到最新版本
+        """
+        synchronized_print(f"正在升级容器中的Node.js版本...")
+        for container_name in self.container_names:
+            # 检查容器是否存在并运行
+            check_cmd = f"docker ps -q -f name={container_name}"
+            result = subprocess.run(check_cmd, shell=True, capture_output=True, text=True)
+            if not result.stdout.strip():
+                synchronized_print(f"警告: 容器 {container_name} 不存在或未运行，跳过Node.js升级")
+                continue
+            
+            synchronized_print(f"开始升级容器 {container_name} 的Node.js...")
+            
+            # 1. 更新包管理器
+            synchronized_print(f"容器 {container_name}: 更新包管理器...")
+            update_cmd = f"docker exec -u 0 {container_name} apt-get update -y"
+            subprocess.run(update_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            # 2. 安装必要依赖
+            synchronized_print(f"容器 {container_name}: 安装必要依赖...")
+            deps_cmd = f"docker exec -u 0 {container_name} apt-get install -y curl software-properties-common"
+            subprocess.run(deps_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            # 3. 添加NodeSource官方仓库
+            synchronized_print(f"容器 {container_name}: 添加NodeSource官方仓库...")
+            repo_cmd = f"docker exec -u 0 {container_name} bash -c \"curl -fsSL https://deb.nodesource.com/setup_20.x | bash -\""
+            subprocess.run(repo_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            # 4. 安装Node.js 20.x LTS
+            synchronized_print(f"容器 {container_name}: 安装Node.js 20.x LTS...")
+            install_cmd = f"docker exec -u 0 {container_name} apt-get install -y nodejs"
+            result = subprocess.run(install_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            
+            if result.returncode == 0:
+                # 验证Node.js版本
+                version_cmd = f"docker exec -u ubuntu {container_name} node --version"
+                version_result = subprocess.run(version_cmd, shell=True, capture_output=True, text=True)
+                if version_result.returncode == 0:
+                    node_version = version_result.stdout.strip()
+                    synchronized_print(f"容器 {container_name}: Node.js升级成功，版本: {node_version}")
+                else:
+                    synchronized_print(f"容器 {container_name}: Node.js升级完成，但无法获取版本信息")
+            else:
+                synchronized_print(f"容器 {container_name}: Node.js升级失败: {result.stderr}")
+
     def copy_files_to_containers(self):
         """
         将必要的文件复制到每个容器中
@@ -200,7 +247,7 @@ class DockerManager:
     
     def setup_containers(self):
         """
-        设置Docker容器：检查现有容器，删除旧容器，创建新容器，复制文件
+        设置Docker容器：检查现有容器，删除旧容器，创建新容器，升级Node.js，复制文件
         """
         synchronized_print("开始设置Docker容器...")
         
@@ -219,6 +266,9 @@ class DockerManager:
         
         # 设置容器权限
         self.set_container_permissions()
+        
+        # 升级Node.js版本
+        self.upgrade_nodejs_in_containers()
         
         # 复制文件到容器
         self.copy_files_to_containers()
@@ -410,7 +460,15 @@ def run_packj_analysis(package_path, is_malware, source_base_dir, docker_contain
     
     # 运行docker命令
     cmd = f"docker exec -u ubuntu -it {docker_container} python3 /home/ubuntu/packj/main.py audit -t -p local_nodejs:{docker_path}"
-    synchronized_print(f"[{docker_container}] 执行Docker命令: {cmd}")
+    
+    # 详细打印分析信息
+    synchronized_print("=" * 100)
+    synchronized_print(f"📦 包名: {result_name}")
+    synchronized_print(f"🔢 版本: {version}")
+    synchronized_print(f"🐳 容器: {docker_container}")
+    synchronized_print(f"📁 路径: {docker_path}")
+    synchronized_print(f"🚀 命令: {cmd}")
+    synchronized_print("=" * 100)
     
     try:
         # 使用subprocess.Popen和超时机制
@@ -425,8 +483,14 @@ def run_packj_analysis(package_path, is_malware, source_base_dir, docker_contain
             with open(result_file, 'w') as f:
                 f.write(stdout)
             
-            synchronized_print(f"[{docker_container}] 分析完成: {result_name}/{version}, 结果保存到 {result_file}")
-            synchronized_print("-" * 80)  # 添加分隔线，使输出更清晰
+            # 分析完成的详细信息
+            synchronized_print("✅ " + "=" * 95)
+            synchronized_print(f"✅ 分析成功完成!")
+            synchronized_print(f"✅ 包名: {result_name}")
+            synchronized_print(f"✅ 版本: {version}")
+            synchronized_print(f"✅ 容器: {docker_container}")
+            synchronized_print(f"✅ 结果文件: {result_file}")
+            synchronized_print("✅ " + "=" * 95)
             return True
             
         except subprocess.TimeoutExpired:
@@ -439,19 +503,32 @@ def run_packj_analysis(package_path, is_malware, source_base_dir, docker_contain
             
             # 记录超时信息
             timeout_msg = f"分析超时（{timeout_seconds}秒）"
-            synchronized_print(f"[{docker_container}] {timeout_msg}: {result_name}/{version}")
+            
+            # 超时的详细信息
+            synchronized_print("⏰ " + "=" * 95)
+            synchronized_print(f"⏰ 分析超时!")
+            synchronized_print(f"⏰ 包名: {result_name}")
+            synchronized_print(f"⏰ 版本: {version}")
+            synchronized_print(f"⏰ 容器: {docker_container}")
+            synchronized_print(f"⏰ 超时时间: {timeout_seconds}秒")
+            synchronized_print("⏰ " + "=" * 95)
             
             # 保存超时信息到结果文件
             result_file = os.path.join(target_dir, "result.txt")
             with open(result_file, 'w') as f:
                 f.write(f"ERROR: {timeout_msg}")
             
-            synchronized_print("-" * 80)  # 添加分隔线，使输出更清晰
             return False
             
     except Exception as e:
-        synchronized_print(f"[{docker_container}] 分析失败: {analysis_path}, 错误: {str(e)}")
-        synchronized_print("-" * 80)  # 添加分隔线，使输出更清晰
+        # 异常的详细信息
+        synchronized_print("❌ " + "=" * 95)
+        synchronized_print(f"❌ 分析异常!")
+        synchronized_print(f"❌ 包名: {result_name}")
+        synchronized_print(f"❌ 版本: {version}")
+        synchronized_print(f"❌ 容器: {docker_container}")
+        synchronized_print(f"❌ 错误: {str(e)}")
+        synchronized_print("❌ " + "=" * 95)
         return False
 
 def worker_process(package_list, is_malware, source_base_dir, worker_id, docker_containers, timeout_seconds):

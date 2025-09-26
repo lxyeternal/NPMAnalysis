@@ -41,7 +41,7 @@ class NPMToolDetector:
         self.unzip_malicious_path = os.path.join(self.base_path, "unzip_malware")
         
         # 定义输出路径
-        self.output_base = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output"
+        self.output_base = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output_new"
         self.output_paths = {
             "guarddog": {
                 "benign": os.path.join(self.output_base, "guarddog/benign"),

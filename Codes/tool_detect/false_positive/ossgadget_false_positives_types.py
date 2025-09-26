@@ -2,6 +2,23 @@ import os
 import re
 from collections import defaultdict
 
+def load_selected_packages(file_path):
+    """
+    加载selected_benign_packages.txt文件中的包名和版本
+    返回一个集合，包含"包名/版本"格式的字符串
+    """
+    selected_packages = set()
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    selected_packages.add(line)
+        return selected_packages
+    except Exception as e:
+        print(f"Error loading selected packages: {e}")
+        return set()
+
 def extract_detection_types(file_path):
     """提取ossgadget检测文件中的检测类型，处理ANSI颜色代码"""
     detection_types = set()
@@ -69,6 +86,11 @@ def main():
     # 设置benign样本文件夹路径
     benign_folder = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/ossgadget/benign"
     
+    # 加载需要跳过的包列表
+    selected_packages_path = "/home2/wenbo/Documents/NPMAnalysis/Codes/dataclean/selected_benign_packages.txt"
+    selected_packages = load_selected_packages(selected_packages_path)
+    print(f"加载了 {len(selected_packages)} 个需要跳过的包")
+    
     # 用于存储每种检测类型的文件列表
     type_to_files = defaultdict(list)
     
@@ -81,6 +103,9 @@ def main():
     # 存储所有假阳性文件及其检测类型
     false_positives = []
     
+    # 记录跳过的包数量
+    skipped_count = 0
+    
     # 递归查找所有txt文件
     txt_files = find_txt_files(benign_folder)
     total_files = len(txt_files)
@@ -91,26 +116,36 @@ def main():
     
     # 遍历所有找到的txt文件
     for i, file_path in enumerate(txt_files):
-        # 获取该文件中的检测类型
-        detection_types = extract_detection_types(file_path)
+        # 获取包名和版本
+        package_name, version = extract_package_info(file_path)
         
-        # 更新统计信息
-        if detection_types:
-            files_with_detections += 1
-            package_name, version = extract_package_info(file_path)
-            false_positives.append((file_path, detection_types, package_name, version))
+        # 检查是否在跳过列表中
+        for selected_package in selected_packages:
+            if selected_package in file_path:
+                print(f"跳过了 {selected_package} 包")
+                skipped_count += 1
+                break
+        else:  # 如果没有匹配到需要跳过的包，则继续处理
+            # 获取该文件中的检测类型
+            detection_types = extract_detection_types(file_path)
             
-            for detection_type in detection_types:
-                type_to_files[detection_type].append(file_path)
-                type_counts[detection_type] += 1
+            # 更新统计信息
+            if detection_types:
+                files_with_detections += 1
+                false_positives.append((file_path, detection_types, package_name, version))
                 
-            # 更新包名和版本统计
-            package_version_counts[package_name][version].append((file_path, detection_types))
-            
+                for detection_type in detection_types:
+                    type_to_files[detection_type].append(file_path)
+                    type_counts[detection_type] += 1
+                    
+                # 更新包名和版本统计
+                package_version_counts[package_name][version].append((file_path, detection_types))
+        
         if (i + 1) % 100 == 0:
             print(f"已处理 {i + 1}/{total_files} 个文件...")
     
     print(f"\n分析完成，共处理 {total_files} 个文件")
+    print(f"跳过了 {skipped_count} 个selected_benign_packages中的包")
     print(f"发现 {files_with_detections} 个文件含有误报")
     print(f"发现 {len(type_counts)} 种不同的检测类型")
     
@@ -119,8 +154,9 @@ def main():
         f.write("OSSGadget误报类型统计\n")
         f.write("=" * 50 + "\n\n")
         
-        f.write(f"总共分析的良性样本文件数: {total_files}\n")
-        f.write(f"含有误报的文件数: {files_with_detections} ({(files_with_detections/total_files)*100:.2f}%)\n\n")
+        f.write(f"总共分析的良性样本文件数: {total_files - skipped_count}\n")
+        f.write(f"跳过了 {skipped_count} 个selected_benign_packages中的包\n")
+        f.write(f"含有误报的文件数: {files_with_detections} ({(files_with_detections/(total_files-skipped_count))*100:.2f}%)\n\n")
         
         f.write("各类型误报统计:\n")
         f.write("-" * 30 + "\n")

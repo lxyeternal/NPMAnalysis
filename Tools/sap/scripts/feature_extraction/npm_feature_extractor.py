@@ -58,9 +58,9 @@ class NPM_Feature_Extractor:
 
         dfs = [javascript_files_df, packagejson_files_df,extensions_files_df]
         final_df = reduce(lambda  left,right: pd.merge(left,right,on=['Package Name'],
-                                            how='outer'), dfs)
+                                            how='outer'), dfs
         final_df = self.extraction(final_df, utilities_functions.gen_language_4,4,utilities_functions.gen_language_4,4)
-        final_df.to_csv("benign_npm_feature_extracted.csv", encoding='utf-8', index=False)
+        final_df.to_csv("benign_npm_feature_extracted_new.csv", encoding='utf-8', index=False)
         return final_df
 
 
