@@ -185,6 +185,102 @@ def analyze_sap(file_path, malware_benign_skip_list, selected_benign_skip_list):
     
     return results_df
 
+def analyze_malpacdetector(file_path, malware_benign_skip_list, selected_benign_skip_list):
+    """
+    分析MalPacDetector的检测结果(MLP, NB, SVM算法)
+    基于CSV文件中的结果计算各个机器学习算法的性能指标
+    跳过在skip列表中的包
+    """
+    # 读取数据
+    df = pd.read_csv(file_path)
+    
+    # 确保列名正确
+    required_cols = ['package_type', 'package_name', 'version', 'actual_label', 'MLP', 'NB', 'SVM']
+    assert all(col in df.columns for col in required_cols), "缺少必要的列"
+    
+    # 过滤掉需要跳过的包
+    original_count = len(df)
+    
+    # 创建包名/版本格式用于跳过检查
+    df['package_key'] = df['package_name'] + '/' + df['version']
+    
+    # 跳过恶意样本中存在于malware_benign_skip_list的包
+    skip_indices = []
+    for idx, row in df.iterrows():
+        package_key = row['package_key']
+        package_type = row['package_type']
+        
+        if package_type == 'malware' and package_key in malware_benign_skip_list:
+            skip_indices.append(idx)
+        elif package_type == 'benign' and package_key in selected_benign_skip_list:
+            skip_indices.append(idx)
+    
+    # 从数据中删除要跳过的行
+    if skip_indices:
+        df = df.drop(skip_indices)
+    
+    # 计算跳过的样本数
+    skipped_count = original_count - len(df)
+    
+    # 计算总样本数
+    total_samples = len(df)
+    malware_samples = len(df[df['package_type'] == 'malware'])
+    benign_samples = len(df[df['package_type'] == 'benign'])
+    
+    print(f"MalPacDetector检测结果分析:")
+    print(f"总样本数: {total_samples} (跳过了 {skipped_count} 个样本)")
+    print(f"恶意样本数: {malware_samples}")
+    print(f"良性样本数: {benign_samples}")
+    print("-" * 50)
+    
+    # 计算各个算法的性能指标
+    algorithms = ['MLP', 'NB', 'SVM']
+    results = []
+    
+    for algo in algorithms:
+        # 计算四个基本指标
+        # 将预测结果转换为统一格式：malicious->1, benign->0
+        df[f'{algo}_binary'] = df[algo].apply(lambda x: 1 if x == 'malicious' else 0)
+        df['actual_binary'] = df['actual_label'].apply(lambda x: 1 if x == 'malware' else 0)
+        
+        tp = len(df[(df['actual_binary'] == 1) & (df[f'{algo}_binary'] == 1)])  # 真阳性：正确识别为恶意
+        tn = len(df[(df['actual_binary'] == 0) & (df[f'{algo}_binary'] == 0)])   # 真阴性：正确识别为良性
+        fp = len(df[(df['actual_binary'] == 0) & (df[f'{algo}_binary'] == 1)])   # 假阳性：良性被误判为恶意（误报）
+        fn = len(df[(df['actual_binary'] == 1) & (df[f'{algo}_binary'] == 0)])  # 假阴性：恶意被误判为良性（漏报）
+        
+        # 计算准确率和其他指标
+        accuracy = (tp + tn) / total_samples if total_samples > 0 else 0
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+        
+        results.append({
+            '算法': algo,
+            '准确率(Acc)': accuracy,
+            '精确率(Precision)': precision,
+            '召回率(Recall)': recall,
+            'F1分数': f1,
+            '误报(FP)数量': fp,
+            '漏报(FN)数量': fn
+        })
+    
+    # 创建结果DataFrame并打印
+    results_df = pd.DataFrame(results)
+    
+    # 输出表格
+    print("MalPacDetector性能指标:")
+    print(results_df.to_string(index=False, float_format=lambda x: f"{x:.4f}"))
+    
+    # 打印markdown格式的表格
+    print("\nMalPacDetector性能指标(Markdown格式):")
+    print("| 算法 | 准确率 | 精确率 | 召回率 | F1分数 | 误报数量 | 漏报数量 |")
+    print("| ---- | ------ | ------ | ------ | ------ | -------- | -------- |")
+    for result in results:
+        print(f"| {result['算法']} | {result['准确率(Acc)']:.4f} | {result['精确率(Precision)']:.4f} | "
+              f"{result['召回率(Recall)']:.4f} | {result['F1分数']:.4f} | {result['误报(FP)数量']} | {result['漏报(FN)数量']} |")
+    
+    return results_df
+
 def calculate_metrics(true_positives, true_negatives, false_positives, false_negatives):
     """计算精确度、召回率、F1分数等评价指标"""
     total = true_positives + true_negatives + false_positives + false_negatives
@@ -247,7 +343,7 @@ def find_package_files(base_path, package_type, tool_name):
 
 def evaluate_tool(tool_name, tool_function, malware_benign_skip_list, selected_benign_skip_list, sub_tool=None):
     """评估特定工具的检测效果"""
-    base_path = "/home2/mynames/Documents/NPMAnalysis/Codes/tool_detect/tool_output"
+    base_path = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output"
     
     # 为packj工具添加子路径
     if sub_tool:
@@ -316,8 +412,8 @@ def evaluate_tool(tool_name, tool_function, malware_benign_skip_list, selected_b
 def main():
     """主函数"""
     # 加载需要跳过的包列表
-    malware_benign_path = "/home2/mynames/Documents/NPMAnalysis/Codes/dataclean/malware_benign.txt"
-    selected_benign_path = "/home2/mynames/Documents/NPMAnalysis/Codes/dataclean/selected_benign_packages.txt"
+    malware_benign_path = "/home2/wenbo/Documents/NPMAnalysis/Codes/dataclean/malware_benign.txt"
+    selected_benign_path = "/home2/wenbo/Documents/NPMAnalysis/Codes/dataclean/selected_benign_packages.txt"
     
     malware_benign_skip_list = load_skip_list(malware_benign_path)
     selected_benign_skip_list = load_skip_list(selected_benign_path)
@@ -335,7 +431,7 @@ def main():
     }
     
     # packj工具有两种检测方式
-    packj_subtypes = ["result_static", "result_trace"]
+    packj_subtypes = ["result_static", "result_trace_new"]
     
     print("NPM恶意包检测工具效果统计:\n")
     print("| 工具名称 | 样本总数 | 跳过样本数 | 准确率 | 精确度 | 召回率 | F1分数 |")
@@ -388,8 +484,13 @@ def main():
     
     # 分析SAP工具的检测结果
     print("\n分析SAP工具的检测结果...\n")
-    sap_file_path = "/home2/mynames/Documents/NPMAnalysis/Tools/sap/scripts/sap_detection_results.csv"
+    sap_file_path = "/home2/wenbo/Documents/NPMAnalysis/Tools/sap/scripts/sap_detection_results.csv"
     analyze_sap(sap_file_path, malware_benign_skip_list, selected_benign_skip_list)
+    
+    # 分析MalPacDetector的检测结果
+    print("\n分析MalPacDetector的检测结果...\n")
+    ml_file_path = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/MalPacDetector/summary_detection_results.csv"
+    analyze_malpacdetector(ml_file_path, malware_benign_skip_list, selected_benign_skip_list)
 
 if __name__ == "__main__":
     main() 

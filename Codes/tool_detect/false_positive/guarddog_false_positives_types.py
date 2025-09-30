@@ -70,6 +70,23 @@ def extract_package_info(file_path):
     
     return package_name, version
 
+def load_selected_packages(file_path):
+    """
+    加载selected_benign_packages.txt文件中的包名和版本
+    返回一个集合，包含"包名/版本"格式的字符串
+    """
+    selected_packages = set()
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    selected_packages.add(line)
+        return selected_packages
+    except Exception as e:
+        print(f"Error loading selected packages: {e}")
+        return set()
+
 def main():
     """主函数，分析guarddog假阳性文件的检测类型"""
     # 输出文件路径
@@ -77,6 +94,11 @@ def main():
     
     # guarddog良性样本文件夹路径
     benign_folder = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/guarddog/benign"
+    
+    # 加载需要跳过的包列表
+    selected_packages_path = "/home2/wenbo/Documents/NPMAnalysis/Codes/dataclean/selected_benign_packages.txt"
+    selected_packages = load_selected_packages(selected_packages_path)
+    print(f"加载了 {len(selected_packages)} 个需要跳过的包")
     
     # 用于存储假阳性文件及其检测类型
     false_positives = []
@@ -97,12 +119,24 @@ def main():
     print(f"开始分析目录: {benign_folder}")
     print(f"找到 {total_benign} 个txt文件")
     
+    # 记录跳过的包数量
+    skipped_count = 0
+    
     # 遍历所有找到的txt文件
     for i, file_path in enumerate(txt_files):
+        # 获取包名和版本
+        package_name, version = extract_package_info(file_path)
+        
+        # 检查是否在跳过列表中
+        for selected_package in selected_packages:
+            if selected_package in file_path:
+                print(f"跳过了 {selected_package} 包")
+                skipped_count += 1
+                break
+            
         types = extract_detection_types(file_path)
         
         if types:  # 如果提取到了检测类型，则说明是假阳性
-            package_name, version = extract_package_info(file_path)
             false_positives.append((file_path, types, package_name, version))
             
             # 更新类型计数
@@ -117,12 +151,14 @@ def main():
             print(f"已处理 {i + 1}/{total_benign} 个文件...")
     
     print(f"\n分析完成! 共处理 {total_benign} 个文件")
+    print(f"跳过了 {skipped_count} 个selected_benign_packages中的包")
     print(f"发现 {len(false_positives)} 个假阳性")
     
     # 将假阳性的统计结果写入文件
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(f"Guarddog假阳性文件类型统计 (错误地将良性识别为恶意)\n")
-        f.write(f"总共找到 {len(false_positives)} 个假阳性 (占良性样本总数 {total_benign} 的 {len(false_positives)/total_benign*100:.2f}%)\n\n")
+        f.write(f"总共找到 {len(false_positives)} 个假阳性 (占良性样本总数 {total_benign - skipped_count} 的 {len(false_positives)/(total_benign - skipped_count)*100:.2f}%)\n")
+        f.write(f"跳过了 {skipped_count} 个selected_benign_packages中的包\n\n")
         
         # 写入类型统计
         f.write("检测类型统计：\n")

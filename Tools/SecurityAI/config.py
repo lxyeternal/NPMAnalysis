@@ -6,7 +6,7 @@ import os
 
 class Config:
     # OpenAI API配置
-    OPENAI_API_KEY = "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"
+    OPENAI_API_KEY = "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"
     
     # 模型配置
     # mini是更强的模型（对应论文中的GPT-4）
@@ -33,18 +33,18 @@ class Config:
     
     # 数据集分析配置
     # 数据集路径
-    BENIGN_DATASET_PATH = "/home2/mynames/Documents/NPMAnalysis/Dataset/unzip_benign"
-    MALWARE_DATASET_PATH = "/home2/mynames/Documents/NPMAnalysis/Dataset/unzip_malware"
+    BENIGN_DATASET_PATH = "/home2/wenbo/Documents/NPMAnalysis/Dataset/unzip_benign"
+    MALWARE_DATASET_PATH = "/home2/wenbo/Documents/NPMAnalysis/Dataset/unzip_malware"
     
     # 输出路径
-    BENIGN_OUTPUT_PATH = "/home2/mynames/Documents/NPMAnalysis/Codes/tool_detect/tool_output/socketai/benign"
-    MALWARE_OUTPUT_PATH = "/home2/mynames/Documents/NPMAnalysis/Codes/tool_detect/tool_output/socketai/malware"
+    BENIGN_OUTPUT_PATH = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/socketai_new/benign"
+    MALWARE_OUTPUT_PATH = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/socketai_new/malware"
     
     # 文件大小限制 (175KB)
     MAX_FILE_SIZE = 175 * 1024
     
     # 每个包最多检测的JS文件数
-    MAX_JS_FILES_PER_PACKAGE = 10
+    MAX_JS_FILES_PER_PACKAGE = 20
     
     # 固定进程数量
-    PROCESS_COUNT = 20
+    PROCESS_COUNT = 1
