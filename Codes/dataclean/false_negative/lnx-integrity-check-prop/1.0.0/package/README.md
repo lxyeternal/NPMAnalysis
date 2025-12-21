@@ -1,1 +1,0 @@
-Package performs integrity check of dependant package on using proprietary integrity check algorithm. I would make it private but i'm broke, and obfuscation is free ;)
