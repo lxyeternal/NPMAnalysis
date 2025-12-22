@@ -480,12 +480,15 @@ class EvasionTimeAnalyzerV2:
 
 def main():
     """Main function to run the analysis"""
-    
-    # Define file paths
-    package_category_file = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/experiment/rq2/statistic/package_category_summary.csv"
-    malware_time_file = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/timecollect/time/malware_time.csv"
-    output_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/experiment/rq2/statistic"
-    
+
+    # Define file paths using relative paths
+    script_dir = Path(__file__).parent.resolve()
+    project_root = script_dir.parent.parent.parent  # Experiment/RQ2/code -> NPMAnalysis
+
+    package_category_file = script_dir.parent / "statistic" / "input" / "package_category_summary.csv"
+    malware_time_file = project_root / "Core" / "Data" / "timecollect" / "time" / "malware_time.csv"
+    output_dir = script_dir.parent / "statistic" / "evasion_time"
+
     # Create analyzer and run analysis
     analyzer = EvasionTimeAnalyzerV2(package_category_file, malware_time_file, output_dir)
     analyzer.run_complete_analysis()

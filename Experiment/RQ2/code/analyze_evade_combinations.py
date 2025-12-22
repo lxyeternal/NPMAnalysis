@@ -12,10 +12,12 @@ import json
 
 def analyze_evade_combinations():
     """分析两个evade技术的组合频率"""
-    
-    # 文件路径
-    input_file = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/experiment/rq2/statistic/package_category_summary.csv"
-    output_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/experiment/rq2/statistic"
+    from pathlib import Path
+
+    # 文件路径 - 使用相对路径
+    script_dir = Path(__file__).parent.resolve()
+    input_file = script_dir.parent / "statistic" / "input" / "package_category_summary.csv"
+    output_dir = script_dir.parent / "statistic" / "evasion_analysis" / "data"
     
     # 读取数据
     print("正在读取数据...")

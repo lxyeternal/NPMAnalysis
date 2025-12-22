@@ -540,18 +540,20 @@ class CategoryBasedEvasionAnalyzer:
 
 def main():
     """Main function to run the analysis."""
-    
-    # Define paths
 
-    malware_snippets_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/code_snipptes/malware_snippets"
-    stats_output_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/tool_detect/tool_output_statistic/reports/stats_output"
-    classification_file = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/experiment/rq2/statistic/evation_classification.csv"
-    output_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/experiment/rq2/statistic"
-    
+    # Define paths using relative paths from script location
+    script_dir = Path(__file__).parent.resolve()
+    project_root = script_dir.parent.parent.parent  # Experiment/RQ2/code -> NPMAnalysis
+
+    malware_snippets_dir = project_root / "Core" / "Analysis" / "code_snipptes" / "malware_snippets"
+    stats_output_dir = project_root / "Core" / "ToolDetection" / "DetectionResults"
+    classification_file = script_dir.parent / "statistic" / "input" / "evation_classification.csv"
+    output_dir = script_dir.parent / "statistic" / "evasion_analysis"
+
     # Create analyzer and run analysis
     analyzer = CategoryBasedEvasionAnalyzer(
-        malware_snippets_dir, 
-        stats_output_dir, 
+        malware_snippets_dir,
+        stats_output_dir,
         classification_file,
         output_dir
     )

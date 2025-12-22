@@ -12,7 +12,9 @@ import os
 
 def load_classification_mapping():
     """Load the new evasion classification and create technique to category mapping"""
-    classification_file = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/experiment/rq2/statistic/evation_classification.csv"
+    from pathlib import Path
+    script_dir = Path(__file__).parent.resolve()
+    classification_file = script_dir.parent / "statistic" / "input" / "evation_classification.csv"
     
     df_classification = pd.read_csv(classification_file)
     
@@ -32,11 +34,15 @@ def load_classification_mapping():
 
 def process_package_categories():
     """Process package technique mapping and generate category-based statistics"""
-    
-    # Load data
-    input_file = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/code_snipptes/statistic_code/package_technique_mapping.csv"
-    output_dir = "/Users/kzyinglili/Documents/Empirical_study_NPM/NPMAnalysis/Codes/experiment/rq2/statistic"
-    
+    from pathlib import Path
+
+    # Load data - 使用相对路径
+    script_dir = Path(__file__).parent.resolve()
+    project_root = script_dir.parent.parent.parent  # Experiment/RQ2/code -> NPMAnalysis
+
+    input_file = project_root / "Core" / "Analysis" / "code_snipptes" / "statistic_code" / "package_technique_mapping.csv"
+    output_dir = script_dir.parent / "statistic" / "input"
+
     # Ensure output directory exists
     os.makedirs(output_dir, exist_ok=True)
     
