@@ -1,58 +1,76 @@
-# NPMAnalysis
-=======
-# NPM Malware Detection Tools Benchmark
+# NPM Malware Detection Benchmark
 
-## Overview
-This project presents a comprehensive benchmark study of NPM (Node Package Manager) malware detection tools. We evaluate various detection methods against a curated dataset of both malicious and benign NPM packages to assess their effectiveness and analyze potential areas for improvement.
+An empirical study evaluating NPM malware detection tools.
 
-## Project Goals
-- Establish a standardized benchmark for NPM malware detection tools
-- Evaluate the performance of existing detection methods
-- Analyze false positive rates and their root causes
-- Identify areas for future improvement in malware detection techniques
+## Project Structure
 
-## Dataset
-Our benchmark includes:
-- A collection of verified malicious NPM packages
-- A diverse set of legitimate NPM packages
-- Various types of malware samples representing different attack vectors
+```
+NPMAnalysis/
+├── Core/                          # Core analysis modules
+│   ├── Analysis/                  # Behavior and code analysis
+│   │   ├── behavior/              # Malicious behavior classification
+│   │   └── code_snipptes/         # Code pattern analysis
+│   ├── Data/                      # Data collection and processing
+│   │   ├── collection/            # Dataset collection scripts
+│   │   ├── cleaning/              # Data cleaning scripts
+│   │   └── timecollect/           # Timestamp data collection
+│   └── ToolDetection/             # Detection tool evaluation
+│       └── DetectionResults/      # Tool detection outputs
+│
+├── Experiment/                    # Research experiments
+│   ├── RQ2/                       # Detection rate analysis
+│   │   ├── code/                  # Analysis scripts
+│   │   └── statistic/             # Results and figures
+│   ├── RQ3/                       # Temporal trend analysis
+│   │   ├── code/                  # Analysis scripts
+│   │   └── statistic/             # Results and figures
+│   └── RQ4/                       # Tool complementarity analysis
+│
+└── Dataset/                       # Malware and benign samples
+```
 
-## Tools Evaluated
-We assessed multiple NPM security analysis tools, including:
-- Static analysis tools
-- Dynamic analysis tools
-- Behavior-based detection methods
-- Metadata analysis tools
+## Detection Tools Evaluated
 
-## Key Findings
-### Detection Effectiveness
-- Comparative analysis of true positive and false positive rates
-- Tool-specific performance metrics
-- Detection coverage across different malware types
+| Tool | Type |
+|------|------|
+| GENIE | Rule-based |
+| GuardDog | Rule-based |
+| OSSGadget | Rule-based |
+| SocketAI | Rule-based |
+| SAP-DT | ML-based |
+| SAP-RF | ML-based |
+| SAP-XGB | ML-based |
+| Packj-Static | Hybrid |
+| Packj-Trace | Hybrid |
 
-### False Positive Analysis
-We identified several common causes of false positives:
-- Code pattern mismatches
-- Legitimate but suspicious behavior patterns
-- Over-aggressive heuristics
-- Environmental dependencies
+## Research Questions
 
-## Future Improvements
-Based on our analysis, we recommend the following areas for improvement:
-1. Enhanced context-aware analysis
-2. Better handling of legitimate development patterns
-3. Improved behavioral analysis techniques
-4. Integration of multiple detection methods
-5. Reduction of false positive triggers
+- **RQ2**: How effective are detection tools against different malicious behaviors and evasion techniques?
+- **RQ3**: How do detection rates change over time?
+- **RQ4**: Can combining multiple tools improve detection coverage?
 
-## Contributing
-We welcome contributions to improve this benchmark study. Please feel free to:
-- Submit additional malware samples
-- Propose new detection tools for evaluation
-- Suggest improvements to the evaluation methodology
+## Requirements
+
+- Python 3.8+
+- pandas, numpy, matplotlib, seaborn
+
+## Usage
+
+```bash
+# RQ2: Generate detection rate heatmaps
+cd Experiment/RQ2/code
+python detection_rate_heatmap.py
+python evasion_detection_heatmap.py
+
+# RQ3: Generate temporal trend analysis
+cd Experiment/RQ3/code
+python detection_rate_over_time.py
+
+# RQ4: Tool complementarity analysis
+cd Experiment/RQ4
+python multi_tool_fusion.py
+```
 
 ## License
-[License details to be added]
 
-## Contact
-[Contact information to be added] 
+MIT License
