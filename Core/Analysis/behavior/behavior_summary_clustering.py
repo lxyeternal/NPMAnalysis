@@ -1,67 +1,51 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Behavior Summary Clustering
+Behavior Summary Clustering V2
 
-Cluster behavior_summary texts from malware snippets using multiple algorithms.
-Generates publication-quality visualizations and cluster analysis.
-
-Embedding Methods:
-    - TF-IDF (default, no GPU required)
-    - Sentence-BERT (if sentence-transformers installed)
-    - Doc2Vec
-
-Clustering Algorithms:
-    - K-Means
-    - DBSCAN
-    - HDBSCAN (if hdbscan installed)
-    - Agglomerative Clustering
-    - Gaussian Mixture Model (GMM)
+Improved clustering of behavior_summary texts:
+1. Filter snippets with single behavior (cleaner data)
+2. Use Sentence-BERT for semantic embeddings
+3. Try multiple clustering algorithms including Spectral Clustering
+4. Better evaluation metrics
 
 Output:
-    - results/behavior_summary_clustering/
-        - optimal_k_analysis.pdf: Elbow and silhouette analysis
-        - cluster_visualization_{method}.pdf: Cluster visualization for each method
-        - clustering_methods_comparison.pdf: Side-by-side comparison
-        - clustering_metrics_comparison.pdf: Metrics comparison chart
+    - results/behavior_summary_clustering_v2/
+        - clustering results and visualizations (PDF only)
 """
 
-import os
 import json
-import glob
-import re
 import warnings
 import logging
 from pathlib import Path
-from collections import Counter, defaultdict
-from typing import Dict, List, Optional, Tuple
+from collections import Counter
+from typing import List, Dict, Tuple, Optional
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib as mpl
-import seaborn as sns
 from tqdm import tqdm
 
 # Scikit-learn
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
+from sklearn.cluster import KMeans, SpectralClustering, AgglomerativeClustering
 from sklearn.mixture import GaussianMixture
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import normalize
 
 # Suppress warnings
 warnings.filterwarnings('ignore')
 
-# Configure logging (only for this module, suppress other libraries)
+# Configure logging
 logging.basicConfig(
-    level=logging.WARNING,  # Set root logger to WARNING to suppress other libraries
+    level=logging.WARNING,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)  # Our logger still shows INFO
+logger.setLevel(logging.INFO)
 
 # =============================================================================
 # Configuration
@@ -76,58 +60,55 @@ DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "results" / "behavior_summary_clustering"
 # Matplotlib configuration for publication quality
 mpl.rcParams['font.family'] = 'serif'
 mpl.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif', 'serif']
-mpl.rcParams['font.size'] = 11
-mpl.rcParams['axes.linewidth'] = 0.8
+mpl.rcParams['font.size'] = 12
+mpl.rcParams['axes.linewidth'] = 1.0
 mpl.rcParams['pdf.fonttype'] = 42
 mpl.rcParams['ps.fonttype'] = 42
 mpl.rcParams['figure.dpi'] = 300
 
-# Color palettes
+# Color palette (blue gradient)
 CLUSTER_COLORS = plt.cm.tab20(np.linspace(0, 1, 20))
-
 
 # =============================================================================
 # Optional imports
 # =============================================================================
-
-# Try to import optional dependencies
-try:
-    import hdbscan
-    HAS_HDBSCAN = True
-except ImportError:
-    HAS_HDBSCAN = False
-    logger.info("HDBSCAN not installed. Skipping HDBSCAN clustering.")
 
 try:
     from sentence_transformers import SentenceTransformer
     HAS_SBERT = True
 except ImportError:
     HAS_SBERT = False
-    logger.info("sentence-transformers not installed. Using TF-IDF instead.")
+    logger.warning("sentence-transformers not installed. Install with: pip install sentence-transformers")
 
 try:
     import umap
     HAS_UMAP = True
 except ImportError:
     HAS_UMAP = False
-    logger.info("UMAP not installed. Using t-SNE for visualization.")
 
 
 # =============================================================================
-# Data Collection
+# Main Class
 # =============================================================================
 
-class BehaviorSummaryClusterer:
-    """Cluster behavior summaries using multiple algorithms."""
+class BehaviorSummaryClustererV2:
+    """Improved clustering of behavior summaries."""
 
-    def __init__(self, input_dir: Path = None, output_dir: Path = None):
+    def __init__(self, input_dir: Path = None, output_dir: Path = None, n_clusters: int = 15):
         self.input_dir = Path(input_dir or DEFAULT_INPUT_DIR)
         self.output_dir = Path(output_dir or DEFAULT_OUTPUT_DIR)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
+        self.n_clusters = n_clusters
+
         # Data storage
-        self.summaries = []  # List of behavior_summary texts
-        self.metadata = []   # Corresponding metadata
+        self.summaries = []          # behavior_summary texts
+        self.metadata = []           # corresponding metadata
+        self.single_behavior_type = []  # the single behavior type for each snippet
+
+        # All data (before filtering)
+        self.all_summaries_count = 0
+        self.filtered_summaries_count = 0
 
         # Embeddings
         self.embeddings = None
@@ -137,12 +118,16 @@ class BehaviorSummaryClusterer:
         # Clustering results
         self.cluster_results = {}
 
-    def collect_data(self) -> int:
-        """Collect behavior_summary texts from result.json files."""
+    def collect_data(self, single_behavior_only: bool = True) -> int:
+        """Collect behavior_summary texts, optionally filtering for single-behavior snippets."""
         logger.info(f"Collecting data from {self.input_dir}")
+        logger.info(f"Filter mode: {'Single behavior only' if single_behavior_only else 'All snippets'}")
 
         json_files = list(self.input_dir.glob("**/result.json"))
         logger.info(f"Found {len(json_files)} result.json files")
+
+        all_count = 0
+        single_count = 0
 
         for json_path in tqdm(json_files, desc="Collecting summaries"):
             try:
@@ -155,36 +140,41 @@ class BehaviorSummaryClusterer:
 
                 for snippet in data.get('malicious_snippets', []):
                     summary = snippet.get('behavior_summary', '')
-                    if summary and len(summary.strip()) > 10:  # Filter very short summaries
-                        self.summaries.append(summary.strip())
-                        self.metadata.append({
-                            'package': package_name,
-                            'version': version,
-                            'file': snippet.get('file', ''),
-                            'type': snippet.get('type', ''),
-                            'behaviors': snippet.get('validate_behavior_formal', [])
-                        })
+                    behaviors = snippet.get('validate_behavior_formal', [])
+
+                    if not summary or len(summary.strip()) < 10:
+                        continue
+
+                    all_count += 1
+
+                    # Filter: only single behavior snippets
+                    if single_behavior_only and len(behaviors) != 1:
+                        continue
+
+                    single_count += 1
+                    self.summaries.append(summary.strip())
+                    self.metadata.append({
+                        'package': package_name,
+                        'version': version,
+                        'file': snippet.get('file', ''),
+                        'type': snippet.get('type', ''),
+                        'behaviors': behaviors
+                    })
+                    if behaviors:
+                        self.single_behavior_type.append(behaviors[0])
+                    else:
+                        self.single_behavior_type.append('unknown')
 
             except Exception as e:
                 logger.error(f"Error processing {json_path}: {e}")
 
-        logger.info(f"Collected {len(self.summaries)} behavior summaries")
+        self.all_summaries_count = all_count
+        self.filtered_summaries_count = single_count
+
+        logger.info(f"Total summaries: {all_count}")
+        logger.info(f"Single-behavior summaries: {single_count} ({single_count/all_count*100:.1f}%)")
+
         return len(self.summaries)
-
-    # =========================================================================
-    # Text Preprocessing
-    # =========================================================================
-
-    @staticmethod
-    def preprocess_text(text: str) -> str:
-        """Clean and preprocess text."""
-        # Lowercase
-        text = text.lower()
-        # Remove special characters but keep spaces
-        text = re.sub(r'[^a-z0-9\s]', ' ', text)
-        # Remove extra whitespace
-        text = ' '.join(text.split())
-        return text
 
     # =========================================================================
     # Embedding Methods
@@ -194,10 +184,6 @@ class BehaviorSummaryClusterer:
         """Compute TF-IDF embeddings."""
         logger.info("Computing TF-IDF embeddings...")
 
-        # Preprocess texts
-        processed_texts = [self.preprocess_text(s) for s in self.summaries]
-
-        # TF-IDF vectorization
         vectorizer = TfidfVectorizer(
             max_features=1000,
             min_df=2,
@@ -206,41 +192,43 @@ class BehaviorSummaryClusterer:
             stop_words='english'
         )
 
-        self.embeddings = vectorizer.fit_transform(processed_texts).toarray()
+        self.embeddings = vectorizer.fit_transform(self.summaries).toarray()
         self.embedding_method = 'TF-IDF'
 
         logger.info(f"TF-IDF embeddings shape: {self.embeddings.shape}")
         return self.embeddings
 
-    def compute_sbert_embeddings(self, model_name: str = 'all-MiniLM-L6-v2') -> np.ndarray:
-        """Compute Sentence-BERT embeddings."""
+    def compute_sbert_embeddings(self, model_name: str = 'all-mpnet-base-v2') -> np.ndarray:
+        """Compute Sentence-BERT embeddings using a powerful model."""
         if not HAS_SBERT:
             logger.warning("sentence-transformers not available. Using TF-IDF.")
             return self.compute_tfidf_embeddings()
 
         logger.info(f"Computing Sentence-BERT embeddings using {model_name}...")
+        logger.info("This may take a few minutes...")
 
         model = SentenceTransformer(model_name)
         self.embeddings = model.encode(
             self.summaries,
             show_progress_bar=True,
-            convert_to_numpy=True
+            convert_to_numpy=True,
+            batch_size=64
         )
-        self.embedding_method = 'SBERT'
+        self.embedding_method = f'SBERT ({model_name})'
 
         logger.info(f"SBERT embeddings shape: {self.embeddings.shape}")
         return self.embeddings
 
-    def reduce_dimensions(self, method: str = 'tsne', n_components: int = 2) -> np.ndarray:
+    def reduce_dimensions(self, method: str = 'umap', n_components: int = 2) -> np.ndarray:
         """Reduce embedding dimensions for visualization."""
         logger.info(f"Reducing dimensions using {method.upper()}...")
 
         # First reduce to 50 dimensions with PCA if needed
         if self.embeddings.shape[1] > 50:
             pca = PCA(n_components=50, random_state=42)
-            embeddings_pca = pca.fit_transform(self.embeddings)
+            embeddings_reduced = pca.fit_transform(self.embeddings)
         else:
-            embeddings_pca = self.embeddings
+            embeddings_reduced = self.embeddings
 
         if method == 'umap' and HAS_UMAP:
             reducer = umap.UMAP(
@@ -250,7 +238,7 @@ class BehaviorSummaryClusterer:
                 metric='cosine',
                 random_state=42
             )
-            self.embeddings_2d = reducer.fit_transform(embeddings_pca)
+            self.embeddings_2d = reducer.fit_transform(embeddings_reduced)
         else:
             tsne = TSNE(
                 n_components=n_components,
@@ -258,7 +246,7 @@ class BehaviorSummaryClusterer:
                 random_state=42,
                 n_iter=1000
             )
-            self.embeddings_2d = tsne.fit_transform(embeddings_pca)
+            self.embeddings_2d = tsne.fit_transform(embeddings_reduced)
 
         logger.info(f"Reduced dimensions: {self.embeddings_2d.shape}")
         return self.embeddings_2d
@@ -267,50 +255,14 @@ class BehaviorSummaryClusterer:
     # Clustering Algorithms
     # =========================================================================
 
-    def find_optimal_k(self, max_k: int = 15) -> int:
-        """Find optimal number of clusters using elbow method and silhouette score."""
-        logger.info(f"Finding optimal K (2-{max_k})...")
-
-        k_range = range(2, min(max_k + 1, len(self.summaries) // 10))
-        inertias = []
-        silhouette_scores = []
-
-        for k in tqdm(k_range, desc="Testing K values"):
-            kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-            labels = kmeans.fit_predict(self.embeddings)
-            inertias.append(kmeans.inertia_)
-            silhouette_scores.append(silhouette_score(self.embeddings, labels))
-
-        # Plot elbow curve
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
-
-        ax1.plot(list(k_range), inertias, 'bo-', linewidth=2, markersize=6)
-        ax1.set_xlabel('Number of Clusters (K)', fontsize=11)
-        ax1.set_ylabel('Inertia', fontsize=11)
-        ax1.set_title('Elbow Method', fontsize=12, fontweight='bold')
-        ax1.grid(True, linestyle='--', alpha=0.3)
-
-        ax2.plot(list(k_range), silhouette_scores, 'ro-', linewidth=2, markersize=6)
-        ax2.set_xlabel('Number of Clusters (K)', fontsize=11)
-        ax2.set_ylabel('Silhouette Score', fontsize=11)
-        ax2.set_title('Silhouette Analysis', fontsize=12, fontweight='bold')
-        ax2.grid(True, linestyle='--', alpha=0.3)
-
-        plt.tight_layout()
-        fig.savefig(self.output_dir / 'optimal_k_analysis.pdf', dpi=300, bbox_inches='tight')
-        plt.close()
-
-        # Find optimal K
-        optimal_k = list(k_range)[np.argmax(silhouette_scores)]
-        logger.info(f"Optimal K: {optimal_k} (silhouette: {max(silhouette_scores):.4f})")
-
-        return optimal_k
-
-    def cluster_kmeans(self, n_clusters: int) -> np.ndarray:
+    def cluster_kmeans(self, n_clusters: int = None) -> np.ndarray:
         """K-Means clustering."""
+        n_clusters = n_clusters or self.n_clusters
         logger.info(f"Running K-Means with K={n_clusters}...")
+
         kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
         labels = kmeans.fit_predict(self.embeddings)
+
         self.cluster_results['kmeans'] = {
             'labels': labels,
             'n_clusters': n_clusters,
@@ -320,90 +272,68 @@ class BehaviorSummaryClusterer:
         }
         return labels
 
-    def cluster_dbscan(self, eps: float = 0.5, min_samples: int = 5) -> np.ndarray:
-        """DBSCAN clustering."""
-        logger.info(f"Running DBSCAN (eps={eps}, min_samples={min_samples})...")
+    def cluster_kmeans_cosine(self, n_clusters: int = None) -> np.ndarray:
+        """Spherical K-Means (K-Means with cosine distance via normalization)."""
+        n_clusters = n_clusters or self.n_clusters
+        logger.info(f"Running Spherical K-Means (cosine) with K={n_clusters}...")
 
-        # Normalize embeddings for DBSCAN
-        scaler = StandardScaler()
-        embeddings_scaled = scaler.fit_transform(self.embeddings)
+        # Normalize embeddings for cosine similarity
+        embeddings_normalized = normalize(self.embeddings, norm='l2')
 
-        # Try different eps values
-        best_labels = None
-        best_silhouette = -1
-        best_eps = eps
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        labels = kmeans.fit_predict(embeddings_normalized)
 
-        for test_eps in [0.3, 0.5, 0.7, 1.0, 1.5]:
-            dbscan = DBSCAN(eps=test_eps, min_samples=min_samples)
-            labels = dbscan.fit_predict(embeddings_scaled)
-
-            n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-            if n_clusters >= 2:
-                # Only calculate silhouette for non-noise points
-                mask = labels != -1
-                if sum(mask) > n_clusters:
-                    score = silhouette_score(embeddings_scaled[mask], labels[mask])
-                    if score > best_silhouette:
-                        best_silhouette = score
-                        best_labels = labels
-                        best_eps = test_eps
-
-        if best_labels is None:
-            logger.warning("DBSCAN could not find valid clusters. Using default eps.")
-            dbscan = DBSCAN(eps=eps, min_samples=min_samples)
-            best_labels = dbscan.fit_predict(embeddings_scaled)
-
-        n_clusters = len(set(best_labels)) - (1 if -1 in best_labels else 0)
-        noise_count = sum(best_labels == -1)
-
-        self.cluster_results['dbscan'] = {
-            'labels': best_labels,
-            'n_clusters': n_clusters,
-            'noise_points': noise_count,
-            'eps': best_eps,
-            'silhouette': best_silhouette if best_silhouette > -1 else None
-        }
-        logger.info(f"DBSCAN found {n_clusters} clusters, {noise_count} noise points")
-        return best_labels
-
-    def cluster_hdbscan(self, min_cluster_size: int = 10) -> Optional[np.ndarray]:
-        """HDBSCAN clustering."""
-        if not HAS_HDBSCAN:
-            logger.warning("HDBSCAN not available. Skipping.")
-            return None
-
-        logger.info(f"Running HDBSCAN (min_cluster_size={min_cluster_size})...")
-
-        clusterer = hdbscan.HDBSCAN(
-            min_cluster_size=min_cluster_size,
-            metric='euclidean',
-            cluster_selection_method='eom'
-        )
-        labels = clusterer.fit_predict(self.embeddings)
-
-        n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-        noise_count = sum(labels == -1)
-
-        silhouette = None
-        if n_clusters >= 2:
-            mask = labels != -1
-            if sum(mask) > n_clusters:
-                silhouette = silhouette_score(self.embeddings[mask], labels[mask])
-
-        self.cluster_results['hdbscan'] = {
+        self.cluster_results['kmeans_cosine'] = {
             'labels': labels,
             'n_clusters': n_clusters,
-            'noise_points': noise_count,
-            'silhouette': silhouette
+            'silhouette': silhouette_score(embeddings_normalized, labels),
+            'calinski_harabasz': calinski_harabasz_score(embeddings_normalized, labels),
+            'davies_bouldin': davies_bouldin_score(embeddings_normalized, labels)
         }
-        logger.info(f"HDBSCAN found {n_clusters} clusters, {noise_count} noise points")
         return labels
 
-    def cluster_agglomerative(self, n_clusters: int) -> np.ndarray:
+    def cluster_spectral(self, n_clusters: int = None) -> np.ndarray:
+        """Spectral Clustering."""
+        n_clusters = n_clusters or self.n_clusters
+        logger.info(f"Running Spectral Clustering with K={n_clusters}...")
+
+        # Use a subset if data is too large (spectral clustering is memory-intensive)
+        if len(self.summaries) > 5000:
+            logger.warning("Data too large for full spectral clustering, using nearest neighbors affinity")
+            spectral = SpectralClustering(
+                n_clusters=n_clusters,
+                affinity='nearest_neighbors',
+                n_neighbors=10,
+                random_state=42,
+                n_jobs=-1
+            )
+        else:
+            spectral = SpectralClustering(
+                n_clusters=n_clusters,
+                affinity='rbf',
+                random_state=42,
+                n_jobs=-1
+            )
+
+        labels = spectral.fit_predict(self.embeddings)
+
+        self.cluster_results['spectral'] = {
+            'labels': labels,
+            'n_clusters': n_clusters,
+            'silhouette': silhouette_score(self.embeddings, labels),
+            'calinski_harabasz': calinski_harabasz_score(self.embeddings, labels),
+            'davies_bouldin': davies_bouldin_score(self.embeddings, labels)
+        }
+        return labels
+
+    def cluster_agglomerative(self, n_clusters: int = None) -> np.ndarray:
         """Agglomerative (Hierarchical) clustering."""
+        n_clusters = n_clusters or self.n_clusters
         logger.info(f"Running Agglomerative Clustering with K={n_clusters}...")
+
         agg = AgglomerativeClustering(n_clusters=n_clusters, linkage='ward')
         labels = agg.fit_predict(self.embeddings)
+
         self.cluster_results['agglomerative'] = {
             'labels': labels,
             'n_clusters': n_clusters,
@@ -413,11 +343,14 @@ class BehaviorSummaryClusterer:
         }
         return labels
 
-    def cluster_gmm(self, n_components: int) -> np.ndarray:
+    def cluster_gmm(self, n_components: int = None) -> np.ndarray:
         """Gaussian Mixture Model clustering."""
+        n_components = n_components or self.n_clusters
         logger.info(f"Running GMM with {n_components} components...")
+
         gmm = GaussianMixture(n_components=n_components, random_state=42, covariance_type='full')
         labels = gmm.fit_predict(self.embeddings)
+
         self.cluster_results['gmm'] = {
             'labels': labels,
             'n_clusters': n_components,
@@ -439,43 +372,29 @@ class BehaviorSummaryClusterer:
         fig, ax = plt.subplots(figsize=(10, 8))
 
         unique_labels = sorted(set(labels))
-        n_clusters = len(unique_labels) - (1 if -1 in unique_labels else 0)
+        n_clusters = len(unique_labels)
 
-        # Plot each cluster
         for i, label in enumerate(unique_labels):
             mask = labels == label
-            if label == -1:
-                # Noise points
-                ax.scatter(
-                    self.embeddings_2d[mask, 0],
-                    self.embeddings_2d[mask, 1],
-                    c='lightgray',
-                    marker='x',
-                    s=30,
-                    alpha=0.5,
-                    label='Noise'
-                )
-            else:
-                color = CLUSTER_COLORS[label % 20]
-                ax.scatter(
-                    self.embeddings_2d[mask, 0],
-                    self.embeddings_2d[mask, 1],
-                    c=[color],
-                    marker='o',
-                    s=50,
-                    alpha=0.7,
-                    edgecolors='white',
-                    linewidth=0.5,
-                    label=f'Cluster {label}'
-                )
+            color = CLUSTER_COLORS[label % 20]
+            ax.scatter(
+                self.embeddings_2d[mask, 0],
+                self.embeddings_2d[mask, 1],
+                c=[color],
+                marker='o',
+                s=50,
+                alpha=0.7,
+                edgecolors='white',
+                linewidth=0.5,
+                label=f'Cluster {label}'
+            )
 
-        ax.set_xlabel('Dimension 1', fontsize=11)
-        ax.set_ylabel('Dimension 2', fontsize=11)
-        ax.set_title(f'{method_name} Clustering ({n_clusters} clusters)', fontsize=14, fontweight='bold')
+        ax.set_xlabel('Dimension 1', fontsize=14, fontweight='bold')
+        ax.set_ylabel('Dimension 2', fontsize=14, fontweight='bold')
+        ax.set_title(f'{method_name} Clustering ({n_clusters} clusters)', fontsize=16, fontweight='bold')
 
-        # Add legend if not too many clusters
         if n_clusters <= 15:
-            ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=9)
+            ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=10)
 
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
@@ -488,55 +407,6 @@ class BehaviorSummaryClusterer:
 
         logger.info(f"Saved cluster visualization to {output_path}")
 
-    def plot_all_methods_comparison(self) -> None:
-        """Create comparison plot of all clustering methods."""
-        methods = [m for m in self.cluster_results.keys() if self.cluster_results[m].get('labels') is not None]
-
-        if len(methods) < 2:
-            return
-
-        n_methods = len(methods)
-        fig, axes = plt.subplots(1, n_methods, figsize=(5 * n_methods, 5))
-
-        if n_methods == 1:
-            axes = [axes]
-
-        for ax, method in zip(axes, methods):
-            labels = self.cluster_results[method]['labels']
-            unique_labels = sorted(set(labels))
-
-            for label in unique_labels:
-                mask = labels == label
-                if label == -1:
-                    ax.scatter(
-                        self.embeddings_2d[mask, 0],
-                        self.embeddings_2d[mask, 1],
-                        c='lightgray', marker='x', s=20, alpha=0.5
-                    )
-                else:
-                    color = CLUSTER_COLORS[label % 20]
-                    ax.scatter(
-                        self.embeddings_2d[mask, 0],
-                        self.embeddings_2d[mask, 1],
-                        c=[color], s=30, alpha=0.7
-                    )
-
-            n_clusters = self.cluster_results[method].get('n_clusters', len(set(labels)))
-            silhouette = self.cluster_results[method].get('silhouette')
-            sil_str = f", Sil={silhouette:.3f}" if silhouette else ""
-
-            ax.set_title(f'{method.upper()}\n({n_clusters} clusters{sil_str})', fontsize=11, fontweight='bold')
-            ax.set_xlabel('Dim 1', fontsize=9)
-            ax.set_ylabel('Dim 2', fontsize=9)
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
-
-        plt.tight_layout()
-        fig.savefig(self.output_dir / 'clustering_methods_comparison.pdf', dpi=300, bbox_inches='tight')
-        plt.close()
-
-        logger.info("Saved clustering methods comparison plot")
-
     def plot_metrics_comparison(self) -> None:
         """Plot comparison of clustering metrics across methods."""
         methods = []
@@ -545,39 +415,43 @@ class BehaviorSummaryClusterer:
 
         for method, results in self.cluster_results.items():
             if results.get('silhouette') is not None:
-                methods.append(method.upper())
+                methods.append(method.upper().replace('_', '\n'))
                 silhouettes.append(results['silhouette'])
                 n_clusters_list.append(results.get('n_clusters', 0))
 
         if len(methods) < 2:
             return
 
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+
+        # Color
+        bar_color = '#1A5276'
 
         # Silhouette scores
-        colors = plt.cm.viridis(np.linspace(0.2, 0.8, len(methods)))
-        bars1 = ax1.bar(methods, silhouettes, color=colors, edgecolor='black', linewidth=0.5)
-        ax1.set_ylabel('Silhouette Score', fontsize=11)
-        ax1.set_title('Clustering Quality Comparison', fontsize=12, fontweight='bold')
-        ax1.set_ylim(0, max(silhouettes) * 1.2)
+        bars1 = ax1.bar(methods, silhouettes, color=bar_color, edgecolor='white', linewidth=0.8)
+        ax1.set_ylabel('Silhouette Score', fontsize=14, fontweight='bold')
+        ax1.set_title('Clustering Quality Comparison', fontsize=16, fontweight='bold')
+        ax1.set_ylim(0, max(silhouettes) * 1.3)
 
         for bar, val in zip(bars1, silhouettes):
             ax1.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
-                     f'{val:.3f}', ha='center', va='bottom', fontsize=9)
+                     f'{val:.3f}', ha='center', va='bottom', fontsize=11, fontweight='medium')
 
         # Number of clusters
-        bars2 = ax2.bar(methods, n_clusters_list, color=colors, edgecolor='black', linewidth=0.5)
-        ax2.set_ylabel('Number of Clusters', fontsize=11)
-        ax2.set_title('Number of Clusters by Method', fontsize=12, fontweight='bold')
+        bars2 = ax2.bar(methods, n_clusters_list, color=bar_color, edgecolor='white', linewidth=0.8)
+        ax2.set_ylabel('Number of Clusters', fontsize=14, fontweight='bold')
+        ax2.set_title('Number of Clusters by Method', fontsize=16, fontweight='bold')
 
         for bar, val in zip(bars2, n_clusters_list):
             ax2.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5,
-                     str(val), ha='center', va='bottom', fontsize=9)
+                     str(val), ha='center', va='bottom', fontsize=11, fontweight='medium')
 
         for ax in [ax1, ax2]:
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
-            ax.yaxis.grid(True, linestyle='--', alpha=0.3)
+            ax.yaxis.grid(True, linestyle='--', alpha=0.4)
+            ax.tick_params(axis='x', labelsize=10)
+            ax.tick_params(axis='y', labelsize=11)
 
         plt.tight_layout()
         fig.savefig(self.output_dir / 'clustering_metrics_comparison.pdf', dpi=300, bbox_inches='tight')
@@ -585,67 +459,61 @@ class BehaviorSummaryClusterer:
 
         logger.info("Saved clustering metrics comparison plot")
 
-    # =========================================================================
-    # Cluster Analysis
-    # =========================================================================
+    def plot_all_methods_comparison(self) -> None:
+        """Create comparison plot of all clustering methods."""
+        methods = [m for m in self.cluster_results.keys() if self.cluster_results[m].get('labels') is not None]
 
-    def analyze_clusters(self, labels: np.ndarray, method_name: str) -> dict:
-        """Analyze cluster contents and extract key features."""
-        analysis = {
-            'method': method_name,
-            'n_clusters': len(set(labels)) - (1 if -1 in labels else 0),
-            'clusters': {}
-        }
+        if len(methods) < 2:
+            return
 
-        unique_labels = sorted(set(labels))
+        n_methods = len(methods)
+        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+        axes = axes.flatten()
 
-        for label in unique_labels:
-            if label == -1:
-                continue
+        for idx, method in enumerate(methods):
+            if idx >= 6:
+                break
+            ax = axes[idx]
+            labels = self.cluster_results[method]['labels']
+            unique_labels = sorted(set(labels))
 
-            mask = labels == label
-            cluster_summaries = [self.summaries[i] for i in range(len(self.summaries)) if mask[i]]
-            cluster_metadata = [self.metadata[i] for i in range(len(self.metadata)) if mask[i]]
+            for label in unique_labels:
+                mask = labels == label
+                color = CLUSTER_COLORS[label % 20]
+                ax.scatter(
+                    self.embeddings_2d[mask, 0],
+                    self.embeddings_2d[mask, 1],
+                    c=[color], s=20, alpha=0.7
+                )
 
-            # Extract common words
-            all_words = []
-            for summary in cluster_summaries:
-                words = self.preprocess_text(summary).split()
-                all_words.extend(words)
+            n_clusters = self.cluster_results[method].get('n_clusters', len(set(labels)))
+            silhouette = self.cluster_results[method].get('silhouette')
+            sil_str = f"Sil={silhouette:.3f}" if silhouette else ""
 
-            word_freq = Counter(all_words)
-            # Filter common stop words
-            stop_words = {'the', 'a', 'an', 'to', 'of', 'in', 'for', 'and', 'or', 'is', 'it', 'this', 'that', 'with', 'from', 'as', 'on', 'by', 'at'}
-            top_words = [(w, c) for w, c in word_freq.most_common(20) if w not in stop_words][:10]
+            ax.set_title(f'{method.upper()}\n({n_clusters} clusters, {sil_str})', fontsize=12, fontweight='bold')
+            ax.set_xlabel('Dim 1', fontsize=10)
+            ax.set_ylabel('Dim 2', fontsize=10)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
 
-            # Get behavior types
-            behavior_counter = Counter()
-            for meta in cluster_metadata:
-                for behavior in meta.get('behaviors', []):
-                    behavior_counter[behavior] += 1
+        # Hide unused subplots
+        for idx in range(len(methods), 6):
+            axes[idx].set_visible(False)
 
-            analysis['clusters'][int(label)] = {
-                'size': int(sum(mask)),
-                'percentage': float(sum(mask) / len(labels) * 100),
-                'top_words': top_words,
-                'top_behaviors': behavior_counter.most_common(5),
-                'example_summaries': cluster_summaries[:3]
-            }
+        plt.tight_layout()
+        fig.savefig(self.output_dir / 'clustering_methods_comparison.pdf', dpi=300, bbox_inches='tight')
+        plt.close()
 
-        return analysis
-
-    def save_results(self) -> None:
-        """Print clustering results summary (PDF-only output mode)."""
-        logger.info(f"Results saved to {self.output_dir}")
+        logger.info("Saved clustering methods comparison plot")
 
     # =========================================================================
     # Main Pipeline
     # =========================================================================
 
-    def run(self, embedding_method: str = 'tfidf') -> None:
+    def run(self, embedding_method: str = 'sbert', single_behavior_only: bool = True) -> None:
         """Run the complete clustering pipeline."""
         # Collect data
-        if self.collect_data() == 0:
+        if self.collect_data(single_behavior_only=single_behavior_only) == 0:
             logger.error("No data collected. Exiting.")
             return
 
@@ -659,62 +527,70 @@ class BehaviorSummaryClusterer:
         dim_method = 'umap' if HAS_UMAP else 'tsne'
         self.reduce_dimensions(method=dim_method)
 
-        # Find optimal K
-        optimal_k = self.find_optimal_k()
-
         # Run all clustering methods
         logger.info("Running clustering algorithms...")
 
         # K-Means
-        labels_kmeans = self.cluster_kmeans(optimal_k)
+        labels_kmeans = self.cluster_kmeans()
         self.plot_clusters(labels_kmeans, 'K-Means')
 
-        # DBSCAN
-        labels_dbscan = self.cluster_dbscan()
-        self.plot_clusters(labels_dbscan, 'DBSCAN')
+        # Spherical K-Means (cosine)
+        labels_kmeans_cos = self.cluster_kmeans_cosine()
+        self.plot_clusters(labels_kmeans_cos, 'K-Means Cosine')
 
-        # HDBSCAN
-        if HAS_HDBSCAN:
-            labels_hdbscan = self.cluster_hdbscan()
-            if labels_hdbscan is not None:
-                self.plot_clusters(labels_hdbscan, 'HDBSCAN')
+        # Spectral
+        labels_spectral = self.cluster_spectral()
+        self.plot_clusters(labels_spectral, 'Spectral')
 
         # Agglomerative
-        labels_agg = self.cluster_agglomerative(optimal_k)
+        labels_agg = self.cluster_agglomerative()
         self.plot_clusters(labels_agg, 'Agglomerative')
 
         # GMM
-        labels_gmm = self.cluster_gmm(optimal_k)
+        labels_gmm = self.cluster_gmm()
         self.plot_clusters(labels_gmm, 'GMM')
 
         # Comparison plots
         self.plot_all_methods_comparison()
         self.plot_metrics_comparison()
 
-        # Save results
-        self.save_results()
-
         # Print summary
         self.print_summary()
 
     def print_summary(self) -> None:
         """Print summary to console."""
-        print("\n" + "=" * 60)
-        print("BEHAVIOR SUMMARY CLUSTERING COMPLETE")
-        print("=" * 60)
-        print(f"\nTotal summaries: {len(self.summaries)}")
-        print(f"Embedding method: {self.embedding_method}")
-        print(f"\nClustering Results:")
-        print("-" * 40)
+        print("\n" + "=" * 70)
+        print("BEHAVIOR SUMMARY CLUSTERING V2 - RESULTS")
+        print("=" * 70)
+        print(f"\nData:")
+        print(f"  Total summaries: {self.all_summaries_count}")
+        print(f"  Single-behavior summaries: {self.filtered_summaries_count} ({self.filtered_summaries_count/self.all_summaries_count*100:.1f}%)")
+        print(f"  Embedding method: {self.embedding_method}")
+        print(f"\nClustering Results (K={self.n_clusters}):")
+        print("-" * 50)
 
-        for method, results in self.cluster_results.items():
+        # Sort by silhouette score
+        sorted_results = sorted(
+            self.cluster_results.items(),
+            key=lambda x: x[1].get('silhouette', 0),
+            reverse=True
+        )
+
+        for method, results in sorted_results:
             n_clusters = results.get('n_clusters', 'N/A')
             silhouette = results.get('silhouette')
             sil_str = f"{silhouette:.4f}" if silhouette else "N/A"
-            noise = results.get('noise_points', 0)
-            print(f"  {method.upper():15s} | Clusters: {n_clusters:3} | Silhouette: {sil_str} | Noise: {noise}")
+            ch = results.get('calinski_harabasz')
+            ch_str = f"{ch:.1f}" if ch else "N/A"
+            print(f"  {method.upper():20s} | Silhouette: {sil_str} | Calinski-Harabasz: {ch_str}")
 
         print(f"\nResults saved to: {self.output_dir}")
+
+        # Best method
+        if sorted_results:
+            best_method = sorted_results[0][0]
+            best_score = sorted_results[0][1].get('silhouette', 0)
+            print(f"\n*** Best method: {best_method.upper()} (Silhouette: {best_score:.4f}) ***")
 
 
 # =============================================================================
@@ -725,7 +601,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Cluster behavior summaries from malware snippets"
+        description="Improved clustering of behavior summaries (V2)"
     )
     parser.add_argument(
         "--input", "-i",
@@ -742,8 +618,19 @@ def main():
     parser.add_argument(
         "--embedding", "-e",
         choices=['tfidf', 'sbert'],
-        default='tfidf',
-        help="Embedding method (default: tfidf)"
+        default='sbert',
+        help="Embedding method (default: sbert)"
+    )
+    parser.add_argument(
+        "--clusters", "-k",
+        type=int,
+        default=15,
+        help="Number of clusters (default: 15)"
+    )
+    parser.add_argument(
+        "--all-snippets",
+        action="store_true",
+        help="Use all snippets instead of single-behavior only"
     )
     parser.add_argument(
         "--verbose", "-v",
@@ -756,8 +643,11 @@ def main():
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    clusterer = BehaviorSummaryClusterer(args.input, args.output)
-    clusterer.run(embedding_method=args.embedding)
+    clusterer = BehaviorSummaryClustererV2(args.input, args.output, n_clusters=args.clusters)
+    clusterer.run(
+        embedding_method=args.embedding,
+        single_behavior_only=not args.all_snippets
+    )
 
 
 if __name__ == "__main__":

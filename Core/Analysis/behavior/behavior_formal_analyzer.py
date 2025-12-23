@@ -267,6 +267,190 @@ class BehaviorFormalAnalyzer:
 
         logger.info(f"Saved vertical bar chart to {output_path}")
 
+    def plot_combined_distribution(self) -> None:
+        """Create combined figure: behavior distribution + package complexity distribution."""
+        sorted_behaviors = self.top_package_behavior_counts.most_common()
+        behaviors = [self._format_behavior_name(b) for b, _ in sorted_behaviors]
+        counts = [c for _, c in sorted_behaviors]
+
+        # Calculate package complexity (number of behaviors per package)
+        behavior_counts_per_package = [len(behaviors) for behaviors in self.packages.values()]
+        complexity_counter = Counter(behavior_counts_per_package)
+        max_behaviors = max(complexity_counter.keys())
+
+        # Academic color palette
+        bar_color = '#2C3E50'  # Dark blue-gray
+        donut_colors = ['#3498DB', '#E74C3C', '#2ECC71', '#F39C12', '#9B59B6', '#1ABC9C']
+
+        # Create figure with two subplots
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
+
+        # ===== Left: Vertical Bar Chart (Behavior Distribution) =====
+        x_pos = np.arange(len(behaviors))
+        bars = ax1.bar(x_pos, counts, color=bar_color, edgecolor='white', linewidth=0.8, width=0.75)
+
+        # Add value labels
+        for bar, count in zip(bars, counts):
+            ax1.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + max(counts) * 0.015,
+                    f'{count}', ha='center', va='bottom', fontsize=11, fontweight='medium')
+
+        ax1.set_xticks(x_pos)
+        ax1.set_xticklabels(behaviors, rotation=40, ha='right', fontsize=12)
+        ax1.set_ylabel('Number of Packages', fontsize=14, fontweight='bold')
+        ax1.set_title('(a) Behavior Distribution', fontsize=16, fontweight='bold', pad=15)
+        ax1.tick_params(axis='y', labelsize=12)
+        ax1.spines['top'].set_visible(False)
+        ax1.spines['right'].set_visible(False)
+        ax1.spines['left'].set_linewidth(1.2)
+        ax1.spines['bottom'].set_linewidth(1.2)
+        ax1.yaxis.grid(True, linestyle='--', alpha=0.4, linewidth=0.8)
+        ax1.set_axisbelow(True)
+
+        # ===== Right: Package Complexity Distribution (Donut Chart) =====
+        # Group into bins: 1, 2, 3, 4, 5, 6+
+        bin_labels = ['1 behavior', '2 behaviors', '3 behaviors', '4 behaviors', '5 behaviors', '6+ behaviors']
+        bin_counts = []
+
+        for b in range(1, 6):
+            bin_counts.append(complexity_counter.get(b, 0))
+
+        # 6+
+        count_6_plus = sum(complexity_counter.get(i, 0) for i in range(6, max_behaviors + 1))
+        bin_counts.append(count_6_plus)
+
+        # Filter out zero counts
+        non_zero = [(label, count, color) for label, count, color in zip(bin_labels, bin_counts, donut_colors) if count > 0]
+        bin_labels_filtered = [x[0] for x in non_zero]
+        bin_counts_filtered = [x[1] for x in non_zero]
+        colors_filtered = [x[2] for x in non_zero]
+
+        # Draw donut chart
+        wedges, texts, autotexts = ax2.pie(
+            bin_counts_filtered,
+            labels=None,
+            autopct=lambda pct: f'{pct:.1f}%' if pct > 3 else '',
+            colors=colors_filtered,
+            pctdistance=0.78,
+            wedgeprops=dict(width=0.45, edgecolor='white', linewidth=2.5),
+            startangle=90
+        )
+
+        # Style percentage labels
+        for autotext in autotexts:
+            autotext.set_fontsize(12)
+            autotext.set_fontweight('bold')
+            autotext.set_color('white')
+
+        # Add legend
+        legend = ax2.legend(wedges, bin_labels_filtered, title="Behaviors/Package",
+                   loc="center left", bbox_to_anchor=(0.92, 0.5), fontsize=12,
+                   title_fontsize=13, frameon=True, fancybox=True, shadow=False)
+        legend.get_frame().set_edgecolor('#CCCCCC')
+        legend.get_frame().set_linewidth(1.5)
+
+        ax2.set_title('(b) Package Complexity Distribution', fontsize=16, fontweight='bold', pad=15)
+
+        # Add center text with statistics
+        avg_behaviors = np.mean(behavior_counts_per_package)
+        median_behaviors = np.median(behavior_counts_per_package)
+        ax2.text(0, 0, f'Mean: {avg_behaviors:.1f}\nMedian: {median_behaviors:.0f}',
+                ha='center', va='center', fontsize=13, fontweight='bold', color='#2C3E50')
+
+        plt.tight_layout(pad=2.0)
+
+        output_path = self.output_dir / 'behavior_distribution_combined.pdf'
+        fig.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.close()
+
+        logger.info(f"Saved combined distribution plot to {output_path}")
+
+    def plot_combined_distribution_variants(self) -> None:
+        """Generate four color scheme variants for comparison."""
+        sorted_behaviors = self.top_package_behavior_counts.most_common()
+        behaviors = [self._format_behavior_name(b) for b, _ in sorted_behaviors]
+        counts = [c for _, c in sorted_behaviors]
+
+        # Calculate package complexity
+        behavior_counts_per_package = [len(behaviors) for behaviors in self.packages.values()]
+        complexity_counter = Counter(behavior_counts_per_package)
+        max_behaviors = max(complexity_counter.keys())
+
+        # Prepare complexity data
+        bin_labels = ['1 behavior', '2 behaviors', '3 behaviors', '4 behaviors', '5 behaviors', '6+ behaviors']
+        bin_counts = []
+        for b in range(1, 6):
+            bin_counts.append(complexity_counter.get(b, 0))
+        count_6_plus = sum(complexity_counter.get(i, 0) for i in range(6, max_behaviors + 1))
+        bin_counts.append(count_6_plus)
+
+        avg_behaviors = np.mean(behavior_counts_per_package)
+        median_behaviors = np.median(behavior_counts_per_package)
+
+        # Blue gradient color scheme
+        bar_color = '#1A5276'
+        donut_colors = ['#1A5276', '#2874A6', '#3498DB', '#5DADE2', '#85C1E9', '#AED6F1']
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
+
+        # ===== Left: Bar Chart =====
+        x_pos = np.arange(len(behaviors))
+        bars = ax1.bar(x_pos, counts, color=bar_color, edgecolor='white', linewidth=0.8, width=0.75)
+
+        for bar, count in zip(bars, counts):
+            ax1.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + max(counts) * 0.015,
+                    f'{count}', ha='center', va='bottom', fontsize=11, fontweight='medium')
+
+        ax1.set_xticks(x_pos)
+        ax1.set_xticklabels(behaviors, rotation=40, ha='right', fontsize=12)
+        ax1.set_ylabel('Number of Packages', fontsize=14, fontweight='bold')
+        ax1.set_title('(a) Behavior Distribution', fontsize=16, fontweight='bold', pad=15)
+        ax1.tick_params(axis='y', labelsize=12)
+        ax1.spines['top'].set_visible(False)
+        ax1.spines['right'].set_visible(False)
+        ax1.spines['left'].set_linewidth(1.2)
+        ax1.spines['bottom'].set_linewidth(1.2)
+        ax1.yaxis.grid(True, linestyle='--', alpha=0.4, linewidth=0.8)
+        ax1.set_axisbelow(True)
+
+        # ===== Right: Donut Chart =====
+        non_zero = [(label, count, color) for label, count, color in zip(bin_labels, bin_counts, donut_colors) if count > 0]
+        bin_labels_filtered = [x[0] for x in non_zero]
+        bin_counts_filtered = [x[1] for x in non_zero]
+        colors_filtered = [x[2] for x in non_zero]
+
+        wedges, texts, autotexts = ax2.pie(
+            bin_counts_filtered,
+            labels=None,
+            autopct=lambda pct: f'{pct:.1f}%' if pct > 3 else '',
+            colors=colors_filtered,
+            pctdistance=0.78,
+            wedgeprops=dict(width=0.45, edgecolor='white', linewidth=2.5),
+            startangle=90
+        )
+
+        for autotext in autotexts:
+            autotext.set_fontsize(12)
+            autotext.set_fontweight('bold')
+            autotext.set_color('white')
+
+        legend = ax2.legend(wedges, bin_labels_filtered, title="Behaviors/Package",
+                   loc="center left", bbox_to_anchor=(0.92, 0.5), fontsize=12,
+                   title_fontsize=13, frameon=True, fancybox=True, shadow=False)
+        legend.get_frame().set_edgecolor('#CCCCCC')
+        legend.get_frame().set_linewidth(1.5)
+
+        ax2.set_title('(b) Package Complexity Distribution', fontsize=16, fontweight='bold', pad=15)
+        ax2.text(0, 0, f'Mean: {avg_behaviors:.1f}\nMedian: {median_behaviors:.0f}',
+                ha='center', va='center', fontsize=13, fontweight='bold', color=bar_color)
+
+        plt.tight_layout(pad=2.0)
+
+        output_path = self.output_dir / 'behavior_distribution_combined_blue_gradient.pdf'
+        fig.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.close()
+
+        logger.info(f"Saved blue gradient variant to {output_path}")
+
     def plot_cooccurrence_heatmap(self) -> None:
         """Create heatmap of behavior co-occurrence."""
         if self.cooccurrence_matrix is None:
@@ -433,6 +617,8 @@ class BehaviorFormalAnalyzer:
         logger.info("Generating visualizations...")
         self.plot_behavior_distribution()
         self.plot_behavior_distribution_vertical()
+        self.plot_combined_distribution()
+        self.plot_combined_distribution_variants()
         self.plot_cooccurrence_heatmap()
         self.plot_snippet_vs_package_comparison()
         self.plot_behavior_pie_chart()
