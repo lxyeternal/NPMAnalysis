@@ -5,7 +5,7 @@ RQ1: NPM Malware Detection Tool Accuracy Evaluation
 This script evaluates the detection accuracy of multiple NPM malware detection tools:
 - Rule-based: GuardDog, OSSGadget, Genie, Socket.AI
 - Hybrid: Packj (static and trace modes)
-- ML-based: SAP (DT, RF, XGB), MalPacDetector (MLP, NB, SVM)
+- ML-based: SAP (DT, RF, XGB), MalPacDetector (MLP, NB, SVM), Cerebro
 """
 
 import os
@@ -198,6 +198,25 @@ def evaluate_malpacdetector(benign_skip_list):
     return results
 
 
+def evaluate_cerebro():
+    """Evaluate Cerebro from CSV file with prediction and ground_truth columns."""
+    csv_path = os.path.join(RESULTS_DIR, "cerebro", "evaluation_npm_with_label.csv")
+    if not os.path.exists(csv_path):
+        return {}
+
+    df = pd.read_csv(csv_path)
+
+    # prediction: 0=benign, 1=malware
+    # ground_truth: 0=benign, 1=malware
+    tp = len(df[(df['ground_truth'] == 1) & (df['prediction'] == 1)])
+    tn = len(df[(df['ground_truth'] == 0) & (df['prediction'] == 0)])
+    fp = len(df[(df['ground_truth'] == 0) & (df['prediction'] == 1)])
+    fn = len(df[(df['ground_truth'] == 1) & (df['prediction'] == 0)])
+
+    metrics = calculate_metrics(tp, tn, fp, fn)
+    return {"Cerebro": {"tp": tp, "tn": tn, "fp": fp, "fn": fn, **metrics}}
+
+
 def main():
     """Main function to evaluate all tools."""
     benign_skip_list = load_skip_list(BENIGN_SKIP_LIST_PATH)
@@ -219,6 +238,7 @@ def main():
         all_results[display_name] = evaluate_tool(tool_name, tool_func, benign_skip_list, sub_tool)
 
     all_results.update(evaluate_malpacdetector(benign_skip_list))
+    all_results.update(evaluate_cerebro())
 
     # Print summary table
     print("\n" + "=" * 100)
