@@ -13,19 +13,22 @@ from datetime import datetime
 # 定义源目录和目标目录
 MALWARE_SOURCE_DIR = "/home2/wenbo/Documents/NPMAnalysis/Dataset/unzip_malware"
 BENIGN_SOURCE_DIR = "/home2/wenbo/Documents/NPMAnalysis/Dataset/unzip_benign"
-MALWARE_TARGET_DIR = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/packj/result_trace/malware"
-BENIGN_TARGET_DIR = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/packj/result_trace/benign"
+MALWARE_TARGET_DIR = "/home2/wenbo/Documents/NPMAnalysis/Experiment/Results/packj/result_trace/malware-1"
+BENIGN_TARGET_DIR = "/home2/wenbo/Documents/NPMAnalysis/Experiment/Results/packj/result_trace/benign-1"
 DOMAIN_PACKAGE_DIR = "/tmp/domain_package"
 
 # Docker容器配置
 DOCKER_CONTAINER_PREFIX = "packj-dev-"
-NUM_DOCKER_CONTAINERS = 4  # 默认Docker容器数量，可通过命令行参数修改
+NUM_DOCKER_CONTAINERS = 16  # 默认Docker容器数量，可通过命令行参数修改
 DOCKER_IMAGE = "ossillate/packj:latest"
 HOST_PM_UTIL_PATH = "/home2/wenbo/Documents/NPMAnalysis/Tools/packj/packj/audit/pm_util.py"
 CONTAINER_PM_UTIL_PATH = "/home/ubuntu/packj/packj/audit/pm_util.py"
 
-# 错误包列表文件路径
-ERROR_PACKAGES_FILE = "/home2/wenbo/Documents/NPMAnalysis/error_packages_list.txt"
+# 错误包列表文件路径 (datacopy格式: category\tpackage_name\tversion)
+ERROR_PACKAGES_FILE = "/home2/wenbo/Documents/NPMAnalysis/trace_error_packages_list.txt"
+
+# Docker容器内的包目录
+DOCKER_DOMAIN_PACKAGE_DIR = "/tmp/packj/domain_package"
 
 # 创建一个全局锁，用于同步输出
 print_lock = multiprocessing.Lock()
@@ -45,19 +48,176 @@ def load_error_packages():
     返回一个集合，包含所有的 "包名/版本" 字符串
     """
     error_packages = set()
-    
+
     if not os.path.exists(ERROR_PACKAGES_FILE):
         synchronized_print(f"错误：找不到错误包列表文件: {ERROR_PACKAGES_FILE}")
         return error_packages
-    
+
     with open(ERROR_PACKAGES_FILE, 'r') as f:
         for line in f:
             line = line.strip()
             if line and '/' in line:
                 error_packages.add(line)
-    
+
     synchronized_print(f"已加载 {len(error_packages)} 个错误包")
     return error_packages
+
+def load_error_packages_datacopy():
+    """
+    从datacopy格式的错误包列表文件中加载包信息
+    格式: category\tpackage_name\tversion
+    返回一个列表，每个元素为 (category, package_name, version)
+    """
+    packages = []
+
+    if not os.path.exists(ERROR_PACKAGES_FILE):
+        synchronized_print(f"错误：找不到错误包列表文件: {ERROR_PACKAGES_FILE}")
+        return packages
+
+    with open(ERROR_PACKAGES_FILE, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split('\t')
+            if len(parts) >= 3:
+                category, package_name, version = parts[0], parts[1], parts[2]
+                packages.append((category, package_name, version))
+
+    synchronized_print(f"已加载 {len(packages)} 个错误包")
+    return packages
+
+def find_shallowest_package_json(start_path):
+    """
+    在指定目录中查找最浅层的package.json文件
+    返回package.json所在的目录路径
+    """
+    min_depth = float('inf')
+    package_dir = None
+
+    for root, dirs, files in os.walk(start_path):
+        if 'package.json' in files:
+            # 计算相对于起始路径的深度
+            rel_path = os.path.relpath(root, start_path)
+            depth = len(rel_path.split(os.sep)) if rel_path != '.' else 0
+
+            if depth < min_depth:
+                min_depth = depth
+                package_dir = root
+
+    return package_dir
+
+def build_docker_path(category, package_name, version):
+    """
+    构建Docker容器内的包路径
+    将 ## 替换为 / 以支持作用域包
+    并找到最浅层的package.json所在目录
+    """
+    # 替换 ## 为 /
+    host_package_name = package_name.replace('##', '/')
+
+    # 构建宿主机路径 (用于查找package.json)
+    host_base_path = f"/tmp/domain_package/{category}/{host_package_name}/{version}"
+
+    # 查找最浅层的package.json所在目录
+    package_json_dir = find_shallowest_package_json(host_base_path)
+
+    if package_json_dir:
+        # 计算相对于host_base_path的相对路径
+        rel_path = os.path.relpath(package_json_dir, host_base_path)
+        if rel_path == '.':
+            # package.json就在根目录
+            docker_path = f"{DOCKER_DOMAIN_PACKAGE_DIR}/{category}/{host_package_name}/{version}"
+        else:
+            # package.json在子目录中
+            docker_path = f"{DOCKER_DOMAIN_PACKAGE_DIR}/{category}/{host_package_name}/{version}/{rel_path}"
+        synchronized_print(f"找到package.json目录: {package_json_dir} -> Docker路径: {docker_path}")
+        return docker_path
+    else:
+        # 找不到package.json，返回基础路径
+        synchronized_print(f"警告: 在 {host_base_path} 中未找到package.json")
+        docker_path = f"{DOCKER_DOMAIN_PACKAGE_DIR}/{category}/{host_package_name}/{version}"
+        return docker_path
+
+def run_packj_analysis_simple(docker_path, category, package_name, version, docker_container, timeout_seconds=180):
+    """
+    简化版的packj分析函数
+    直接使用Docker路径进行分析
+
+    Args:
+        docker_path: Docker容器内的包路径
+        category: 类别 (unzip_benign 或 unzip_malware)
+        package_name: 包名 (原始格式，用于保存结果)
+        version: 版本
+        docker_container: Docker容器名称
+        timeout_seconds: 超时时间（秒）
+    """
+    # 确定是否为恶意包
+    is_malware = "malware" in category
+
+    # 确定目标目录
+    target_base_dir = MALWARE_TARGET_DIR if is_malware else BENIGN_TARGET_DIR
+
+    # 使用原始包名/版本创建结果目录
+    target_dir = os.path.join(target_base_dir, package_name, version)
+
+    # 检查是否已经分析过
+    result_file = os.path.join(target_dir, "result.txt")
+    if os.path.exists(result_file) and os.path.getsize(result_file) > 0:
+        with open(result_file, 'r') as f:
+            content = f.read()
+            if not content.startswith("ERROR:"):
+                synchronized_print(f"[{docker_container}] 跳过已成功分析的包: {package_name}/{version}")
+                return True
+
+    try:
+        os.makedirs(target_dir, exist_ok=True)
+    except Exception as e:
+        synchronized_print(f"[{docker_container}] 创建结果目录失败: {str(e)}")
+        return False
+
+    # 打印调试信息
+    synchronized_print(f"[{docker_container}] 分析包: {package_name}/{version}")
+    synchronized_print(f"[{docker_container}] Docker路径: {docker_path}")
+
+    # 运行docker命令
+    cmd = f"docker exec -u ubuntu -it {docker_container} python3 /home/ubuntu/packj/main.py audit -t -p local_nodejs:{docker_path}"
+    synchronized_print(f"[{docker_container}] 执行命令: {cmd}")
+
+    try:
+        process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        try:
+            stdout, stderr = process.communicate(timeout=timeout_seconds)
+
+            # 保存结果到文件
+            with open(result_file, 'w') as f:
+                f.write(stdout)
+
+            synchronized_print(f"[{docker_container}] 分析完成: {package_name}/{version}, 结果保存到 {result_file}")
+            synchronized_print("-" * 80)
+            return True
+
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+            # 清理可能残留的进程
+            cleanup_cmd = f"docker exec {docker_container} pkill -f 'python3 /home/ubuntu/packj/main.py'"
+            subprocess.run(cleanup_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            timeout_msg = f"分析超时（{timeout_seconds}秒）"
+            synchronized_print(f"[{docker_container}] {timeout_msg}: {package_name}/{version}")
+
+            with open(result_file, 'w') as f:
+                f.write(f"ERROR: {timeout_msg}")
+
+            synchronized_print("-" * 80)
+            return False
+
+    except Exception as e:
+        synchronized_print(f"[{docker_container}] 分析失败: {package_name}/{version}, 错误: {str(e)}")
+        synchronized_print("-" * 80)
+        return False
 
 def should_analyze_package(package_name, version, error_packages):
     """
@@ -929,6 +1089,88 @@ def parse_arguments():
                         help=f'错误包列表文件路径 (默认: {ERROR_PACKAGES_FILE})')
     return parser.parse_args()
 
+def worker_process_simple(package_list, worker_id, docker_containers, timeout_seconds):
+    """
+    简化版工作进程函数
+
+    Args:
+        package_list: 包列表，每个元素为 (category, package_name, version, docker_path)
+        worker_id: 工作进程ID
+        docker_containers: Docker容器列表
+        timeout_seconds: 超时时间
+    """
+    docker_container = docker_containers[worker_id % len(docker_containers)]
+
+    synchronized_print(f"工作进程 {worker_id} 使用Docker容器 {docker_container} 开始处理 {len(package_list)} 个包")
+    synchronized_print("=" * 80)
+
+    for i, (category, package_name, version, docker_path) in enumerate(package_list):
+        time.sleep(random.uniform(0.1, 0.5))
+        synchronized_print(f"[{docker_container}] 处理包 {i+1}/{len(package_list)}: {package_name}/{version}")
+        run_packj_analysis_simple(docker_path, category, package_name, version, docker_container, timeout_seconds)
+
+    synchronized_print(f"[{docker_container}] 已完成所有 {len(package_list)} 个包的处理")
+    synchronized_print("=" * 80)
+
+def process_packages_simple(packages, use_parallel=False, num_containers=1, timeout_seconds=180):
+    """
+    简化版包处理函数
+    直接使用datacopy格式的包列表
+
+    Args:
+        packages: 包列表，每个元素为 (category, package_name, version)
+        use_parallel: 是否并行处理
+        num_containers: Docker容器数量
+        timeout_seconds: 超时时间
+    """
+    if not packages:
+        synchronized_print("没有找到可处理的包")
+        return
+
+    # 构建Docker路径
+    package_with_paths = []
+    for category, package_name, version in packages:
+        docker_path = build_docker_path(category, package_name, version)
+        package_with_paths.append((category, package_name, version, docker_path))
+
+    synchronized_print(f"准备处理 {len(package_with_paths)} 个包")
+
+    if not use_parallel:
+        # 串行处理
+        docker_container = f"{DOCKER_CONTAINER_PREFIX}1"
+        for category, package_name, version, docker_path in package_with_paths:
+            synchronized_print(f"处理包: {package_name}/{version}")
+            run_packj_analysis_simple(docker_path, category, package_name, version, docker_container, timeout_seconds)
+    else:
+        # 并行处理
+        docker_containers = [f"{DOCKER_CONTAINER_PREFIX}{i+1}" for i in range(num_containers)]
+        synchronized_print(f"使用 {num_containers} 个Docker容器进行并行处理: {', '.join(docker_containers)}")
+
+        # 分配包到各个容器
+        packages_per_process = [[] for _ in range(num_containers)]
+        for i, pkg_info in enumerate(package_with_paths):
+            container_idx = i % num_containers
+            packages_per_process[container_idx].append(pkg_info)
+
+        # 创建并启动多个进程
+        processes = []
+        for i in range(num_containers):
+            if packages_per_process[i]:
+                container_name = docker_containers[i]
+                synchronized_print(f"[{container_name}] 启动工作进程，处理 {len(packages_per_process[i])} 个包")
+                p = multiprocessing.Process(
+                    target=worker_process_simple,
+                    args=(packages_per_process[i], i, docker_containers, timeout_seconds)
+                )
+                processes.append(p)
+                p.start()
+
+        # 等待所有进程完成
+        for p in processes:
+            p.join()
+
+        synchronized_print(f"所有进程已完成处理 {len(package_with_paths)} 个包")
+
 def main():
     """
     主函数
@@ -941,54 +1183,41 @@ def main():
     only_docker_setup = args.only_docker_setup
     timeout_seconds = args.timeout
     error_file = args.error_file
-    
+
     # 更新全局错误包文件路径
     global ERROR_PACKAGES_FILE
     ERROR_PACKAGES_FILE = error_file
-    
+
     # 如果只执行Docker设置，强制使用并行模式
     if only_docker_setup:
         use_parallel = True
-    
+
     # 第一步：设置Docker容器（如果需要）
     if use_parallel and not skip_docker_setup:
         docker_manager = DockerManager(DOCKER_CONTAINER_PREFIX, num_containers)
         docker_manager.setup_containers()
-        
+
         if only_docker_setup:
             synchronized_print(f"\n已完成 {num_containers} 个Docker容器的设置。")
             synchronized_print(f"容器名称: {', '.join([f'{DOCKER_CONTAINER_PREFIX}{i+1}' for i in range(num_containers)])}")
             return  # 如果只执行Docker设置，此处退出
-    
-    # 加载错误包列表
-    error_packages = load_error_packages()
-    if not error_packages:
+
+    # 加载错误包列表 (使用datacopy格式)
+    packages = load_error_packages_datacopy()
+    if not packages:
         synchronized_print("错误：没有找到需要分析的错误包")
         return
-    
+
     # 打印运行模式
     if use_parallel:
         synchronized_print(f"使用并行模式，{num_containers} 个Docker容器，超时时间: {timeout_seconds}秒")
-        synchronized_print(f"将只分析 {len(error_packages)} 个错误包")
     else:
         synchronized_print(f"使用串行模式，单Docker容器，超时时间: {timeout_seconds}秒")
-        synchronized_print(f"将只分析 {len(error_packages)} 个错误包")
-    
-    # 确保domain_package目录存在并有正确的权限
-    os.makedirs(DOMAIN_PACKAGE_DIR, exist_ok=True)
-    
-    # 第二步：处理包 - 使用新的直接处理方法
-    synchronized_print("\n开始处理恶意包中的错误包...")
-    if os.path.exists(MALWARE_SOURCE_DIR):
-        process_error_packages_directly(error_packages, True, use_parallel, num_containers, timeout_seconds)
-    else:
-        synchronized_print(f"目录不存在: {MALWARE_SOURCE_DIR}")
-    
-    synchronized_print("\n开始处理良性包中的错误包...")
-    if os.path.exists(BENIGN_SOURCE_DIR):
-        process_error_packages_directly(error_packages, False, use_parallel, num_containers, timeout_seconds)
-    else:
-        synchronized_print(f"目录不存在: {BENIGN_SOURCE_DIR}")
+    synchronized_print(f"将分析 {len(packages)} 个错误包")
+
+    # 处理所有包
+    synchronized_print("\n开始处理错误包...")
+    process_packages_simple(packages, use_parallel, num_containers, timeout_seconds)
 
 if __name__ == "__main__":
     # 确保目标目录存在

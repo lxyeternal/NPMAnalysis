@@ -12,7 +12,7 @@ from pathlib import Path
 # 定义路径常量
 DATASET_BASE_DIR = "/home2/wenbo/Documents/NPMAnalysis/Dataset"
 TARGET_BASE_DIR = "/tmp/domain_package"
-ERROR_PACKAGES_FILE = "/home2/wenbo/Documents/NPMAnalysis/error_packages_list.txt"
+ERROR_PACKAGES_FILE = "/home2/wenbo/Documents/NPMAnalysis/trace_error_packages_list.txt"
 
 def read_error_packages(file_path):
     """
