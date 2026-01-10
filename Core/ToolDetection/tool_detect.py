@@ -12,7 +12,7 @@ import time
 
 # Configuration
 NUM_PROCESSES = 24
-TOOL_TIMEOUT = 300  # seconds
+TOOL_TIMEOUT = 3000  # seconds
 
 # Paths
 DATASET_DIR = "/home2/wenbo/Documents/NPMAnalysis/Dataset"
