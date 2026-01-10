@@ -66,10 +66,10 @@ def extract_package_info(file_path):
 def main():
     """主函数，分析guarddog恶意软件检测结果"""
     # 输出文件路径
-    output_file = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/false_negative/guarddog_malware_analysis.txt"
+    output_file = "guarddog_malware_analysis.txt"
     
     # guarddog恶意样本文件夹路径
-    malware_folder = "/home2/wenbo/Documents/NPMAnalysis/Codes/tool_detect/tool_output/guarddog/malware"
+    malware_folder = "/home2/wenbo/Documents/NPMAnalysis/Experiment/Results/guarddog/malware"
     
     # 用于存储检测文件及其检测类型
     all_files = []
