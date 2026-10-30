@@ -1,0 +1,505 @@
+{
+  "package_name": "serverless-plugin-kmsvariables",
+  "package_version": "1.3.0",
+  "label": "benign",
+  "detection_time": "2026-05-26T20:00:25.390430",
+  "status": "success",
+  "selected_files_count": 2,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js"
+  ],
+  "is_malicious": false,
+  "total_files": 2,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/serverless-plugin-kmsvariables/1.3.0/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/serverless-plugin-kmsvariables/1.3.0/package/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "'use strict';\n\n/**\n * Action: VariablesList, VariablesSet\n * - List all variables defined in your project (Decrypted with KMS).\n * - Set variable in your project (Optional: Encrypted with KMS).\n */\n\nmodule.exports = function(S) {\n\n  const BbPromise  = require('bluebird'),\n    chalk      = require('chalk'),\n    _          = require('lodash'),\n    SError     = require(S.getServerlessPath('Error')),\n    SCli       = require(S.getServerlessPath('utils/cli'));\n\n  class VariablesKMS extends S.classes.Plugin {\n    static getName() {\n      return this.name;\n    }\n\n    /**\n     * @returns {Promise} upon completion of all registrations\n     */\n    registerActions() {\n      S.addAction(this.variablesSet.bind(this), {\n        handler:       'variablesSet',\n        description:   'Defines a new variable that can be used in any of your project\\'s configuration files. Usage: serverless variables set',\n        context:       'variables',\n        contextAction: 'set',\n        options:       [\n          {\n            option:      'type',\n            shortcut:    't',\n            description: 'variable type (common, stage or region)'\n          },\n          {\n            option:      'region',\n            shortcut:    'r',\n            description: 'region you want to set the variable in'\n          },\n          {\n            option:      'stage',\n            shortcut:    's',\n            description: 'stage you want to set the variable in'\n          },\n          {\n            option:      'key',\n            shortcut:    'k',\n            description: 'the key of the variable you want to set'\n          },\n          {\n            option:      'value',\n            shortcut:    'v',\n            description: 'the value of the variable you want to set'\n          },\n          {\n            option:      'encrypt',\n            shortcut:    'e',\n            description: 'should value be encrypted'\n          }\n        ]\n      });\n      S.addAction(this.variablesList.bind(this), {\n        handler:       'variablesList',\n        description:   'List all variables defined in your project. Usage: serverless variables list',\n        context:       'variables',\n        contextAction: 'list',\n        options:       [\n          {\n            option:      'region',\n            shortcut:    'r',\n            description: 'region you want to list variables from'\n          },\n          {\n            option:      'stage',\n            shortcut:    's',\n            description: 'stage you want to list variables from'\n          },\n          {\n            option:      'all',\n            shortcut:    'a',\n            description: 'list all available variables'\n          },\n          {\n            option:      'decrypt',\n            shortcut:    'd',\n            description: 'decrypt encrypted variables'\n          }\n        ]\n      });\n      return BbPromise.resolve();\n    }\n\n    /**\n     * @returns {Promise} upon completion of all registrations\n     */\n    registerHooks() {\n        S.addHook(this._variableReplace.bind(this), {\n            action: 'functionDeploy',\n            event:  'pre'\n        });\n        S.addHook(this._variableReplace.bind(this), {\n            action: 'functionRun',\n            event:  'pre'\n        });\n        return BbPromise.resolve();\n    }\n\n    /**\n     * Decrypt Variables as they are\n     * packaged into the runtime/build\n     */\n    _variableReplace(evt) {\n      let _this = this;\n      _this.evt    = evt;\n      _this.aws = S.getProvider();\n\n      if (!_this.evt.options.stage) {\n        return BbPromise.reject(new SError('Missing stage'));\n      }\n\n      const decrypt = function(regionOrStageOrProject, variable, value) {\n        return _this._decrypt(value, true)\n          .then(decrypted => [regionOrStageOrProject, variable, decrypted]);\n      };\n\n      return new BbPromise(function(resolve, reject) {\n          let listCommonVariablesHelper = (project) => {\n            let promises = [];\n            let variables = project.getVariables();\n            for (var variable in variables) {\n              if (!_.startsWith(variable, '_') && _.has(variables, variable)) {\n                if(typeof variables[variable] === 'object') {\n                  if('value' in variables[variable]) {\n                    if('encrypted' in variables[variable] && variables[variable].encrypted === 'true') {\n                      promises.push(decrypt(project, variable, variables[variable].value));\n                    } else {\n                      region.variables[variable] = variables[variable].value;\n                    }\n                  }\n                }\n              }\n            }\n            return promises;\n          };\n\n          let listRegionVariableHelper = (region) => {\n            let promises = [];\n            let variables = region.getVariables();\n            for (var variable in variables) {\n              if (!_.startsWith(variable, '_') && _.has(variables, variable)) {\n                if(typeof variables[variable] === 'object') {\n                  if('value' in variables[variable]) {\n                    if('encrypted' in variables[variable] && variables[variable].encrypted === 'true') {\n                      promises.push(decrypt(region, variable, variables[variable].value));\n                    } else {\n                      region.variables[variable] = variables[variable].value;\n                    }\n                  }\n                }\n              }\n            }\n            return promises;\n          };\n\n          let listStageVariableHelper = (stage) => {\n            let promises = [];\n            let variables = stage.getVariables();\n            for (var variable in variables) {\n              if (!_.startsWith(variable, '_') && _.has(variables, variable)) {\n                if(typeof variables[variable] === 'object') {\n                  if('value' in variables[variable]) {\n                    if('encrypted' in variables[variable] && variables[variable].encrypted === 'true') {\n                      promises.push(decrypt(stage, variable, variables[variable].value));\n                    } else {\n                      stage.variables[variable] = variables[variable].value;\n                    }\n                  }\n                }\n              }\n            }\n            return promises;\n          };\n\n          let promises = [];\n          if (!evt.options.runDeployed) {\n            promises = promises.concat(listCommonVariablesHelper(S.getProject()));\n            if(evt.options.stage) {\n              let stage = S.getProject().getStage(evt.options.stage);\n              promises = promises.concat(listStageVariableHelper(stage));\n              if(evt.options.region) {\n                let region = stage.getRegion(evt.options.region);\n                promises = promises.concat(listRegionVariableHelper(region));\n              } else {\n                S.getProject().getAllRegions(stage.getName()).forEach(function (region) {\n                    promises = promises.concat(listRegionVariableHelper(region));\n                });\n              }\n            } else {\n              S.getProject().getAllStages().forEach(stage => {\n                promises = promises.concat(listStageVariableHelper(stage));\n                S.getProject().getAllRegions(stage.getName()).forEach(function (region) {\n                  promises = promises.concat(listRegionVariableHelper(region));\n                });\n              });\n            }\n          }\n          BbPromise.mapSeries(promises, function(val) {\n            // StageOrRegion, key, value = val\n            val[0].variables[val[1]] = val[2];\n          }).then(function() {\n            resolve(evt);\n          });\n      });\n    }\n\n    /**\n     * Turn key, value into string.\n     * Decrypt values as needed.\n     */\n    _variableSetToString(key, value, spacing) {\n      let _this = this;\n      return new BbPromise(function(resolve) {\n        let decrypt = false;\n        if(typeof value === 'object') {  \n          if(!_this.evt.options.decrypt){\n            value = '*******';\n          } else if('value' in value) { \n            if('encrypted' in value && value.encrypted === 'true') {\n              decrypt = true;\n              value = value.value;\n            }\n          }\n        }\n        _this._decrypt(value, decrypt).then(function(val) { resolve(chalk.green(spacing + chalk.bold(key) + ' = ' + val));});\n      });\n    }\n\n    /**\n     * Encrypt value if needed\n     */\n    _encrypt(value, encrypt) {\n      let _this = this;\n      return new BbPromise(function(resolve, reject) {\n        if(!encrypt) {\n          SCli.log('Not encrypting variable');\n          resolve(value);\n        } else {\n          SCli.log('Calling AWS KMS to encrypt variable');\n          let key_arn = _this._getKMSID();\n          let key_region = key_arn.split(':')[3];\n          let params = {KeyId: key_arn, Plaintext: value};\n          _this.aws.request('KMS', 'encrypt', params, _this.evt.options.stage, key_region)\n            .catch(function(err) {\n              reject(err);\n            })\n            .then(function(data) {\n              if('CiphertextBlob' in data) {\n                resolve({ 'encrypted': 'true', 'value': data.CiphertextBlob.toString('base64')});\n              } else {\n                reject('Encrypted value missing in result from AWS')\n              }\n            });\n        }\n      });\n    }\n\n    /**\n     * Decrypt value if needed\n     */\n    _decrypt(value, decrypt) {\n      let _this = this;\n      return new BbPromise(function(resolve, reject) {\n        if(!decrypt) {\n          resolve(value);\n        } else {\n          let key_arn = _this._getKMSID();\n          let key_region = key_arn.split(':')[3];\n          let params = {CiphertextBlob: new Buffer(value, 'base64')};\n          _this.aws.request('KMS', 'decrypt', params, _this.evt.options.stage, key_region)\n            .catch(function(err) {\n              reject(err);\n            })\n            .then(function(data) {\n              resolve(data.Plaintext.toString('ascii'));\n            });\n        }\n      });\n    }\n\n    /**\n     * Get the KMS Key ARN from project\n     */\n    _getKMSID() {\n      let Project = S.getProject();\n      if('custom' in Project && 'kmsVariables' in Project.custom && 'key_arn' in Project.custom.kmsVariables) {\n        return Project.custom.kmsVariables.key_arn\n      }\n      return;\n    }\n\n    /**\n     * Action\n     */\n    variablesSet(evt) {\n      let _this    = this;\n      _this.evt    = evt;\n\n      return _this._promptSet()\n          .bind(_this)\n          .then(_this._validateAndPrepare)\n          .then(_this._setVariable)\n          .then(function() {\n            SCli.log('Successfully set variable: ' + _this.evt.options.key);\n            return _this.evt;\n          });\n    }\n\n    /**\n     * Prompt key, value, stage and region\n     */\n    _promptSet() {\n      let _this = this;\n\n      if (!S.config.interactive) return BbPromise.resolve();\n\n      return BbPromise.try(function() {\n\n            // Skip if key is provided already\n            if (_this.evt.options.key) return;\n\n            let prompts = {\n              properties: {}\n            };\n\n            prompts.properties.key = {\n              description: 'Enter variable key to set a value to: '.yellow,\n              required:    true\n            };\n\n            return _this.cliPromptInput(prompts, { key: _this.evt.options.key })\n                .then(function(answers) {\n                  _this.evt.options.key = answers.key;\n                });\n          })\n          .then(function() {\n\n            // Skip if value is provided already\n            if (_this.evt.options.value) return;\n\n            let prompts = {\n              properties: {}\n            };\n\n            prompts.properties.value = {\n              description: 'Enter variable value to set a value to: '.yellow,\n              required:    true\n            };\n\n            return _this.cliPromptInput(prompts, { value: _this.evt.options.value })\n                .then(function(answers) {\n                  _this.evt.options.value = answers.value;\n                });\n          })\n          .then(function() {\n            // Allow to dismiss region to set stage variables\n            const selection = [\n                             {key:\"1) \", value:\"common\", label:\"Common\"},\n                             {key:\"2) \", value:\"stage\", label:\"Stage\"},\n                             {key:\"3) \", value:\"region\", label:\"Region\"}\n                            ];\n            if (_.indexOf(['common','stage','region'], _this.evt.options.type) !== -1) {\n              return BbPromise.resolve();\n            }\n            return _this.cliPromptSelect('Select variable type: ', selection, false)\n            .spread(function(selectType) {\n              _this.evt.options.type = selectType.value;\n              return BbPromise.resolve();\n            });\n          })\n          .then(function() {\n            if (_this.evt.options.type === 'common') {\n              return BbPromise.resolve();\n            }\n            return _this.cliPromptSelectStage('Select a stage to set your variable in: ', _this.evt.options.stage, false)\n                .then(stage => {\n                  _this.evt.options.stage = stage;\n                })\n          })\n          .then(function() {\n            if (_this.evt.options.type !== \"region\") {\n              return BbPromise.resolve();\n            }\n            return _this.cliPromptSelectRegion('Select a region to set variable in: ', false, true, _this.evt.options.region, _this.evt.options.stage)\n                .then(region => {\n                  _this.evt.options.region = region;\n                });\n          });\n    }\n\n    /**\n     * Set the variable and save it\n     */\n    _setVariable() {\n      let _this  = this,\n            type  = this.evt.options.type,\n            stage  = this.evt.options.stage,\n            region = this.evt.options.region,\n            project = S.getProject();\n      return new BbPromise(function(resolve) {\n        \n        let setVariableHelper = (region) => {\n\n          let v = {};\n          v[_this.evt.options.key] = _this.evt.options.value;\n\n          region.addVariables(v);\n          region.save();\n        };\n\n        \n        _this._encrypt(_this.evt.options.value, _this.evt.options.encrypt).then(function(value) {\n          let v = {};\n          v[_this.evt.options.key] = value;\n          switch (type) {\n            case 'common':\n              project.addVariables(v);\n              project.save();\n              break;\n            case 'stage':\n              project.getStage(stage).addVariables(v);\n              project.getStage(stage).save();\n              break;\n            case 'region':\n              S.getProject().getRegion(stage, region).addVariables(v);\n              S.getProject().getRegion(stage, region).save();\n              break;\n          }\n          return resolve();\n        });\n      });\n    }\n\n    /**\n     * Action\n     */\n    variablesList(evt) {\n      let _this    = this;\n      _this.evt    = evt;\n\n      return _this._promptList()\n          .bind(_this)\n          .then(_this._validateAndPrepare)\n          .then(_this._listVariables)\n          .then(function() {\n            return _this.evt;\n          });\n    }\n\n    /**\n     * Prompt key, value, stage and region\n     */\n    _promptList() {\n      let _this = this;\n      return BbPromise.resolve();\n      if (!S.config.interactive || _this.evt.options.all) return BbPromise.resolve();\n\n      return BbPromise.try(function() {\n          return _this.cliPromptSelectStage('Select a stage: ', _this.evt.options.stage, false)\n                .then(stage => {\n                  _this.evt.options.stage = stage;\n                });\n          })\n          .then(function() {\n            return _this.cliPromptSelectRegion('Select a region: ', false, true, _this.evt.options.region, _this.evt.options.stage)\n                .then(region => {\n                  _this.evt.options.region = region;\n                });\n          });\n    }\n\n    /**\n     * Validate all data from event, interactive CLI or non interactive CLI\n     * and prepare data\n     */\n    _validateAndPrepare() {\n      let _this = this;\n      _this.aws = S.getProvider();\n\n      // non interactive validation\n      if (!S.config.interactive) {\n        // Check Params\n        const paramsOk = ((_this.evt.options.type || _this.evt.options.key || _this.evt.options.value || _this.evt.options.stage || _this.evt.options.region)||\n                         (_this.evt.options.type === 'common' || _this.evt.options.type === 'stage' || _this.evt.options.type === 'region'));\n\n        if (!paramsOk) {\n          return BbPromise.reject(new SError('Wrong parameter combination or missing key/value/type/stage/region. See --help.'));\n        }\n      }\n\n      if (_this.evt.options.type && !(_this.evt.options.type === 'common' || _this.evt.options.type === 'stage' || _this.evt.options.type === 'region')) {\n        return BbPromise.reject(new SError('Variable type ' + _this.evt.options.type + ' not supported'));\n      }\n\n      // validate stage: make sure stage exists in project\n      if (_this.evt.options.stage && !S.getProject().validateStageExists(_this.evt.options.stage)) {\n        return BbPromise.reject(new SError('Stage ' + _this.evt.options.stage + ' does not exist in your project'));\n      }\n\n      // validate region: make sure region exists in stage\n      if (_this.evt.options.stage && _this.evt.options.region && !S.getProject().validateRegionExists(_this.evt.options.stage, _this.evt.options.region)) {\n        return BbPromise.reject(new SError('Region \"' + _this.evt.options.region + '\" does not exist in stage \"' + _this.evt.options.stage + '\"'));\n      }\n\n      return BbPromise.try(function() {\n          return _this.cliPromptSelectStage('Select a stage: ', _this.evt.options.stage, false)\n                .then(stage => {\n                  _this.evt.options.stage = stage;\n                });\n          })\n          .then(function() {\n            if (_this.evt.options.type !== 'region') {\n              return;\n            }\n            return _this.cliPromptSelectRegion('Select a region: ', false, true, _this.evt.options.region, _this.evt.options.stage)\n                .then(region => {\n                  _this.evt.options.region = region;\n                });\n          });\n    }\n\n    /**\n     * Set the variable and save it\n     */\n    _listVariables() {\n      let _this  = this,\n          stage  = this.evt.options.stage,\n          region = this.evt.options.region,\n          all    = this.evt.options.all;\n\n      let listVariableHelper = (variables, spacing) => {\n        let promises = [];\n        for(var variable in variables) {\n          if (!_.startsWith(variable, '_') && _.has(variables, variable)) {\n            promises.push(this._variableSetToString(variable, variables[variable], spacing));\n          }\n        }\n        return promises;\n      };\n\n\n      let stages = [];\n      if(stage && stage != 'all') {\n        stages = [S.getProject().getStage(stage)];   \n      } else {\n        stages = S.getProject().getAllStages();\n      }\n      if (region && region != 'all') {\n          stages = stages.filter(function(stage) {\n            return typeof stage.getRegion(region) !== \"undefined\";\n          });\n      }\n\n      if(stages.length > 0) {\n        let data = [chalk.underline('common:')];\n        data = data.concat(listVariableHelper(S.getProject().getVariables(),''));\n        \n\n        stages.forEach(stage => {\n          let stageName = stage.getName();\n          \n          let stageRegions = S.getProject().getAllRegions(stageName);\n          if (region && region != 'all') {\n            stageRegions = stageRegions.filter(function(stageRegion) { return region == stageRegion.getName();})\n          }\n          data.push('    ' + chalk.underline(stageName) + ':');\n          data = data.concat(listVariableHelper(stage.getVariables(), '    '));\n\n          stageRegions.forEach(function (region) {\n            data.push('        ' + chalk.underline(region.getName()) + ':');\n             data = data.concat(listVariableHelper(region.getVariables(), '        '));\n          });\n        });\n\n        BbPromise.mapSeries(data, function(val) { return val; }).then(\n          function(val) {\n            val.forEach(function(val) {\n              SCli.log(val);\n            });\n        });\n      } else {\n        SCli.log('No matching stages/regions')\n      }\n    }\n  }\n  return( VariablesKMS );\n};",
+          "is_malicious": false,
+          "malice_score": 0.4339376986026764,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code accesses and modifies project variables using file operations to save changes, and interacts with AWS KMS cryptographic APIs to encrypt and decrypt variable values. It reads variables from project, stage, and region scopes, decrypts encrypted values using AWS KMS decrypt requests, and encrypts new variable values before saving them. This enables secure storage and retrieval of sensitive configuration variables, facilitating secure management of secrets within the project.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a plugin module designed to securely manage project variables by encrypting and decrypting them using AWS KMS. It does not hard-code secrets or embed them in plaintext within the source code or configuration files. Instead, it explicitly uses AWS KMS APIs to encrypt variable values before saving and decrypt them when reading, which is a best practice for secret management. The code interacts with project, stage, and region scopes to store and retrieve variables, and includes user prompts for setting variables. There is no evidence of obfuscation, data exfiltration, or unauthorized system manipulation. The known malicious patterns primarily involve hard-coded secrets or embedding secrets in environment variables or build artifacts, which is not present here. The use of AWS KMS APIs is legitimate and expected for secure secret handling. Therefore, this code is considered benign with very low confidence of maliciousness.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20240824_195356_846294_snippet_4",
+              "source_package": "N/A (General IaC Security Guidance) (N/A)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20240824_195356_846294/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4454229176044464,
+              "code_similarity": 0.3756698966026306,
+              "behavior_similarity": 0.5151759386062622,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "variable \"aws_secret_key\" {\n  default = \"AKIAIOSFODNN7EXAMPLE\"\n}",
+                "code_behavior": "At deployment/runtime, the code hard-codes sensitive credentials (AWS secret key) directly in the IaC file, causing the secret to be stored in plaintext and risking credential exposure through source control or logs.",
+                "malice_analysis": {
+                  "why_suspicious": "Hard-coded secrets are easily leaked via source control, code reviews, or logs, enabling attackers to obtain credentials and gain unauthorized access to cloud resources.",
+                  "violated_expectations": "Secrets should be managed via secure vaults, environment variables, or secret management tools; hard-coding secrets in code is a critical security violation.",
+                  "similar_legitimate_use": "Rarely legitimate; may occur in isolated, short-lived test environments, but should be avoided and never used in production.",
+                  "key_indicators": [
+                    "Presence of secret keys, passwords, or API tokens as default values in code",
+                    "No reference to secret management tools or secure storage",
+                    "Sensitive variable names (e.g., 'secret', 'key', 'password') with hard-coded values"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "deployment/runtime",
+                  "file_location": "Terraform/CloudFormation/ARM templates or scripts (e.g., variable assignment)",
+                  "required_permissions": [
+                    "environment_vars",
+                    "cloud API"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "N/A (General IaC Security Guidance)",
+                  "package_manager": "N/A",
+                  "package_versions": "N/A",
+                  "why_malicious": "This article does not describe a specific malicious package, but highlights common Infrastructure-as-Code (IaC) misconfigurations that can introduce critical security risks and attack vectors if present in IaC codebases. These misconfigurations, if present, can be exploited by attackers to gain unauthorized access, exfiltrate data, or compromise cloud environments."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Open ports (e.g., SSH) are exposed to the internet, allowing attackers to scan and attempt brute-force attacks.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Potential unauthorized server access"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Excessive permissions or public storage buckets allow attackers to access sensitive data.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Data exfiltration or leakage"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Lack of encryption on storage resources increases impact of data compromise.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Unencrypted data exposure"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Hard-coded secrets in IaC files are discovered and used by attackers to access cloud resources.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Full compromise of cloud environment"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "IaC files with open ports to 0.0.0.0/0 in security group or firewall rules",
+                    "Publicly accessible storage buckets (e.g., S3 buckets with acl = \"public-read\")",
+                    "Lack of server-side encryption configuration for sensitive storage resources",
+                    "Presence of hard-coded secrets, credentials, or API keys in IaC code"
+                  ],
+                  "file_indicators": [
+                    "security group ingress rules with cidr_blocks = [\"0.0.0.0/0\"]",
+                    "S3 bucket resources with acl = \"public-read\"",
+                    "Absence of server_side_encryption_configuration block in storage resource definitions",
+                    "Variables or parameters named 'secret', 'key', 'password' with default values in code"
+                  ],
+                  "network_indicators": [
+                    "Unrestricted inbound access on sensitive ports (e.g., 22, 3389) from any IP address",
+                    "Publicly accessible storage endpoints (e.g., S3 bucket URLs with public-read ACL)"
+                  ],
+                  "how_to_detect": "Scan IaC files for open ports to 0.0.0.0/0, public access controls (e.g., acl = \"public-read\"), missing encryption settings (absence of server_side_encryption_configuration), and hard-coded secrets or credentials. Use automated tools like KICS, Checkov, or tfsec to identify these misconfigurations before deployment. Implement drift detection to monitor for changes in production that bypass IaC pipelines. Review code for sensitive variable names with default values and ensure all sensitive resources have encryption enabled."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104230_967323_snippet_1",
+              "source_package": "N/A (multiple incidents, not a single package) (GitHub, npm, PyPI, Travis CI, CircleCI)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104230_967323/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.43973955512046814,
+              "code_similarity": 0.33693748712539673,
+              "behavior_similarity": 0.5425416231155396,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "export AWS_SECRET_ACCESS_KEY=AKIA...; export DB_PASSWORD=supersecret; # or hardcoded in source code",
+                "code_behavior": "At runtime or during CI/CD pipeline execution, the code loads sensitive secrets (such as API keys, tokens, or passwords) from environment variables or hardcoded values in configuration files or source code, making these secrets accessible to anyone with repository or pipeline access, which can result in credential theft and unauthorized access.",
+                "malice_analysis": {
+                  "why_suspicious": "Secrets such as API keys, access tokens, and passwords are stored in plaintext within code, configuration files, or environment variables, making them easily discoverable by attackers scanning repositories or CI/CD logs.",
+                  "violated_expectations": "Best practices require secrets to be managed securely using dedicated secret management tools or encrypted storage, and never to be stored in plaintext or committed to code repositories.",
+                  "similar_legitimate_use": "Developers may temporarily store secrets in local files for testing, but these should be excluded from version control and never present in shared or production repositories.",
+                  "key_indicators": [
+                    "Presence of API keys, tokens, or passwords in code, configuration files, or environment variables",
+                    "Secrets referenced in CI/CD configuration files (e.g., .travis.yml, .circleci/config.yml)",
+                    "Secrets appearing in commit history, code diffs, or pipeline logs"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime or during CI/CD pipeline execution",
+                  "file_location": "Environment variables, configuration files, or code repositories (e.g., .env, config.yml, source code)",
+                  "required_permissions": [
+                    "environment_vars",
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "N/A (multiple incidents, not a single package)",
+                  "package_manager": "GitHub, npm, PyPI, Travis CI, CircleCI",
+                  "package_versions": "N/A (applies to all versions where secrets are exposed)",
+                  "why_malicious": "The report details a recurring threat pattern where attackers exploit exposed secrets (such as API tokens, access keys, and credentials) in code repositories and CI/CD platforms to gain unauthorized access to sensitive systems, data, and infrastructure. Additionally, attackers inject backdoors into forked open-source projects, enabling supply chain compromise and further exfiltration of secrets from downstream users."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Secrets (tokens, keys, credentials) are accidentally committed to public or private code repositories or stored insecurely in CI/CD environment variables.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attackers scan repositories and discover exposed secrets."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attackers use automated tools to rapidly detect and harvest exposed secrets (sometimes within seconds of exposure).",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attackers gain unauthorized access to sensitive systems, cloud resources, or third-party services."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attackers inject malicious code (backdoors) into forked or cloned open-source repositories to further compromise downstream users.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malicious code exfiltrates additional secrets or enables further attacks on supply chain consumers."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Stolen secrets are used to access production systems, exfiltrate data, or move laterally within victim organizations.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Data breaches, supply chain compromise, and further exploitation."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Detection of API keys, tokens, or passwords present in code, configuration files, or environment variables",
+                    "Unusual or unsolicited outbound network requests from build or runtime environments, especially those containing sensitive data",
+                    "Rapid access or cloning of repositories following secret exposure events",
+                    "Unexpected modifications, forks, or pull requests to popular open-source projects containing new or altered network communication code"
+                  ],
+                  "file_indicators": [
+                    ".env, config.yml, settings.py, credentials.json, or similar files containing secrets in plaintext",
+                    "Secrets present in commit history, code diffs, or CI/CD pipeline logs",
+                    "Malicious code or network request logic present in forked repositories but absent from the upstream source"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP or HTTPS requests to unknown or attacker-controlled domains (e.g., webhook.site, pastebin, custom C2 servers)",
+                    "API calls to cloud providers or third-party services using exposed or compromised tokens"
+                  ],
+                  "how_to_detect": "Continuously scan all code repositories (public and private) and CI/CD configurations for exposed secrets using automated secret detection tools. Monitor build and runtime environments for unexpected outbound network requests, especially those containing sensitive data or targeting unrecognized domains. Alert on the presence of secrets in code, configuration files, commit history, or logs, and on suspicious modifications or forks of open-source projects that introduce new network communication code. Integrate secret scanning and anomaly detection into CI/CD pipelines and enforce strict secret management best practices."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104206_970321_snippet_2",
+              "source_package": " ()",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104206_970321/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4241994023323059,
+              "code_similarity": 0.32333123683929443,
+              "behavior_similarity": 0.5250675678253174,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "ENV AWS_SECRET_ACCESS_KEY=abcd1234efgh5678ijkl9012mnop3456qrst7890",
+                "code_behavior": "During package build or image creation, the code embeds secrets as environment variables in distributed artifacts, allowing anyone who downloads the package or image to extract the credentials.",
+                "malice_analysis": {
+                  "why_suspicious": "Embedding secrets in distributed artifacts exposes them to all downstream users, violating the principle of least privilege and enabling credential theft at scale.",
+                  "violated_expectations": "Normal behavior is to inject secrets at runtime via secure channels or secrets managers, not to include them in build-time artifacts or public distributions.",
+                  "similar_legitimate_use": "There is no legitimate use case for distributing real secrets in public artifacts; only dummy or placeholder values should ever appear.",
+                  "key_indicators": [
+                    "Secrets present in Dockerfile ENV or ARG instructions",
+                    "Credentials embedded in package.json, setup.py, or other manifest files",
+                    "High-entropy values assigned to environment variables in build scripts"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "package build/distribution",
+                  "file_location": "package manager artifacts (npm, PyPI, container images)",
+                  "required_permissions": [
+                    "filesystem",
+                    "package publish access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "",
+                  "package_manager": "",
+                  "package_versions": "",
+                  "why_malicious": "This article does not describe a specific malicious package, but rather outlines the risks and attack vectors associated with secrets exposure in code repositories, cloud storage, SaaS, package managers, and self-managed public services. The macro-level reasoning is that secrets (API keys, tokens, credentials) are often inadvertently exposed, which attackers can exploit to gain unauthorized access to sensitive systems and data."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Developer accidentally commits secrets to source code or configuration files.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Secrets are stored in public or accessible locations."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Secrets are distributed via package managers or container images.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Secrets become accessible to anyone downloading the package or image."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker scans public repositories, packages, or images for exposed secrets.",
+                    "implemented_by": [],
+                    "leads_to": "Attacker obtains valid credentials."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Attacker uses stolen secrets to access cloud services, APIs, or internal systems.",
+                    "implemented_by": [],
+                    "leads_to": "Data breach, service compromise, or further lateral movement."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Presence of high-entropy strings resembling credentials in code or config files",
+                    "Secrets embedded in Dockerfile ENV or package manifest files",
+                    "Secrets committed to version control history (including git history)",
+                    "Secrets present in distributed artifacts (npm, PyPI, container images)"
+                  ],
+                  "file_indicators": [
+                    ".env",
+                    "config.ini",
+                    "credentials",
+                    "Dockerfile with ENV or ARG containing secrets",
+                    "setup.py, package.json, or other manifest files with embedded credentials"
+                  ],
+                  "network_indicators": [
+                    "Unusual or unauthorized access patterns to cloud APIs using exposed credentials",
+                    "Automated scanning or enumeration of public repositories for secrets (e.g., via GitHub search or public container registries)"
+                  ],
+                  "how_to_detect": "Integrate automated secrets scanning tools into CI/CD pipelines to detect high-entropy strings, known credential patterns, and secrets in code, configuration files, and package artifacts. Regularly audit repository history and distributed packages for embedded secrets. Monitor for unusual or unauthorized access to cloud APIs and services using credentials that may have been exposed. Implement alerts for the use of credentials found in public sources."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205532_875596_snippet_4",
+              "source_package": "Stratus Red Team (GCP attack simulation modules) (gcloud CLI / Stratus Red Team automation)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205532_875596/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4169691205024719,
+              "code_similarity": 0.3339591920375824,
+              "behavior_similarity": 0.49997907876968384,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "{\n \"protoPayload\": {\n   \"serviceName\": \"compute.googleapis.com\",\n   \"methodName\": \"v1.compute.projects.setCommonInstanceMetadata\",\n   \"resourceName\": \"projects/<REDACTED>\",\n    \"metadata\": {\n     \"@type\": \"type.googleapis.com/google.cloud.audit.GceProjectAuditMetadata\",\n     \"projectMetadataDelta\": {\n       \"modifiedMetadataKeys\": [\n         \"ssh-keys\"\n       ]\n     }\n   }\n }\n}",
+                "code_behavior": "At runtime, the code modifies project-level metadata via the Google Cloud API to add or change SSH keys, propagating access to all VM instances in the project and enabling persistent or lateral access for the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "Adding SSH keys at the project metadata level grants access to all VMs, which is a powerful persistence and lateral movement technique often abused by attackers.",
+                  "violated_expectations": "SSH keys should be managed per-instance or through tightly controlled automation, not injected at the project level without oversight.",
+                  "similar_legitimate_use": "Bulk access for DevOps teams or emergency access scenarios, though such actions are rare and should be well-documented.",
+                  "key_indicators": [
+                    "Modification of 'ssh-keys' in project-level metadata",
+                    "Project metadata changes performed from unusual IP addresses or by non-administrative users",
+                    "Audit log entries for setCommonInstanceMetadata with 'ssh-keys' in modifiedMetadataKeys"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (manual or automated via CLI/tooling)",
+                  "file_location": "gcloud CLI / Stratus Red Team automation",
+                  "required_permissions": [
+                    "compute.projectMetadataEditor",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Stratus Red Team (GCP attack simulation modules)",
+                  "package_manager": "gcloud CLI / Stratus Red Team automation",
+                  "package_versions": "N/A (applies to attack techniques, not a specific versioned package)",
+                  "why_malicious": "The described modules and commands simulate or automate attacker behaviors in Google Cloud environments, including unauthorized service account key creation, GPU-based VM creation for cryptomining, exfiltration of data via Cloud SQL, SSH key injection for persistence, and privileged service account creation. These actions, if performed by an attacker, enable persistence, privilege escalation, resource hijacking, credential access, and data exfiltration, directly mirroring real-world cloud attack techniques."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker creates or steals a service account key to gain persistent access.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Ability to authenticate as the service account from anywhere."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker uses the compromised service account to create GPU-based VMs for cryptomining or other abuse.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Resource hijacking and potential financial loss."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker exfiltrates sensitive data by exporting Cloud SQL databases to attacker-controlled storage.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Data exfiltration to external infrastructure."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Attacker adds their SSH key to project metadata for persistent or lateral access to all VMs.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Persistent access and lateral movement across VM instances."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Attacker creates a new privileged service account and assigns it the Owner role.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Full administrative control and long-term persistence."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Service account key creation events for default or dormant accounts, especially from non-Google Cloud IP addresses",
+                    "Burst or anomalous creation of GPU-based VMs, particularly in unused regions or with default service accounts",
+                    "Cloud SQL export operations targeting storage buckets not owned by the organization or with unfamiliar naming patterns",
+                    "Modification of project-level SSH keys in metadata, especially by non-admin users or from unusual IPs",
+                    "Creation of new service accounts followed by immediate assignment of Owner or other privileged roles in IAM policy"
+                  ],
+                  "file_indicators": [
+                    "Locally stored service account key files (e.g., evilkey, *.json) in non-standard locations",
+                    "Audit logs showing 'ssh-keys' modified in project metadata via setCommonInstanceMetadata",
+                    "Cloud SQL export files present in unfamiliar or external Google Cloud Storage buckets"
+                  ],
+                  "network_indicators": [
+                    "Service account activity originating from non-Google Cloud IP addresses, VPNs, or anonymized sources",
+                    "Cloud SQL export destinations pointing to external or unrecognized Google Cloud Storage buckets"
+                  ],
+                  "how_to_detect": "Continuously monitor Google Cloud audit logs for service account key creation events, focusing on default or dormant accounts and actions from non-Google Cloud IPs. Alert on the creation of GPU-based VMs in unusual regions, in large bursts, or using default service accounts. Detect Cloud SQL export operations where the destination bucket is not owned by your organization or does not match approved naming conventions. Monitor for project metadata changes involving 'ssh-keys', especially when performed by non-admin users or from suspicious IP addresses. Flag the creation of new service accounts that are immediately assigned Owner or other privileged roles in IAM policy. Enrich detections with context such as IP reputation, region, and bucket ownership to reduce false positives and prioritize high-risk events."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_455833_snippet_2",
+              "source_package": "PuTTY (weaponized variant), RealVNC (weaponized variant), coa, rc, ua-parser-js (Direct distribution (executables), npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_455833/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4164562225341797,
+              "code_similarity": 0.37364640831947327,
+              "behavior_similarity": 0.4592660665512085,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "[Obfuscated JavaScript code in the entrypoint of hijacked npm packages, not shown in report. The code reads process.env for variables like NPM_TOKEN, AWS_ACCESS_KEY_ID, and sends them via HTTP POST to attacker-controlled domains.]",
+                "code_behavior": "At import-time or runtime, the code reads sensitive environment variables such as NPM_TOKEN, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY, then sends their values via HTTP POST requests to a hardcoded attacker-controlled domain, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "Legitimate npm packages do not access and exfiltrate environment variables containing credentials to external servers. The presence of obfuscated code in the entrypoint and network requests to untrusted domains is highly suspicious.",
+                  "violated_expectations": "Normal behavior is to provide utility functions as described in documentation, without accessing or transmitting sensitive environment variables. The malicious code exfiltrates secrets, violating user trust and package intent.",
+                  "similar_legitimate_use": "Some packages may collect telemetry or crash reports with user consent, but never transmit authentication tokens or cloud credentials.",
+                  "key_indicators": [
+                    "Obfuscated or minified code in package entrypoint (index.js)",
+                    "Network requests to hardcoded, untrusted domains during install or import",
+                    "Access to environment variables unrelated to package functionality",
+                    "HTTP POST payloads containing credential-like data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time or runtime (npm package installation or use)",
+                  "file_location": "index.js or main entrypoint of hijacked npm packages (coa@2.0.3, 2.0.4, 2.1.1; rc@1.2.9; ua-parser-js@0.7.29, 0.8.0, 1.0.0)",
+                  "required_permissions": [
+                    "network (outbound HTTP/S requests)",
+                    "filesystem (read access to environment and config files)",
+                    "environment_vars (read sensitive environment variables)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "PuTTY (weaponized variant), RealVNC (weaponized variant), coa, rc, ua-parser-js",
+                  "package_manager": "Direct distribution (executables), npm",
+                  "package_versions": "Unknown for PuTTY/RealVNC; coa: 2.0.3, 2.0.4, 2.1.1; rc: 1.2.9; ua-parser-js: 0.7.29, 0.8.0, 1.0.0",
+                  "why_malicious": "These packages and executables were modified by threat actors to include malicious code that, when executed, establishes persistence, enables unauthorized remote access, and facilitates further malware deployment or data exfiltration. Attackers exploited the trust in widely used open source tools and npm packages to distribute malware at scale, targeting both end users and development environments."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim is socially engineered to download and execute a modified open source tool (e.g., PuTTY/RealVNC) or install a hijacked npm package (coa, rc, ua-parser-js) from npm.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Initial compromise of the victim's machine or development environment."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code establishes persistence (via service installation) and/or exfiltrates sensitive data (credentials, environment variables) to attacker infrastructure.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains remote access or obtains sensitive information for further exploitation."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker uses established access or stolen credentials to move laterally, deploy additional malware, or target secondary victims within the network or supply chain.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Broader network compromise, data infiltration, and potential supply chain attacks."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unexpected installation of persistent services or processes by PuTTY or RealVNC executables",
+                    "Outbound network connections from PuTTY, RealVNC, or npm package processes to untrusted or attacker-controlled domains/IPs",
+                    "Access and exfiltration of environment variables or credential files by npm package entrypoints",
+                    "Presence of obfuscated or minified code in npm package entrypoints (index.js)"
+                  ],
+                  "file_indicators": [
+                    "Modified PuTTY or RealVNC executables with non-standard hashes (not matching official releases)",
+                    "Obfuscated or minified JavaScript in index.js of coa@2.0.3, 2.0.4, 2.1.1; rc@1.2.9; ua-parser-js@0.7.29, 0.8.0, 1.0.0",
+                    "Creation of new Windows service or executable in system directories after running PuTTY/RealVNC"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP POST requests from npm package processes to attacker-controlled domains (as listed in the report, e.g., 'api[.]examplemalicious[.]com')",
+                    "Outbound connections from PuTTY/RealVNC processes to IPs/domains not associated with official tool infrastructure"
+                  ],
+                  "how_to_detect": "Monitor for new persistent services or executables created by PuTTY or RealVNC processes. Use file integrity monitoring to detect modified binaries with hashes differing from official releases. Scan npm package entrypoints for obfuscated or minified code and monitor for network requests to untrusted domains during or after package installation. Alert on access to sensitive environment variables or credential files by non-privileged or unexpected processes. Correlate outbound network activity with known attacker infrastructure."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

