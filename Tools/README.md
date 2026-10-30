@@ -228,6 +228,38 @@ python run_multiprocess.py
 - Location: `Codes/tool_detect/tool_output/socketai/[benign|malware]/[package_name]/[version]/`
 - Format: Individual LLM analysis results for each file plus summary reports
 
+### IntelGuard (Knowledge-driven LLM Analysis)
+
+**Description:**
+IntelGuard detects malicious packages with an LLM guided by a knowledge base of expert reasoning extracted from public security reports. The code is maintained in a separate repository, https://github.com/lxyeternal/IntelGuard; this repository only ships the knowledge base used for the benchmark.
+
+**Detection Principle:**
+1. Slices each package statically from sensitive API call sites using the package call graph
+2. Summarises the behavior of every slice with an LLM
+3. Retrieves the most similar malicious snippets from the knowledge base by code and behavior similarity
+4. Judges each slice with the LLM together with the retrieved expert reasoning
+5. Marks the package as malicious if any slice is judged malicious
+
+**Usage:**
+```bash
+git clone https://github.com/lxyeternal/IntelGuard.git
+cd IntelGuard
+python Codes/Detect/run_npm_dataset.py --dataset-root <NPMAnalysis>/Dataset \
+    --output-root <NPMAnalysis>/Experiment/Results/IntelGuard \
+    --kb-path <NPMAnalysis>/Tools/IntelGuard/KnowledgeBase --limit 0
+```
+
+**Configuration:**
+- API key and model settings in `Configs/llm_config.json` of the IntelGuard repository
+- Knowledge base in `Tools/IntelGuard/KnowledgeBase/`; reports about packages in the benchmark dataset were removed from it (see `Tools/IntelGuard/README.md`)
+
+**Input:**
+- Operates on extracted package directories from `Dataset/unzip_benign/` or `Dataset/unzip_malware/`
+
+**Output:**
+- Location: `Experiment/Results/IntelGuard/[benign|malware]/[package_name]/[version]/result.json`
+- Format: one JSON report per package with every code slice, its retrieved knowledge and the LLM verdict
+
 ### Packj
 
 **Description:**
@@ -281,6 +313,7 @@ The tools can be categorized by their detection approaches:
 
 **AI-based Analysis Tools:**
 - SecurityAI: Large Language Model-based code analysis
+- IntelGuard: Knowledge-driven Large Language Model analysis
 
 ## Timeout Handling
 
