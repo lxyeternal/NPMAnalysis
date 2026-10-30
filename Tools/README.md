@@ -260,6 +260,54 @@ python Codes/Detect/run_npm_dataset.py --dataset-root <NPMAnalysis>/Dataset \
 - Location: `Experiment/Results/IntelGuard/[benign|malware]/[package_name]/[version]/result.json`
 - Format: one JSON report per package with every code slice, its retrieved knowledge and the LLM verdict
 
+### EMPHunter
+
+**Description:**
+EMPHunter (Extended Malicious Packages Hunter) detects malicious npm packages without labeled malicious examples by clustering the installation scripts of packages and ranking the outliers. The code and pretrained models are maintained by the authors at https://github.com/rwnbiad105/EMPHunter; this repository only ships a description (see `Tools/EMPHunter/README.md`).
+
+**Detection Principle:**
+1. Parses the installation hooks of each package into API sequences
+2. Embeds the sequences with FastText-PVDM word and sentence embedding models
+3. Clusters the embeddings and ranks the outliers
+4. Reports a package as malicious when one of its hooks is ranked as an outlier
+
+**Usage:**
+```bash
+cd EMPHunter/npm/EMPHunter-npm
+python main.py
+```
+
+**Input:**
+- Operates on extracted package directories from `Dataset/unzip_benign/` or `Dataset/unzip_malware/`
+
+**Output:**
+- Location: `Experiment/Results/EMPHunter/[benign|malware]/[package_name]/[version]/result.txt`
+- Format: one text report per package with the analysed hooks, outlier flag and ranking score
+
+### ProfMal
+
+**Description:**
+ProfMal detects malicious npm packages with a graph-based model that combines static and dynamic analysis. The code and trained model are maintained by the authors at https://github.com/yiheng98/ProfMal; this repository only ships a description (see `Tools/ProfMal/README.md`).
+
+**Detection Principle:**
+1. Builds a code property graph with Joern and a call graph with Jelly
+2. Records dynamic call graphs and sensitive API invocations with NodeProf on Graal.js
+3. Merges the static and dynamic results into a behavior graph
+4. Classifies the behavior graph with a heterogeneous graph transformer
+
+**Usage:**
+```bash
+cd ProfMal
+python main.py --package <package_dir>
+```
+
+**Input:**
+- Operates on extracted package directories from `Dataset/unzip_benign/` or `Dataset/unzip_malware/`
+
+**Output:**
+- Location: `Experiment/Results/ProfMal/[benign|malware]/[package_name]/[version]/`
+- Format: `result.txt` with the verdict, `sensitive.dot` with the sensitive-API subgraph, `work_flow.log` with the analysis log
+
 ### Packj
 
 **Description:**
@@ -306,10 +354,12 @@ The tools can be categorized by their detection approaches:
 - GuardDog: Rule-based static analysis using Semgrep
 - OSSGadget: Static code pattern analysis
 - MalPacDetector: ML-based static feature analysis
+- EMPHunter: Clustering of installation scripts with outlier ranking
 - SAP: Static code and metadata analysis
 
 **Dynamic Analysis Tools:**
 - Packj: Combined static and dynamic analysis with runtime monitoring
+- ProfMal: Graph-based classification over static and dynamic behavior graphs
 
 **AI-based Analysis Tools:**
 - SecurityAI: Large Language Model-based code analysis
